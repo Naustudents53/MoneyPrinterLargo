@@ -325,6 +325,21 @@ def get_imagemagick_path() -> str:
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         return json.load(file)["imagemagick_path"]
 
+def get_llm_provider() -> str:
+    """Gets the LLM provider (ollama or pollinations)."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return json.load(file).get("llm_provider", "pollinations")
+
+def get_pollinations_text_model() -> str:
+    """Gets the Pollinations text model name."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return json.load(file).get("pollinations_text_model", "openai")
+
+def get_tts_provider() -> str:
+    """Gets the TTS provider (edge_tts or kittentts)."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return json.load(file).get("tts_provider", "edge_tts")
+
 def get_script_sentence_length() -> int:
     """
     Gets the forced script's sentence length.

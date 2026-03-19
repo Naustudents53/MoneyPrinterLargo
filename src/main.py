@@ -1,6 +1,39 @@
 import schedule
 import subprocess
 
+# Fix Pillow 10+ compatibility with MoviePy (ANTIALIAS removed, now LANCZOS)
+from PIL import Image as _PILImage
+if not hasattr(_PILImage, "ANTIALIAS"):
+    _PILImage.ANTIALIAS = _PILImage.LANCZOS
+
+# Ensure ffmpeg is discoverable system-wide
+def _setup_ffmpeg_path():
+    import os, shutil
+    if shutil.which("ffmpeg"):
+        return
+    # Check common winget installation paths
+    search_dirs = [
+        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages"),
+        r"C:\ffmpeg\bin",
+        r"C:\Program Files\ffmpeg\bin",
+    ]
+    for base in search_dirs:
+        if not os.path.isdir(base):
+            continue
+        for root, dirs, files in os.walk(base):
+            if "ffmpeg.exe" in files:
+                os.environ["PATH"] = root + os.pathsep + os.environ.get("PATH", "")
+                return
+    # Fallback: use imageio_ffmpeg bundled binary
+    try:
+        import imageio_ffmpeg
+        ffmpeg_dir = os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe())
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+    except ImportError:
+        pass
+
+_setup_ffmpeg_path()
+
 from art import *
 from cache import *
 from utils import *
@@ -15,7 +48,7 @@ from classes.YouTube import YouTube
 from prettytable import PrettyTable
 from classes.Outreach import Outreach
 from classes.AFM import AffiliateMarketing
-from llm_provider import list_models, select_model, get_active_model
+from llm_provider import list_models, select_model, get_active_model, set_llm_provider
 
 def main():
     """Main entry point for the application, providing a menu-driven interface
@@ -444,41 +477,80 @@ if __name__ == "__main__":
     # Fetch MP3 Files
     fetch_songs()
 
-    # Select Ollama model — use config value if set, otherwise pick interactively
-    configured_model = get_ollama_model()
-    if configured_model:
-        select_model(configured_model)
-        success(f"Using configured model: {configured_model}")
-    else:
-        try:
-            models = list_models()
-        except Exception as e:
-            error(f"Could not connect to Ollama: {e}")
-            sys.exit(1)
+    # Select LLM provider and model
+    from config import get_llm_provider, get_pollinations_text_model
 
-        if not models:
-            error("No models found on Ollama. Pull a model first (e.g. 'ollama pull llama3.2:3b').")
-            sys.exit(1)
+    llm_provider = get_llm_provider()
+    set_llm_provider(llm_provider)
 
-        info("\n========== OLLAMA MODELS =========", False)
-        for idx, model_name in enumerate(models):
-            print(colored(f" {idx + 1}. {model_name}", "cyan"))
-        info("==================================\n", False)
-
-        model_choice = None
-        while model_choice is None:
-            raw = input(colored("Select a model: ", "magenta")).strip()
+    if llm_provider == "pollinations":
+        # Use Pollinations.ai (free, no local server needed)
+        configured_model = get_pollinations_text_model()
+        if configured_model:
+            select_model(configured_model)
+            success(f"Using Pollinations.ai with model: {configured_model}")
+        else:
             try:
-                choice_idx = int(raw) - 1
-                if 0 <= choice_idx < len(models):
-                    model_choice = models[choice_idx]
-                else:
-                    warning("Invalid selection. Try again.")
-            except ValueError:
-                warning("Please enter a number.")
+                models = list_models()
+            except Exception as e:
+                warning(f"Could not fetch Pollinations models: {e}")
+                models = ["openai", "openai-large", "mistral", "llama", "deepseek"]
 
-        select_model(model_choice)
-        success(f"Using model: {model_choice}")
+            info("\n======= POLLINATIONS MODELS =======", False)
+            for idx, model_name in enumerate(models):
+                print(colored(f" {idx + 1}. {model_name}", "cyan"))
+            info("===================================\n", False)
+
+            model_choice = None
+            while model_choice is None:
+                raw = input(colored("Select a model: ", "magenta")).strip()
+                try:
+                    choice_idx = int(raw) - 1
+                    if 0 <= choice_idx < len(models):
+                        model_choice = models[choice_idx]
+                    else:
+                        warning("Invalid selection. Try again.")
+                except ValueError:
+                    warning("Please enter a number.")
+
+            select_model(model_choice)
+            success(f"Using Pollinations.ai model: {model_choice}")
+    else:
+        # Use Ollama (local)
+        configured_model = get_ollama_model()
+        if configured_model:
+            select_model(configured_model)
+            success(f"Using Ollama model: {configured_model}")
+        else:
+            try:
+                models = list_models()
+            except Exception as e:
+                error(f"Could not connect to Ollama: {e}")
+                sys.exit(1)
+
+            if not models:
+                error("No models found on Ollama. Pull a model first (e.g. 'ollama pull llama3.2:3b').")
+                sys.exit(1)
+
+            info("\n========== OLLAMA MODELS =========", False)
+            for idx, model_name in enumerate(models):
+                print(colored(f" {idx + 1}. {model_name}", "cyan"))
+            info("==================================\n", False)
+
+            model_choice = None
+            while model_choice is None:
+                raw = input(colored("Select a model: ", "magenta")).strip()
+                try:
+                    choice_idx = int(raw) - 1
+                    if 0 <= choice_idx < len(models):
+                        model_choice = models[choice_idx]
+                    else:
+                        warning("Invalid selection. Try again.")
+                except ValueError:
+                    warning("Please enter a number.")
+
+            select_model(model_choice)
+            success(f"Using Ollama model: {model_choice}")
 
     while True:
         main()

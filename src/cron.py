@@ -7,7 +7,8 @@ from config import get_verbose
 from classes.Tts import TTS
 from classes.Twitter import Twitter
 from classes.YouTube import YouTube
-from llm_provider import select_model
+from config import get_llm_provider, get_pollinations_text_model
+from llm_provider import select_model, set_llm_provider
 
 def main():
     """Main function to post content to Twitter or upload videos to YouTube.
@@ -31,8 +32,13 @@ def main():
     account_id = str(sys.argv[2])
     model = str(sys.argv[3]) if len(sys.argv) > 3 else None
 
+    llm_provider = get_llm_provider()
+    set_llm_provider(llm_provider)
+
     if model:
         select_model(model)
+    elif llm_provider == "pollinations":
+        select_model(get_pollinations_text_model() or "openai")
     else:
         error("No Ollama model specified. Pass model name as third argument.")
         sys.exit(1)

@@ -88,8 +88,21 @@ class YouTube:
                 f"Firefox profile path does not exist or is not a directory: {self._fp_profile_path}"
             )
 
+        # Copy the profile so we can use it even if Firefox is open
+        import shutil
+        import tempfile
+        self._temp_profile_dir = tempfile.mkdtemp(prefix="mpv2_firefox_")
+        temp_profile = os.path.join(self._temp_profile_dir, "profile")
+        if get_verbose():
+            info(f" => Copying Firefox profile to temp dir...")
+        shutil.copytree(
+            self._fp_profile_path, temp_profile,
+            ignore=shutil.ignore_patterns("lock", ".parentlock", "parent.lock", "cache2", "startupCache"),
+            dirs_exist_ok=False,
+        )
+
         self.options.add_argument("-profile")
-        self.options.add_argument(self._fp_profile_path)
+        self.options.add_argument(temp_profile)
 
         # Set the service
         self.service: Service = Service(GeckoDriverManager().install())
@@ -205,13 +218,14 @@ class YouTube:
             metadata (dict): The generated metadata.
         """
         title = self.generate_response(
-            f"Please generate a YouTube Video Title for the following subject, including hashtags: {self.subject}. Only return the title, nothing else. Limit the title under 100 characters."
+            f"Please generate a YouTube Video Title for the following subject, including hashtags: {self.subject}. Only return the title, nothing else. Limit the title under 80 characters. Be concise."
         )
 
+        # Truncate if still too long instead of retrying forever
         if len(title) > 100:
             if get_verbose():
-                warning("Generated Title is too long. Retrying...")
-            return self.generate_metadata()
+                warning(f"Generated Title is {len(title)} chars, truncating to 100...")
+            title = title[:97] + "..."
 
         description = self.generate_response(
             f"Please generate a YouTube Video Description for the following script: {self.script}. Only return the description, nothing else."
@@ -228,65 +242,60 @@ class YouTube:
         Returns:
             image_prompts (List[str]): Generated List of image prompts.
         """
-        n_prompts = len(self.script) / 3
+        n_prompts = 4
 
-        prompt = f"""
-        Generate {n_prompts} Image Prompts for AI Image Generation,
-        depending on the subject of a video.
-        Subject: {self.subject}
+        prompt = f"""Generate {n_prompts} Image Prompts for AI Image Generation about: {self.subject}
 
-        The image prompts are to be returned as
-        a JSON-Array of strings.
+Return ONLY a JSON array of strings. Example: ["prompt 1", "prompt 2", "prompt 3", "prompt 4"]
 
-        Each search term should consist of a full sentence,
-        always add the main subject of the video.
+Each prompt should be a detailed sentence describing a vivid scene related to the video topic.
+Be emotional and use interesting adjectives. Use only ASCII characters.
 
-        Be emotional and use interesting adjectives to make the
-        Image Prompt as detailed as possible.
+DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array.
 
-        YOU MUST ONLY RETURN THE JSON-ARRAY OF STRINGS.
-        YOU MUST NOT RETURN ANYTHING ELSE.
-        YOU MUST NOT RETURN THE SCRIPT.
-
-        The search terms must be related to the subject of the video.
-        Here is an example of a JSON-Array of strings:
-        ["image prompt 1", "image prompt 2", "image prompt 3"]
-
-        For context, here is the full text:
-        {self.script}
-        """
+Context: {self.script}"""
 
         completion = (
             str(self.generate_response(prompt))
             .replace("```json", "")
             .replace("```", "")
+            .strip()
         )
 
         image_prompts = []
 
-        if "image_prompts" in completion:
-            image_prompts = json.loads(completion)["image_prompts"]
-        else:
-            try:
-                image_prompts = json.loads(completion)
-                if get_verbose():
-                    info(f" => Generated Image Prompts: {image_prompts}")
-            except Exception:
-                if get_verbose():
-                    warning(
-                        "LLM returned an unformatted response. Attempting to clean..."
-                    )
+        # Try to extract JSON array from the response
+        try:
+            parsed = json.loads(completion)
+            if isinstance(parsed, list):
+                image_prompts = [str(p) for p in parsed if isinstance(p, str)]
+            elif isinstance(parsed, dict) and "image_prompts" in parsed:
+                image_prompts = parsed["image_prompts"]
+        except Exception:
+            # Try to find a JSON array in the response
+            match = re.search(r'\[.*?\]', completion, re.DOTALL)
+            if match:
+                try:
+                    image_prompts = json.loads(match.group())
+                except Exception:
+                    pass
 
-                # Get everything between [ and ], and turn it into a list
-                r = re.compile(r"\[.*\]")
-                image_prompts = r.findall(completion)
-                if len(image_prompts) == 0:
-                    if get_verbose():
-                        warning("Failed to generate Image Prompts. Retrying...")
-                    return self.generate_prompts()
+        # Fallback if parsing failed
+        if not image_prompts or not isinstance(image_prompts, list):
+            if get_verbose():
+                warning("Failed to parse image prompts, using fallback prompts")
+            image_prompts = [
+                f"Dramatic cinematic scene about {self.subject}, vivid colors, high detail",
+                f"Abstract visualization of {self.subject}, glowing lights, mysterious atmosphere",
+                f"Futuristic artistic interpretation of {self.subject}, digital art style",
+                f"Emotional powerful scene depicting {self.subject}, dark dramatic lighting",
+            ]
 
-        if len(image_prompts) > n_prompts:
-            image_prompts = image_prompts[: int(n_prompts)]
+        # Limit to n_prompts
+        image_prompts = image_prompts[:n_prompts]
+
+        if get_verbose():
+            info(f" => Generated Image Prompts: {image_prompts}")
 
         self.image_prompts = image_prompts
 
@@ -316,70 +325,114 @@ class YouTube:
         self.images.append(image_path)
         return image_path
 
-    def generate_image_nanobanana2(self, prompt: str) -> str:
+    def generate_image_pollinations(self, prompt: str, retries: int = 3) -> str:
         """
-        Generates an AI Image using Nano Banana 2 API (Gemini image API).
+        Generates an AI Image using Pollinations.ai (free, no API key needed).
+        Includes retry logic for rate limiting and transient errors.
 
         Args:
             prompt (str): Prompt for image generation
+            retries (int): Number of retry attempts
 
         Returns:
             path (str): The path to the generated image.
         """
-        print(f"Generating Image using Nano Banana 2 API: {prompt}")
+        import urllib.parse
 
-        api_key = get_nanobanana2_api_key()
-        if not api_key:
-            error("nanobanana2_api_key is not configured.")
-            return None
+        print(f"Generating Image using Pollinations.ai: {prompt}")
 
-        base_url = get_nanobanana2_api_base_url().rstrip("/")
-        model = get_nanobanana2_model()
-        aspect_ratio = get_nanobanana2_aspect_ratio()
+        encoded_prompt = urllib.parse.quote(prompt)
+        # 9:16 aspect ratio for YouTube Shorts
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={int(time.time())}"
 
-        endpoint = f"{base_url}/models/{model}:generateContent"
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "responseModalities": ["IMAGE"],
-                "imageConfig": {"aspectRatio": aspect_ratio},
-            },
-        }
+        for attempt in range(retries):
+            try:
+                if attempt > 0:
+                    wait_time = 15 * attempt
+                    if get_verbose():
+                        info(f" => Retry {attempt}/{retries}, waiting {wait_time}s...")
+                    time.sleep(wait_time)
 
+                response = requests.get(url, timeout=300)
+
+                if response.status_code == 429:
+                    if get_verbose():
+                        warning("Rate limited by Pollinations.ai, waiting...")
+                    continue
+
+                response.raise_for_status()
+
+                content_type = response.headers.get("content-type", "")
+                if ("image" in content_type or len(response.content) > 5000):
+                    return self._persist_image(response.content, "Pollinations.ai")
+
+                if get_verbose():
+                    warning(f"Pollinations.ai returned unexpected content (attempt {attempt+1})")
+
+            except requests.exceptions.Timeout:
+                if get_verbose():
+                    warning(f"Pollinations.ai timeout (attempt {attempt+1}/{retries})")
+            except Exception as e:
+                if get_verbose():
+                    warning(f"Pollinations.ai error (attempt {attempt+1}): {str(e)}")
+
+        # Fallback: generate a solid color placeholder image with text
+        return self._generate_fallback_image(prompt)
+
+    def _generate_fallback_image(self, prompt: str) -> str:
+        """
+        Generates a fallback image using Pillow when API image generation fails.
+        """
+        from PIL import Image, ImageDraw, ImageFont
+
+        if get_verbose():
+            warning("Using fallback image generator (Pillow)")
+
+        img = Image.new("RGB", (1080, 1920), color=(25, 25, 112))
+        draw = ImageDraw.Draw(img)
+
+        # Add text
         try:
-            response = requests.post(
-                endpoint,
-                headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-                json=payload,
-                timeout=300,
-            )
-            response.raise_for_status()
-            body = response.json()
+            font_path = os.path.join(get_fonts_dir(), get_font())
+            font = ImageFont.truetype(font_path, 48)
+        except Exception:
+            font = ImageFont.load_default()
 
-            candidates = body.get("candidates", [])
-            for candidate in candidates:
-                content = candidate.get("content", {})
-                for part in content.get("parts", []):
-                    inline_data = part.get("inlineData") or part.get("inline_data")
-                    if not inline_data:
-                        continue
-                    data = inline_data.get("data")
-                    mime_type = inline_data.get("mimeType") or inline_data.get("mime_type", "")
-                    if data and str(mime_type).startswith("image/"):
-                        image_bytes = base64.b64decode(data)
-                        return self._persist_image(image_bytes, "Nano Banana 2 API")
+        # Word wrap
+        words = prompt.split()
+        lines = []
+        current_line = ""
+        for word in words:
+            test = f"{current_line} {word}".strip()
+            if len(test) > 30:
+                lines.append(current_line)
+                current_line = word
+            else:
+                current_line = test
+        if current_line:
+            lines.append(current_line)
 
-            if get_verbose():
-                warning(f"Nano Banana 2 did not return an image payload. Response: {body}")
-            return None
-        except Exception as e:
-            if get_verbose():
-                warning(f"Failed to generate image with Nano Banana 2 API: {str(e)}")
-            return None
+        text = "\n".join(lines)
+        y_pos = 1920 // 2 - (len(lines) * 60) // 2
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            w = bbox[2] - bbox[0]
+            x_pos = (1080 - w) // 2
+            draw.text((x_pos, y_pos), line, fill="white", font=font)
+            y_pos += 60
+
+        image_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".png")
+        img.save(image_path)
+        self.images.append(image_path)
+
+        if get_verbose():
+            info(f' => Wrote fallback image to "{image_path}"')
+
+        return image_path
 
     def generate_image(self, prompt: str) -> str:
         """
-        Generates an AI Image based on the given prompt using Nano Banana 2.
+        Generates an AI Image based on the given prompt using Pollinations.ai.
 
         Args:
             prompt (str): Reference for image generation
@@ -387,7 +440,7 @@ class YouTube:
         Returns:
             path (str): The path to the generated image.
         """
-        return self.generate_image_nanobanana2(prompt)
+        return self.generate_image_pollinations(prompt)
 
     def generate_script_to_speech(self, tts_instance: TTS) -> str:
         """
@@ -575,6 +628,16 @@ class YouTube:
         )
 
         print(colored("[+] Combining images...", "blue"))
+
+        # Verify all images exist
+        valid_images = [p for p in self.images if os.path.exists(p)]
+        if not valid_images:
+            raise FileNotFoundError("No valid images found for video combination")
+        if len(valid_images) != len(self.images):
+            missing = [p for p in self.images if not os.path.exists(p)]
+            if get_verbose():
+                warning(f"Missing {len(missing)} images, using {len(valid_images)} valid ones")
+            self.images = valid_images
 
         clips = []
         tot_dur = 0
