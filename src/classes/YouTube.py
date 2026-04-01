@@ -833,11 +833,14 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
             )
             raise
 
+        whisper_model_name = get_whisper_model()
+        print(colored(f"  [Whisper] Loading model '{whisper_model_name}'...", "cyan"), flush=True)
         model = WhisperModel(
-            get_whisper_model(),
+            whisper_model_name,
             device=get_whisper_device(),
             compute_type=get_whisper_compute_type(),
         )
+        print(colored(f"  [Whisper] Transcribing audio...", "cyan"), flush=True)
         segments, _ = model.transcribe(audio_path, vad_filter=True)
 
         lines = []
@@ -943,6 +946,7 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
 
         subtitles = None
         try:
+            print(colored("[+] Generating subtitles...", "blue"), flush=True)
             subtitles_path = self.generate_subtitles(self.tts_path)
 
             # Equalize and parse subtitles with explicit UTF-8 encoding.
@@ -970,9 +974,11 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
 
             subtitles = SubtitlesClip(parsed_subs, generator)
             subtitles = subtitles.set_pos(("center", 1400))
+            print(colored("[+] Subtitles ready.", "green"), flush=True)
         except Exception as e:
             warning(f"Failed to generate subtitles, continuing without subtitles: {e}")
 
+        print(colored("[+] Mixing audio...", "blue"), flush=True)
         random_song_clip = AudioFileClip(random_song).set_fps(44100)
 
         # Loop background music if shorter than TTS, then trim to match
@@ -991,6 +997,7 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
         if subtitles is not None:
             final_clip = CompositeVideoClip([final_clip, subtitles])
 
+        print(colored("[+] Rendering final video (this may take a minute)...", "blue"), flush=True)
         final_clip.write_videofile(combined_image_path, threads=threads)
 
         success(f'Wrote Video to "{combined_image_path}"')
