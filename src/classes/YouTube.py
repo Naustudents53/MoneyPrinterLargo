@@ -160,12 +160,25 @@ class YouTube:
     def generate_topic(self) -> str:
         """
         Generates a topic based on the YouTube Channel niche.
+        Avoids repeating topics from previously uploaded videos.
 
         Returns:
             topic (str): The generated topic.
         """
+        # Gather previous video titles to avoid repetition
+        previous_topics = ""
+        try:
+            videos = self.get_videos()
+            if videos:
+                topics = [v.get("subject") or v.get("title") for v in videos if v.get("subject") or v.get("title")]
+                if topics:
+                    recent = topics[-15:]  # last 15 to keep prompt manageable
+                    previous_topics = "\n\nIMPORTANT: Do NOT repeat or rephrase any of these previously made videos:\n" + "\n".join(f"- {t}" for t in recent) + "\n\nGenerate a COMPLETELY DIFFERENT and ORIGINAL idea."
+        except Exception:
+            pass
+
         completion = self.generate_response(
-            f"Please generate a specific video idea that takes about the following topic: {self.niche}. Make it exactly one sentence. Only return the topic, nothing else. YOU MUST WRITE YOUR RESPONSE IN {self.language}."
+            f"Please generate a specific video idea that takes about the following topic: {self.niche}. Make it exactly one sentence. Only return the topic, nothing else. YOU MUST WRITE YOUR RESPONSE IN {self.language}.{previous_topics}"
         )
 
         if not completion:
@@ -257,16 +270,21 @@ class YouTube:
         """
         n_prompts = 4
 
-        prompt = f"""Generate {n_prompts} Image Prompts for AI Image Generation about: {self.subject}
+        prompt = f"""Generate {n_prompts} Image Prompts for AI Image Generation.
+
+Topic: {self.subject}
+Script: {self.script}
+
+RULES:
+- Each prompt must visually illustrate a SPECIFIC part of the script above.
+- Prompt 1 illustrates the first part, prompt 2 the second part, and so on.
+- Be concrete and literal: describe exactly what should appear in the image (objects, people, setting, colors).
+- Do NOT use abstract or vague words like "visualization", "interpretation", "concept", "essence".
+- Include the visual style: "photorealistic, high quality, 4K, cinematic lighting"
+- Use only ASCII characters.
 
 Return ONLY a JSON array of strings. Example: ["prompt 1", "prompt 2", "prompt 3", "prompt 4"]
-
-Each prompt should be a detailed sentence describing a vivid scene related to the video topic.
-Be emotional and use interesting adjectives. Use only ASCII characters.
-
-DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array.
-
-Context: {self.script}"""
+DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
 
         completion = (
             str(self.generate_response(prompt))
@@ -298,10 +316,10 @@ Context: {self.script}"""
             if get_verbose():
                 warning("Failed to parse image prompts, using fallback prompts")
             image_prompts = [
-                f"Dramatic cinematic scene about {self.subject}, vivid colors, high detail",
-                f"Abstract visualization of {self.subject}, glowing lights, mysterious atmosphere",
-                f"Futuristic artistic interpretation of {self.subject}, digital art style",
-                f"Emotional powerful scene depicting {self.subject}, dark dramatic lighting",
+                f"{self.subject}, photorealistic, high quality, 4K, cinematic lighting, detailed",
+                f"{self.subject}, close-up shot, photorealistic, vivid colors, sharp focus, 4K",
+                f"{self.subject}, wide angle shot, photorealistic, cinematic composition, high detail",
+                f"{self.subject}, dramatic angle, photorealistic, professional photography, 4K resolution",
             ]
 
         # Limit to n_prompts
@@ -364,9 +382,9 @@ Context: {self.script}"""
         raise RuntimeError("HuggingFace: all models failed")
 
     def _try_pollinations(self, prompt: str) -> bytes:
-        """Try Pollinations.ai image generation."""
+        """Try Pollinations.ai image generation (primary provider - free, no key, good quality)."""
         import urllib.parse
-        short_prompt = prompt[:100]
+        short_prompt = prompt[:500]
         encoded = urllib.parse.quote(short_prompt)
         seed = int(time.time())
         url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true&seed={seed}"
@@ -574,38 +592,31 @@ Context: {self.script}"""
 
     def generate_images_batch(self, prompts: List[str]) -> None:
         """
-        Generate ALL images using parallel AI Horde submission.
-        Falls back to Picsum/Pillow for any that fail.
+        Generate ALL images using Pollinations.ai as primary provider (free, 1080x1920, good quality).
+        Falls back to HuggingFace → AI Horde → Pillow for any that fail.
         """
-        print(colored(f"\n  [Images] Generating {len(prompts)} images in PARALLEL via AI Horde...", "blue"))
-        print(colored(f"  (All submitted at once → only wait once instead of 4x)", "cyan"))
+        print(colored(f"\n  [Images] Generating {len(prompts)} images via Pollinations.ai...", "blue"))
 
-        # Step 1: Submit all jobs at once
-        job_ids = self._submit_horde_batch(prompts)
-
-        # Step 2: Wait for all to finish (parallel)
-        print(colored(f"  Waiting for all images...", "cyan"))
-        results = self._collect_horde_batch(job_ids, prompts)
-
-        # Step 3: Save results, use fallbacks for failures
-        for i, (img_bytes, prompt) in enumerate(zip(results, prompts)):
-            if img_bytes and len(img_bytes) > 1000:
-                self._persist_image(img_bytes, "AI Horde")
-            else:
-                # Fallback chain: Pollinations → Picsum → Pillow
-                print(colored(f"    Image {i+1} failed on Horde, trying fallbacks...", "yellow"))
-                saved = False
-                for name, fn in [("Pollinations", self._try_pollinations), ("Picsum", self._try_picsum_stock)]:
-                    try:
-                        fb = fn(prompt)
-                        if fb and len(fb) > 1000:
-                            self._persist_image(fb, name)
-                            saved = True
-                            break
-                    except Exception:
-                        pass
-                if not saved:
-                    self._generate_fallback_image(prompt)
+        for i, prompt in enumerate(prompts):
+            print(colored(f"\n  Image {i+1}/{len(prompts)}", "blue"))
+            saved = False
+            for name, fn in [
+                ("Pollinations.ai", self._try_pollinations),
+                ("HuggingFace", self._try_huggingface),
+                ("AI Horde", self._try_ai_horde),
+            ]:
+                try:
+                    img_bytes = fn(prompt)
+                    if img_bytes and len(img_bytes) > 1000:
+                        self._persist_image(img_bytes, name)
+                        saved = True
+                        break
+                except Exception as e:
+                    if get_verbose():
+                        warning(f"    {name} failed: {str(e)[:100]}")
+                    time.sleep(1)
+            if not saved:
+                self._generate_fallback_image(prompt)
 
         success(f"All {len(prompts)} images ready!")
 
@@ -625,10 +636,9 @@ Context: {self.script}"""
             path (str): The path to the generated image.
         """
         providers = [
-            ("HuggingFace", self._try_huggingface),
             ("Pollinations.ai", self._try_pollinations),
+            ("HuggingFace", self._try_huggingface),
             ("AI Horde", self._try_ai_horde),
-            ("Picsum HD", self._try_picsum_stock),
         ]
 
         print(colored(f"  [Image] {prompt[:80]}...", "blue"))
@@ -782,7 +792,7 @@ Context: {self.script}"""
 
         srt_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".srt")
 
-        with open(srt_path, "w") as file:
+        with open(srt_path, "w", encoding="utf-8") as file:
             file.write(subtitles)
 
         return srt_path
@@ -867,12 +877,12 @@ Context: {self.script}"""
         # Make a generator that returns a TextClip when called with consecutive
         generator = lambda txt: TextClip(
             txt,
-            font=os.path.join(get_fonts_dir(), get_font()),
-            fontsize=100,
-            color="#FFFF00",
+            font=os.path.join(get_fonts_dir(), "Montserrat-ExtraBold.ttf"),
+            fontsize=80,
+            color="white",
             stroke_color="black",
-            stroke_width=5,
-            size=(1080, 1920),
+            stroke_width=4,
+            size=(1000, None),
             method="caption",
         )
 
@@ -934,16 +944,45 @@ Context: {self.script}"""
         subtitles = None
         try:
             subtitles_path = self.generate_subtitles(self.tts_path)
-            equalize_subtitles(subtitles_path, 10)
-            subtitles = SubtitlesClip(subtitles_path, generator)
-            subtitles.set_pos(("center", "center"))
+
+            # Equalize and parse subtitles with explicit UTF-8 encoding.
+            # We bypass srt_equalizer's file I/O and MoviePy's file_to_subtitles()
+            # because neither specifies encoding="utf-8", which corrupts accented
+            # characters (á, é, í, ó, ú, ñ) on Windows (defaults to cp1252).
+            import srt as _srt
+            from srt_equalizer.srt_equalizer import split_subtitle as _split_sub
+
+            with open(subtitles_path, "r", encoding="utf-8") as f:
+                subs = list(_srt.parse(f.read()))
+
+            equalized = []
+            idx = 1
+            for sub in subs:
+                parts = _split_sub(sub, target_chars=40, start_from_index=idx)
+                equalized.extend(parts)
+                idx += len(parts)
+
+            # Pass parsed list directly to SubtitlesClip (bypasses MoviePy's open() without encoding)
+            parsed_subs = [
+                ((s.start.total_seconds(), s.end.total_seconds()), s.content)
+                for s in equalized
+            ]
+
+            subtitles = SubtitlesClip(parsed_subs, generator)
+            subtitles = subtitles.set_pos(("center", 1400))
         except Exception as e:
             warning(f"Failed to generate subtitles, continuing without subtitles: {e}")
 
         random_song_clip = AudioFileClip(random_song).set_fps(44100)
 
-        # Turn down volume
-        random_song_clip = random_song_clip.fx(afx.volumex, 0.1)
+        # Loop background music if shorter than TTS, then trim to match
+        if random_song_clip.duration < tts_clip.duration:
+            loops_needed = int(tts_clip.duration // random_song_clip.duration) + 1
+            random_song_clip = concatenate_audioclips([random_song_clip] * loops_needed)
+        random_song_clip = random_song_clip.subclip(0, tts_clip.duration)
+
+        # Background music at 15% volume (audible but won't overpower voice)
+        random_song_clip = random_song_clip.fx(afx.volumex, 0.15)
         comp_audio = CompositeAudioClip([tts_clip.set_fps(44100), random_song_clip])
 
         final_clip = final_clip.set_audio(comp_audio)
@@ -1202,6 +1241,7 @@ Context: {self.script}"""
                 {
                     "title": self.metadata["title"],
                     "description": self.metadata["description"],
+                    "subject": self.subject,
                     "url": self.uploaded_video_url,
                     "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
