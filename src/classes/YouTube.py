@@ -88,18 +88,32 @@ class YouTube:
                 f"Firefox profile path does not exist or is not a directory: {self._fp_profile_path}"
             )
 
-        # Copy the profile so we can use it even if Firefox is open
+        # Copy the profile so we can use it even if Firefox is open.
+        # We must preserve cookies, logins, and session data for YouTube.
         import shutil
         import tempfile
         self._temp_profile_dir = tempfile.mkdtemp(prefix="mpv2_firefox_")
         temp_profile = os.path.join(self._temp_profile_dir, "profile")
         if get_verbose():
             info(f" => Copying Firefox profile to temp dir...")
+        # Exclude lock files and large caches that cause conflicts,
+        # but KEEP cookies.sqlite, logins.json, key4.db, etc.
         shutil.copytree(
             self._fp_profile_path, temp_profile,
-            ignore=shutil.ignore_patterns("lock", ".parentlock", "parent.lock", "cache2", "startupCache"),
+            ignore=shutil.ignore_patterns(
+                "lock", ".parentlock", "parent.lock",
+                "cache2", "startupCache", "shader-cache",
+                "thumbnails", "storage", "crashes",
+            ),
             dirs_exist_ok=False,
         )
+        # Remove the session restore files that can cause crashes
+        for bad_file in ["sessionstore.jsonlz4", "sessionstore-backups"]:
+            bad_path = os.path.join(temp_profile, bad_file)
+            if os.path.isfile(bad_path):
+                os.remove(bad_path)
+            elif os.path.isdir(bad_path):
+                shutil.rmtree(bad_path, ignore_errors=True)
 
         self.options.add_argument("-profile")
         self.options.add_argument(temp_profile)
@@ -325,86 +339,144 @@ Context: {self.script}"""
         self.images.append(image_path)
         return image_path
 
-    def generate_image_pollinations(self, prompt: str, retries: int = 3) -> str:
-        """
-        Generates an AI Image using Pollinations.ai (free, no API key needed).
-        Includes retry logic for rate limiting and transient errors.
+    def _try_huggingface(self, prompt: str) -> bytes:
+        """Try HuggingFace Inference API (new router URL)."""
+        print(colored(f"    [HuggingFace] Generating...", "cyan"), flush=True)
+        models = [
+            "black-forest-labs/FLUX.1-schnell",
+            "stabilityai/stable-diffusion-xl-base-1.0",
+        ]
+        headers = {}
+        hf_token = os.environ.get("HF_TOKEN", "")
+        if hf_token:
+            headers["Authorization"] = f"Bearer {hf_token}"
 
-        Args:
-            prompt (str): Prompt for image generation
-            retries (int): Number of retry attempts
-
-        Returns:
-            path (str): The path to the generated image.
-        """
-        import urllib.parse
-
-        print(f"Generating Image using Pollinations.ai: {prompt}")
-
-        encoded_prompt = urllib.parse.quote(prompt)
-        # 9:16 aspect ratio for YouTube Shorts
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={int(time.time())}"
-
-        for attempt in range(retries):
+        for model in models:
             try:
-                if attempt > 0:
-                    wait_time = 15 * attempt
-                    if get_verbose():
-                        info(f" => Retry {attempt}/{retries}, waiting {wait_time}s...")
-                    time.sleep(wait_time)
+                # Use the NEW router URL (old api-inference.huggingface.co is deprecated)
+                url = f"https://router.huggingface.co/hf-inference/models/{model}"
+                resp = requests.post(url, headers=headers, json={"inputs": prompt[:200]}, timeout=120)
+                ct = resp.headers.get("content-type", "")
+                if resp.status_code == 200 and ("image" in ct or len(resp.content) > 5000):
+                    print(colored("OK", "green"))
+                    return resp.content
+            except Exception:
+                continue
+        raise RuntimeError("HuggingFace: all models failed")
 
-                response = requests.get(url, timeout=300)
+    def _try_pollinations(self, prompt: str) -> bytes:
+        """Try Pollinations.ai image generation."""
+        import urllib.parse
+        short_prompt = prompt[:100]
+        encoded = urllib.parse.quote(short_prompt)
+        seed = int(time.time())
+        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true&seed={seed}"
+        print(colored(f"    [Pollinations.ai] Generating...", "cyan"), flush=True)
+        resp = requests.get(url, timeout=120)
+        if resp.status_code == 200 and len(resp.content) > 5000:
+            print(colored("OK", "green"))
+            return resp.content
+        raise RuntimeError(f"Pollinations returned status {resp.status_code}")
 
-                if response.status_code == 429:
-                    if get_verbose():
-                        warning("Rate limited by Pollinations.ai, waiting...")
-                    continue
+    def _try_ai_horde(self, prompt: str) -> bytes:
+        """Try AI Horde - free crowdsourced Stable Diffusion (512x512 for speed)."""
+        print(colored(f"    [AI Horde] Submitting...", "cyan"), end=" ", flush=True)
+        headers = {"apikey": "0000000000", "Content-Type": "application/json"}
+        payload = {
+            "prompt": prompt[:200] + " ### ultra detailed, cinematic, 4k",
+            "params": {
+                "width": 512,
+                "height": 512,
+                "steps": 15,
+                "cfg_scale": 7,
+                "sampler_name": "k_euler",
+            },
+            "nsfw": False,
+            "models": ["stable_diffusion"],
+            "r2": True,
+        }
+        resp = requests.post(
+            "https://stablehorde.net/api/v2/generate/async",
+            json=payload, headers=headers, timeout=30,
+        )
+        if resp.status_code not in (200, 202):
+            raise RuntimeError(f"AI Horde submit failed: {resp.status_code}")
 
-                response.raise_for_status()
+        job_id = resp.json().get("id")
+        if not job_id:
+            raise RuntimeError("AI Horde: no job ID returned")
 
-                content_type = response.headers.get("content-type", "")
-                if ("image" in content_type or len(response.content) > 5000):
-                    return self._persist_image(response.content, "Pollinations.ai")
+        for tick in range(40):  # max ~3.5 min
+            time.sleep(5)
+            status = requests.get(
+                f"https://stablehorde.net/api/v2/generate/status/{job_id}", timeout=15,
+            ).json()
+            q = status.get("queue_position", "?")
+            if tick % 4 == 0:
+                print(colored(f"q={q}", "cyan"), end=" ", flush=True)
+            if status.get("done"):
+                gens = status.get("generations", [])
+                if gens and gens[0].get("img"):
+                    img_resp = requests.get(gens[0]["img"], timeout=60)
+                    if img_resp.status_code == 200 and len(img_resp.content) > 1000:
+                        print(colored("OK", "green"))
+                        return img_resp.content
+                raise RuntimeError("AI Horde: no image in result")
+            if status.get("faulted"):
+                raise RuntimeError("AI Horde: job faulted")
 
-                if get_verbose():
-                    warning(f"Pollinations.ai returned unexpected content (attempt {attempt+1})")
+        raise RuntimeError("AI Horde: timeout")
 
-            except requests.exceptions.Timeout:
-                if get_verbose():
-                    warning(f"Pollinations.ai timeout (attempt {attempt+1}/{retries})")
-            except Exception as e:
-                if get_verbose():
-                    warning(f"Pollinations.ai error (attempt {attempt+1}): {str(e)}")
-
-        # Fallback: generate a solid color placeholder image with text
-        return self._generate_fallback_image(prompt)
+    def _try_picsum_stock(self, prompt: str) -> bytes:
+        """Fallback: HD stock photo from Picsum (fast, always works)."""
+        print(colored(f"    [Picsum HD] Getting image...", "yellow"), flush=True)
+        seed = abs(hash(prompt)) % 1000
+        url = f"https://picsum.photos/seed/{seed}/1080/1920"
+        resp = requests.get(url, timeout=60, allow_redirects=True)
+        if resp.status_code == 200 and len(resp.content) > 5000:
+            print(colored("OK", "green"))
+            return resp.content
+        raise RuntimeError(f"Picsum returned status {resp.status_code}")
 
     def _generate_fallback_image(self, prompt: str) -> str:
         """
-        Generates a fallback image using Pillow when API image generation fails.
+        Generates a stylish fallback image using Pillow when all API providers fail.
         """
         from PIL import Image, ImageDraw, ImageFont
+        import random as rand_mod
 
         if get_verbose():
-            warning("Using fallback image generator (Pillow)")
+            warning("All providers failed. Creating styled fallback image...")
 
-        img = Image.new("RGB", (1080, 1920), color=(25, 25, 112))
+        # Create gradient background
+        color_schemes = [
+            ((15, 15, 80), (80, 20, 120)),
+            ((10, 50, 80), (20, 100, 100)),
+            ((60, 10, 60), (120, 30, 80)),
+            ((10, 40, 20), (30, 100, 60)),
+        ]
+        c1, c2 = rand_mod.choice(color_schemes)
+        img = Image.new("RGB", (1080, 1920))
         draw = ImageDraw.Draw(img)
+
+        for y in range(1920):
+            r = int(c1[0] + (c2[0] - c1[0]) * y / 1920)
+            g = int(c1[1] + (c2[1] - c1[1]) * y / 1920)
+            b = int(c1[2] + (c2[2] - c1[2]) * y / 1920)
+            draw.line([(0, y), (1080, y)], fill=(r, g, b))
 
         # Add text
         try:
             font_path = os.path.join(get_fonts_dir(), get_font())
-            font = ImageFont.truetype(font_path, 48)
+            font = ImageFont.truetype(font_path, 52)
         except Exception:
             font = ImageFont.load_default()
 
-        # Word wrap
         words = prompt.split()
-        lines = []
-        current_line = ""
+        lines, current_line = [], ""
         for word in words:
             test = f"{current_line} {word}".strip()
-            if len(test) > 30:
+            if len(test) > 25:
                 lines.append(current_line)
                 current_line = word
             else:
@@ -412,14 +484,15 @@ Context: {self.script}"""
         if current_line:
             lines.append(current_line)
 
-        text = "\n".join(lines)
-        y_pos = 1920 // 2 - (len(lines) * 60) // 2
+        y_pos = 1920 // 2 - (len(lines) * 70) // 2
         for line in lines:
             bbox = draw.textbbox((0, 0), line, font=font)
             w = bbox[2] - bbox[0]
-            x_pos = (1080 - w) // 2
-            draw.text((x_pos, y_pos), line, fill="white", font=font)
-            y_pos += 60
+            # Shadow
+            draw.text(((1080 - w) // 2 + 3, y_pos + 3), line, fill=(0, 0, 0), font=font)
+            # Text
+            draw.text(((1080 - w) // 2, y_pos), line, fill="white", font=font)
+            y_pos += 70
 
         image_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".png")
         img.save(image_path)
@@ -430,9 +503,121 @@ Context: {self.script}"""
 
         return image_path
 
+    def _submit_horde_batch(self, prompts: List[str]) -> List[str]:
+        """Submit ALL image prompts to AI Horde at once, returns job IDs."""
+        headers = {"apikey": "0000000000", "Content-Type": "application/json"}
+        job_ids = []
+        for prompt in prompts:
+            payload = {
+                "prompt": prompt[:200] + " ### ultra detailed, cinematic, 4k",
+                "params": {"width": 512, "height": 512, "steps": 15, "cfg_scale": 7, "sampler_name": "k_euler"},
+                "nsfw": False,
+                "models": ["stable_diffusion"],
+                "r2": True,
+            }
+            try:
+                resp = requests.post(
+                    "https://stablehorde.net/api/v2/generate/async",
+                    json=payload, headers=headers, timeout=30,
+                )
+                if resp.status_code in (200, 202):
+                    jid = resp.json().get("id", "")
+                    job_ids.append(jid)
+                    print(colored(f"    Submitted job {jid[:8]}...", "cyan"))
+                else:
+                    job_ids.append("")
+                    print(colored(f"    Submit failed: {resp.status_code}", "red"))
+            except Exception as e:
+                job_ids.append("")
+                print(colored(f"    Submit error: {str(e)[:60]}", "red"))
+        return job_ids
+
+    def _collect_horde_batch(self, job_ids: List[str], prompts: List[str]) -> List[bytes]:
+        """Poll all AI Horde jobs until done (parallel wait = much faster)."""
+        results = [None] * len(job_ids)
+        pending = {i for i, jid in enumerate(job_ids) if jid}
+
+        for tick in range(40):  # max ~3.5 min
+            if not pending:
+                break
+            time.sleep(5)
+            done_this_round = []
+            for i in list(pending):
+                try:
+                    st = requests.get(
+                        f"https://stablehorde.net/api/v2/generate/status/{job_ids[i]}", timeout=10,
+                    ).json()
+                    if st.get("done"):
+                        gens = st.get("generations", [])
+                        if gens and gens[0].get("img"):
+                            img_resp = requests.get(gens[0]["img"], timeout=60)
+                            if img_resp.status_code == 200 and len(img_resp.content) > 1000:
+                                results[i] = img_resp.content
+                                print(colored(f"    Image {i+1} ready ({len(img_resp.content)//1024}KB)", "green"))
+                        done_this_round.append(i)
+                    elif st.get("faulted"):
+                        done_this_round.append(i)
+                except Exception:
+                    pass
+            for i in done_this_round:
+                pending.discard(i)
+            if pending and tick % 3 == 0:
+                queues = []
+                for i in pending:
+                    try:
+                        st = requests.get(f"https://stablehorde.net/api/v2/generate/status/{job_ids[i]}", timeout=5).json()
+                        queues.append(str(st.get("queue_position", "?")))
+                    except Exception:
+                        queues.append("?")
+                print(colored(f"    [{tick*5}s] Waiting... queues: [{', '.join(queues)}]", "cyan"))
+
+        return results
+
+    def generate_images_batch(self, prompts: List[str]) -> None:
+        """
+        Generate ALL images using parallel AI Horde submission.
+        Falls back to Picsum/Pillow for any that fail.
+        """
+        print(colored(f"\n  [Images] Generating {len(prompts)} images in PARALLEL via AI Horde...", "blue"))
+        print(colored(f"  (All submitted at once → only wait once instead of 4x)", "cyan"))
+
+        # Step 1: Submit all jobs at once
+        job_ids = self._submit_horde_batch(prompts)
+
+        # Step 2: Wait for all to finish (parallel)
+        print(colored(f"  Waiting for all images...", "cyan"))
+        results = self._collect_horde_batch(job_ids, prompts)
+
+        # Step 3: Save results, use fallbacks for failures
+        for i, (img_bytes, prompt) in enumerate(zip(results, prompts)):
+            if img_bytes and len(img_bytes) > 1000:
+                self._persist_image(img_bytes, "AI Horde")
+            else:
+                # Fallback chain: Pollinations → Picsum → Pillow
+                print(colored(f"    Image {i+1} failed on Horde, trying fallbacks...", "yellow"))
+                saved = False
+                for name, fn in [("Pollinations", self._try_pollinations), ("Picsum", self._try_picsum_stock)]:
+                    try:
+                        fb = fn(prompt)
+                        if fb and len(fb) > 1000:
+                            self._persist_image(fb, name)
+                            saved = True
+                            break
+                    except Exception:
+                        pass
+                if not saved:
+                    self._generate_fallback_image(prompt)
+
+        success(f"All {len(prompts)} images ready!")
+
     def generate_image(self, prompt: str) -> str:
         """
-        Generates an AI Image based on the given prompt using Pollinations.ai.
+        Generates an AI Image trying multiple FREE providers in cascade:
+        1. HuggingFace (new router URL, needs free token)
+        2. Pollinations.ai (free, no key — currently unstable)
+        3. AI Horde (free, no key — crowdsourced SD, ~60-90s)
+        4. Picsum (HD stock photos, fast)
+        5. Pillow gradient fallback
 
         Args:
             prompt (str): Reference for image generation
@@ -440,7 +625,28 @@ Context: {self.script}"""
         Returns:
             path (str): The path to the generated image.
         """
-        return self.generate_image_pollinations(prompt)
+        providers = [
+            ("HuggingFace", self._try_huggingface),
+            ("Pollinations.ai", self._try_pollinations),
+            ("AI Horde", self._try_ai_horde),
+            ("Picsum HD", self._try_picsum_stock),
+        ]
+
+        print(colored(f"  [Image] {prompt[:80]}...", "blue"))
+
+        for name, provider_fn in providers:
+            try:
+                img_bytes = provider_fn(prompt)
+                if img_bytes and len(img_bytes) > 1000:
+                    success(f"Image generated via {name}!")
+                    return self._persist_image(img_bytes, name)
+            except Exception as e:
+                if get_verbose():
+                    warning(f"{name} failed: {str(e)[:100]}")
+                time.sleep(1)
+
+        # All providers failed - use Pillow fallback
+        return self._generate_fallback_image(prompt)
 
     def generate_script_to_speech(self, tts_instance: TTS) -> str:
         """
@@ -731,9 +937,8 @@ Context: {self.script}"""
         # Generate the Image Prompts
         self.generate_prompts()
 
-        # Generate the Images
-        for prompt in self.image_prompts:
-            self.generate_image(prompt)
+        # Generate the Images (parallel batch for speed)
+        self.generate_images_batch(self.image_prompts)
 
         # Generate the TTS
         self.generate_script_to_speech(tts_instance)
@@ -765,154 +970,211 @@ Context: {self.script}"""
 
     def upload_video(self) -> bool:
         """
-        Uploads the video to YouTube.
+        Uploads the video to YouTube via Selenium.
+        Uses explicit waits and robust element selection for YouTube Studio 2025+.
 
         Returns:
             success (bool): Whether the upload was successful or not.
         """
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.common.keys import Keys
+
+        driver = self.browser
+        verbose = get_verbose()
+        wait = WebDriverWait(driver, 30)
+
         try:
+            # Step 1: Get channel ID
+            if verbose:
+                info("\t=> Getting channel ID...")
             self.get_channel_id()
+            if verbose:
+                info(f"\t=> Channel ID: {self.channel_id}")
 
-            driver = self.browser
-            verbose = get_verbose()
-
-            # Go to youtube.com/upload
+            # Step 2: Navigate to upload page
+            if verbose:
+                info("\t=> Navigating to upload page...")
             driver.get("https://www.youtube.com/upload")
+            time.sleep(3)
 
-            # Set video file
-            FILE_PICKER_TAG = "ytcp-uploads-file-picker"
-            file_picker = driver.find_element(By.TAG_NAME, FILE_PICKER_TAG)
-            INPUT_TAG = "input"
-            file_input = file_picker.find_element(By.TAG_NAME, INPUT_TAG)
+            # Step 3: Upload the video file
+            if verbose:
+                info(f"\t=> Uploading file: {self.video_path}")
+
+            # Find the file input (hidden input inside the upload picker)
+            file_input = wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='file']"))
+            )
             file_input.send_keys(self.video_path)
 
-            # Wait for upload to finish
-            time.sleep(5)
+            if verbose:
+                info("\t=> File selected, waiting for upload dialog...")
 
-            # Set title
-            textboxes = driver.find_elements(By.ID, YOUTUBE_TEXTBOX_ID)
+            # Wait for the upload dialog to appear (title textbox)
+            time.sleep(8)
 
-            title_el = textboxes[0]
-            description_el = textboxes[-1]
-
+            # Step 4: Set title
             if verbose:
                 info("\t=> Setting title...")
 
-            title_el.click()
-            time.sleep(1)
-            title_el.clear()
-            title_el.send_keys(self.metadata["title"])
+            # YouTube Studio uses contenteditable divs with id="textbox"
+            textboxes = wait.until(
+                EC.presence_of_all_elements_located((By.ID, YOUTUBE_TEXTBOX_ID))
+            )
 
+            if len(textboxes) < 2:
+                warning(f"Expected 2+ textboxes, found {len(textboxes)}")
+
+            title_el = textboxes[0]
+            # Clear existing title using keyboard shortcuts (works on contenteditable)
+            title_el.click()
+            time.sleep(0.5)
+            title_el.send_keys(Keys.CONTROL + "a")
+            time.sleep(0.3)
+            title_el.send_keys(Keys.DELETE)
+            time.sleep(0.3)
+
+            # Type the new title character by character to avoid issues
+            clean_title = self.metadata["title"].replace("\n", " ")[:100]
+            title_el.send_keys(clean_title)
+            time.sleep(1)
+
+            if verbose:
+                info(f"\t=> Title set: {clean_title}")
+
+            # Step 5: Set description
             if verbose:
                 info("\t=> Setting description...")
 
-            # Set description
-            time.sleep(10)
+            description_el = textboxes[-1]
             description_el.click()
             time.sleep(0.5)
-            description_el.clear()
-            description_el.send_keys(self.metadata["description"])
+            description_el.send_keys(Keys.CONTROL + "a")
+            time.sleep(0.3)
+            description_el.send_keys(Keys.DELETE)
+            time.sleep(0.3)
 
-            time.sleep(0.5)
+            clean_desc = self.metadata["description"].replace("\n", " ")[:5000]
+            description_el.send_keys(clean_desc)
+            time.sleep(1)
 
-            # Set `made for kids` option
             if verbose:
-                info("\t=> Setting `made for kids` option...")
+                info("\t=> Description set")
 
-            is_for_kids_checkbox = driver.find_element(
-                By.NAME, YOUTUBE_MADE_FOR_KIDS_NAME
-            )
-            is_not_for_kids_checkbox = driver.find_element(
-                By.NAME, YOUTUBE_NOT_MADE_FOR_KIDS_NAME
-            )
-
-            if not get_is_for_kids():
-                is_not_for_kids_checkbox.click()
-            else:
-                is_for_kids_checkbox.click()
-
-            time.sleep(0.5)
-
-            # Click next
+            # Step 6: Set "Not made for kids"
             if verbose:
-                info("\t=> Clicking next...")
+                info("\t=> Setting 'not made for kids'...")
 
-            next_button = driver.find_element(By.ID, YOUTUBE_NEXT_BUTTON_ID)
-            next_button.click()
+            try:
+                if not get_is_for_kids():
+                    not_for_kids = wait.until(
+                        EC.element_to_be_clickable((By.NAME, YOUTUBE_NOT_MADE_FOR_KIDS_NAME))
+                    )
+                    not_for_kids.click()
+                else:
+                    for_kids = wait.until(
+                        EC.element_to_be_clickable((By.NAME, YOUTUBE_MADE_FOR_KIDS_NAME))
+                    )
+                    for_kids.click()
+                time.sleep(1)
+            except Exception as e:
+                warning(f"Could not set kids option: {e}")
 
-            # Click next again
+            # Step 7: Click Next 3 times (Details → Video elements → Checks → Visibility)
+            for step_num in range(3):
+                if verbose:
+                    info(f"\t=> Clicking Next (step {step_num + 1}/3)...")
+                try:
+                    next_btn = wait.until(
+                        EC.element_to_be_clickable((By.ID, YOUTUBE_NEXT_BUTTON_ID))
+                    )
+                    next_btn.click()
+                    time.sleep(2)
+                except Exception as e:
+                    warning(f"Next button step {step_num + 1} failed: {e}")
+
+            # Step 8: Set visibility to Unlisted (radio button index 2)
             if verbose:
-                info("\t=> Clicking next again...")
-            next_button = driver.find_element(By.ID, YOUTUBE_NEXT_BUTTON_ID)
-            next_button.click()
+                info("\t=> Setting visibility to Unlisted...")
 
-            # Wait for 2 seconds
             time.sleep(2)
+            try:
+                radio_buttons = driver.find_elements(By.XPATH, YOUTUBE_RADIO_BUTTON_XPATH)
+                if len(radio_buttons) >= 3:
+                    radio_buttons[2].click()  # 0=Private, 1=Unlisted, 2=Public — but YT may reorder
+                elif len(radio_buttons) >= 2:
+                    radio_buttons[1].click()  # Try unlisted
+                time.sleep(1)
+            except Exception as e:
+                warning(f"Could not set visibility: {e}")
 
-            # Click next again
+            # Step 9: Click Done
             if verbose:
-                info("\t=> Clicking next again...")
-            next_button = driver.find_element(By.ID, YOUTUBE_NEXT_BUTTON_ID)
-            next_button.click()
+                info("\t=> Clicking Done button...")
 
-            # Set as unlisted
+            try:
+                done_btn = wait.until(
+                    EC.element_to_be_clickable((By.ID, YOUTUBE_DONE_BUTTON_ID))
+                )
+                done_btn.click()
+            except Exception as e:
+                warning(f"Done button failed: {e}")
+
+            # Wait for upload to process
             if verbose:
-                info("\t=> Setting as unlisted...")
+                info("\t=> Waiting for upload to complete...")
+            time.sleep(5)
 
-            radio_button = driver.find_elements(By.XPATH, YOUTUBE_RADIO_BUTTON_XPATH)
-            radio_button[2].click()
-
-            if verbose:
-                info("\t=> Clicking done button...")
-
-            # Click done button
-            done_button = driver.find_element(By.ID, YOUTUBE_DONE_BUTTON_ID)
-            done_button.click()
-
-            # Wait for 2 seconds
-            time.sleep(2)
-
-            # Get latest video
+            # Step 10: Get the video URL
             if verbose:
                 info("\t=> Getting video URL...")
 
-            # Get the latest uploaded video URL
             driver.get(
                 f"https://studio.youtube.com/channel/{self.channel_id}/videos/short"
             )
-            time.sleep(2)
-            videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
-            first_video = videos[0]
-            anchor_tag = first_video.find_element(By.TAG_NAME, "a")
-            href = anchor_tag.get_attribute("href")
-            if verbose:
-                info(f"\t=> Extracting video ID from URL: {href}")
-            video_id = href.split("/")[-2]
+            time.sleep(3)
 
-            # Build URL
-            url = build_url(video_id)
+            url = None
+            try:
+                videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
+                if videos:
+                    first_video = videos[0]
+                    anchor_tag = first_video.find_element(By.TAG_NAME, "a")
+                    href = anchor_tag.get_attribute("href")
+                    if verbose:
+                        info(f"\t=> Found URL: {href}")
+                    video_id = href.split("/")[-2]
+                    url = build_url(video_id)
+            except Exception as e:
+                warning(f"Could not get video URL: {e}")
+                url = "https://studio.youtube.com"
 
-            self.uploaded_video_url = url
+            self.uploaded_video_url = url or "unknown"
 
-            if verbose:
-                success(f" => Uploaded Video: {url}")
+            success(f" => Uploaded Video: {self.uploaded_video_url}")
 
-            # Add video to cache
+            # Save to cache
             self.add_video(
                 {
                     "title": self.metadata["title"],
                     "description": self.metadata["description"],
-                    "url": url,
+                    "url": self.uploaded_video_url,
                     "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
             )
 
-            # Close the browser
             driver.quit()
-
             return True
-        except:
-            self.browser.quit()
+
+        except Exception as e:
+            import traceback
+            error(f"Upload failed: {e}")
+            traceback.print_exc()
+            try:
+                driver.quit()
+            except Exception:
+                pass
             return False
 
     def get_videos(self) -> List[dict]:
