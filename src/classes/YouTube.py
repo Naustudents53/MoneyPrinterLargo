@@ -17,7 +17,6 @@ from constants import *
 from typing import List
 from moviepy.editor import *
 from termcolor import colored
-from selenium_firefox import *
 from selenium import webdriver
 from moviepy.video.fx.all import crop
 from moviepy.config import change_settings
@@ -166,7 +165,7 @@ class YouTube:
             topic (str): The generated topic.
         """
         completion = self.generate_response(
-            f"Please generate a specific video idea that takes about the following topic: {self.niche}. Make it exactly one sentence. Only return the topic, nothing else."
+            f"Please generate a specific video idea that takes about the following topic: {self.niche}. Make it exactly one sentence. Only return the topic, nothing else. YOU MUST WRITE YOUR RESPONSE IN {self.language}."
         )
 
         if not completion:
@@ -232,7 +231,7 @@ class YouTube:
             metadata (dict): The generated metadata.
         """
         title = self.generate_response(
-            f"Please generate a YouTube Video Title for the following subject, including hashtags: {self.subject}. Only return the title, nothing else. Limit the title under 80 characters. Be concise."
+            f"Please generate a YouTube Video Title for the following subject, including hashtags: {self.subject}. Only return the title, nothing else. Limit the title under 80 characters. Be concise. YOU MUST WRITE THE TITLE IN {self.language}."
         )
 
         # Truncate if still too long instead of retrying forever
@@ -242,7 +241,7 @@ class YouTube:
             title = title[:97] + "..."
 
         description = self.generate_response(
-            f"Please generate a YouTube Video Description for the following script: {self.script}. Only return the description, nothing else."
+            f"Please generate a YouTube Video Description for the following script: {self.script}. Only return the description, nothing else. YOU MUST WRITE THE DESCRIPTION IN {self.language}."
         )
 
         self.metadata = {"title": title, "description": description}
@@ -703,6 +702,7 @@ Context: {self.script}"""
     def generate_subtitles(self, audio_path: str) -> str:
         """
         Generates subtitles for the audio using the configured STT provider.
+        Falls back to script-based subtitles if STT fails.
 
         Args:
             audio_path (str): The path to the audio file.
@@ -712,14 +712,57 @@ Context: {self.script}"""
         """
         provider = str(get_stt_provider() or "local_whisper").lower()
 
-        if provider == "local_whisper":
-            return self.generate_subtitles_local_whisper(audio_path)
+        try:
+            if provider == "local_whisper":
+                return self.generate_subtitles_local_whisper(audio_path)
 
-        if provider == "third_party_assemblyai":
-            return self.generate_subtitles_assemblyai(audio_path)
+            if provider == "third_party_assemblyai":
+                return self.generate_subtitles_assemblyai(audio_path)
+        except Exception as e:
+            warning(f"STT subtitles failed ({e}), using script-based subtitles instead.")
 
-        warning(f"Unknown stt_provider '{provider}'. Falling back to local_whisper.")
-        return self.generate_subtitles_local_whisper(audio_path)
+        return self.generate_subtitles_from_script(audio_path)
+
+    def generate_subtitles_from_script(self, audio_path: str) -> str:
+        """
+        Generates subtitles by splitting the script text into sentences
+        and distributing them evenly across the audio duration.
+        No STT engine required.
+
+        Args:
+            audio_path (str): Audio file path (used to get duration)
+
+        Returns:
+            path (str): Path to SRT file
+        """
+        from moviepy.editor import AudioFileClip as _AFC
+
+        duration = _AFC(audio_path).duration
+        sentences = re.split(r'(?<=[.!?])\s+', self.script.strip())
+        sentences = [s.strip() for s in sentences if s.strip()]
+
+        if not sentences:
+            sentences = [self.script.strip()]
+
+        seg_dur = duration / len(sentences)
+        lines = []
+
+        for idx, sentence in enumerate(sentences):
+            start = self._format_srt_timestamp(idx * seg_dur)
+            end = self._format_srt_timestamp(min((idx + 1) * seg_dur, duration))
+            lines.append(str(idx + 1))
+            lines.append(f"{start} --> {end}")
+            lines.append(sentence)
+            lines.append("")
+
+        srt_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".srt")
+        with open(srt_path, "w", encoding="utf-8") as file:
+            file.write("\n".join(lines))
+
+        if get_verbose():
+            info(f" => Generated script-based subtitles ({len(sentences)} segments)")
+
+        return srt_path
 
     def generate_subtitles_assemblyai(self, audio_path: str) -> str:
         """

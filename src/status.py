@@ -1,3 +1,13 @@
+import sys
+import os
+
+if sys.platform == "win32":
+    os.system("")  # enable ANSI escape codes on Windows
+    if sys.stdout.encoding != "utf-8":
+        sys.stdout.reconfigure(encoding="utf-8")
+    if sys.stderr.encoding != "utf-8":
+        sys.stderr.reconfigure(encoding="utf-8")
+
 from termcolor import colored
 
 def error(message: str, show_emoji: bool = True) -> None:
