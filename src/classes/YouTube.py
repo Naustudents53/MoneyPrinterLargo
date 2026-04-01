@@ -711,8 +711,9 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
 
     def generate_subtitles(self, audio_path: str) -> str:
         """
-        Generates subtitles for the audio using the configured STT provider.
-        Falls back to script-based subtitles if STT fails.
+        Generates subtitles from the known script text.
+        Uses script-based generation by default (instant, no STT needed since we
+        already have the exact text). Falls back to STT only if explicitly configured.
 
         Args:
             audio_path (str): The path to the audio file.
@@ -720,7 +721,11 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
         Returns:
             path (str): The path to the generated SRT File.
         """
-        provider = str(get_stt_provider() or "local_whisper").lower()
+        provider = str(get_stt_provider() or "script").lower()
+
+        # Default: use the script we already have (instant, no extra dependencies)
+        if provider not in ("local_whisper", "third_party_assemblyai"):
+            return self.generate_subtitles_from_script(audio_path)
 
         try:
             if provider == "local_whisper":
@@ -1137,7 +1142,12 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
                 info("\t=> Setting description...")
 
             description_el = textboxes[-1]
-            description_el.click()
+            # Use JavaScript click to bypass the "Suggested hashtags" panel
+            # that YouTube Studio renders between title and description fields.
+            # A normal .click() fails with ElementClickInterceptedException.
+            driver.execute_script("arguments[0].scrollIntoView(true);", description_el)
+            time.sleep(0.5)
+            driver.execute_script("arguments[0].click();", description_el)
             time.sleep(0.5)
             description_el.send_keys(Keys.CONTROL + "a")
             time.sleep(0.3)
