@@ -74,12 +74,12 @@ def get_accounts(provider: str) -> List[dict]:
 
     if not os.path.exists(cache_path):
         # Create the cache file
-        with open(cache_path, 'w') as file:
+        with open(cache_path, 'w', encoding='utf-8') as file:
             json.dump({
                 "accounts": []
             }, file, indent=4)
 
-    with open(cache_path, 'r') as file:
+    with open(cache_path, 'r', encoding='utf-8') as file:
         parsed = json.load(file)
 
         if parsed is None:
@@ -155,7 +155,7 @@ def get_products() -> List[dict]:
                 "products": []
             }, file, indent=4)
 
-    with open(get_afm_cache_path(), 'r') as file:
+    with open(get_afm_cache_path(), 'r', encoding='utf-8') as file:
         parsed = json.load(file)
 
         # Get the products

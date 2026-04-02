@@ -45,14 +45,58 @@ def get_active_model() -> str | None:
     return _selected_model
 
 
+_SYSTEM_PROMPT = (
+    "You are a content generation assistant. You NEVER engage in conversation. "
+    "You NEVER ask questions. You NEVER say 'sure', 'of course', 'here you go', "
+    "'let me know', or any pleasantries. You ONLY output exactly what is requested. "
+    "No preamble, no explanation, no meta-commentary. Just the raw content."
+)
+
+
 def generate_text(prompt: str, model_name: str = None) -> str:
     provider = _llm_provider or get_llm_provider()
-    model = model_name or _selected_model
 
+    # Build ordered list: primary first, then fallback
+    # Each provider resolves its own model independently
     if provider == "pollinations":
-        return _generate_text_pollinations(prompt, model)
+        providers = [
+            ("pollinations", lambda: _generate_text_pollinations(prompt, model_name)),
+            ("ollama", lambda: _generate_text_ollama(prompt, None)),
+        ]
+    else:
+        providers = [
+            ("ollama", lambda: _generate_text_ollama(prompt, model_name or _selected_model)),
+            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
+        ]
 
-    return _generate_text_ollama(prompt, model)
+    last_error = None
+    for name, fn in providers:
+        try:
+            result = fn()
+            if _is_garbage_response(result):
+                raise RuntimeError(f"LLM returned a conversational/garbage response: {result[:80]}")
+            return result
+        except Exception as e:
+            print(f"  ⚠ LLM provider '{name}' failed: {e}")
+            last_error = e
+
+    raise RuntimeError(f"All LLM providers failed. Last error: {last_error}")
+
+
+def _is_garbage_response(text: str) -> bool:
+    """Detect conversational responses that aren't actual content."""
+    if not text or len(text.strip()) < 10:
+        return True
+    low = text.strip().lower()
+    garbage_phrases = [
+        "sure thing", "sure!", "of course", "let me know",
+        "please provide", "please let me know", "what topic",
+        "what would you like", "i'd be happy to", "i'd love to",
+        "here's", "here is", "certainly!", "absolutely!",
+    ]
+    # Check if the response STARTS with a garbage phrase (first 60 chars)
+    start = low[:60]
+    return any(phrase in start for phrase in garbage_phrases)
 
 
 def _generate_text_pollinations(prompt: str, model: str = None) -> str:
@@ -62,15 +106,18 @@ def _generate_text_pollinations(prompt: str, model: str = None) -> str:
 
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
         "stream": False,
     }
 
     last_error = None
-    for attempt in range(5):
+    for attempt in range(3):
         if attempt > 0:
             wait = 10 * attempt
-            print(f"[Pollinations] Retry {attempt}/4, waiting {wait}s...")
+            print(f"[Pollinations] Retry {attempt}/2, waiting {wait}s...")
             _time.sleep(wait)
 
         # Try POST endpoint first
@@ -99,18 +146,22 @@ def _generate_text_pollinations(prompt: str, model: str = None) -> str:
         except Exception as e2:
             last_error = e2
 
-    raise RuntimeError(f"Pollinations text generation failed after 5 attempts: {last_error}")
+    raise RuntimeError(f"Pollinations text generation failed after 3 attempts: {last_error}")
 
 
 def _generate_text_ollama(prompt: str, model: str = None) -> str:
     if not model:
-        raise RuntimeError(
-            "No Ollama model selected. Call select_model() first or pass model_name."
-        )
+        from config import get_ollama_model
+        model = get_ollama_model()
+    if not model:
+        raise RuntimeError("No Ollama model configured")
 
     response = _ollama_client().chat(
         model=model,
-        messages=[{"role": "user", "content": prompt}],
+        messages=[
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
     )
 
     return response["message"]["content"].strip()

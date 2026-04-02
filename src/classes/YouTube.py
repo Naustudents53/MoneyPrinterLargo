@@ -74,6 +74,7 @@ class YouTube:
         self._language: str = language
 
         self.images = []
+        self._used_stock_urls: set = set()
 
         # Initialize the Firefox profile
         self.options: Options = Options()
@@ -178,7 +179,16 @@ class YouTube:
             pass
 
         completion = self.generate_response(
-            f"Please generate a specific video idea that takes about the following topic: {self.niche}. Make it exactly one sentence. Only return the topic, nothing else. YOU MUST WRITE YOUR RESPONSE IN {self.language}.{previous_topics}"
+            f"""Generate ONE specific, focused topic for a short video within this niche: {self.niche}
+
+The topic must be ONE concrete story, event, mystery, or fact — NOT a broad category.
+
+BAD example: "Curiosidades del antiguo Egipto" (too broad, leads to random facts)
+GOOD example: "La maldición de la tumba de Tutankamón: ¿qué les pasó a los arqueólogos?" (one specific story)
+GOOD example: "¿Por qué los romanos usaban orina para lavar la ropa?" (one specific curiosity)
+GOOD example: "El día que un asteroide exterminó al 75% de la vida en la Tierra" (one specific event)
+
+Return ONLY the topic in one sentence. Write in {self.language}. Nothing else.{previous_topics}"""
         )
 
         if not completion:
@@ -196,27 +206,25 @@ class YouTube:
             script (str): The script of the video.
         """
         sentence_length = get_script_sentence_length()
-        prompt = f"""
-        Write a script for a short video narration in EXACTLY {sentence_length} sentences about the subject below.
+        prompt = f"""Write a narration script for a short video in EXACTLY {sentence_length} sentences.
 
-        STYLE GUIDELINES:
-        - Write as if you are a passionate storyteller sharing fascinating knowledge with a friend.
-        - Start with a hook: an intriguing question, a surprising fact, or a bold statement that grabs attention immediately.
-        - Build curiosity throughout — each sentence should make the viewer want to hear the next one.
-        - Use vivid, sensory language. Instead of "black holes are big", say "a single black hole can swallow a star whole in seconds".
-        - End with a thought-provoking conclusion that leaves the viewer thinking.
-        - Keep sentences flowing naturally, as if spoken aloud. Avoid robotic or overly formal tone.
+TOPIC: {self.subject}
 
-        STRICT RULES:
-        - EXACTLY {sentence_length} sentences. No more, no less.
-        - Each sentence should be SHORT and punchy (under 20 words ideally).
-        - NO markdown, NO formatting, NO titles, NO bullet points.
-        - NO "welcome to this video", NO "voiceover", NO "narrator", NO meta-references.
-        - ONLY return the raw script text. Nothing else.
-        - YOU MUST WRITE ENTIRELY IN {self.language}. Every single word must be in {self.language}.
+NARRATIVE STRUCTURE (follow this order):
+1. HOOK (sentence 1): Start with a question or shocking fact that grabs attention. Examples: "¿Sabías que...?", "¿Qué pasaría si...?", "Imagina que...", "Hay algo que nadie te contó sobre..."
+2. CONTEXT (sentences 2-3): Set the scene. When and where does this happen? What's the background?
+3. DEVELOPMENT (sentences 4-{sentence_length - 2}): Go deeper into the topic. Reveal details, facts, consequences. Build tension or curiosity. Each sentence should ADVANCE the story, not jump to unrelated facts.
+4. CONCLUSION (last 1-2 sentences): End with a powerful thought, a twist, or a mind-blowing takeaway.
 
-        Subject: {self.subject}
-        """
+CRITICAL RULES:
+- Stay on ONE topic throughout. Do NOT list random facts. Tell ONE story from start to finish.
+- Every sentence must connect to the previous one. The script must feel like a continuous narrative, not a list.
+- EXACTLY {sentence_length} sentences. Short and punchy (under 20 words each).
+- NO markdown, NO formatting, NO titles, NO bullet points.
+- NO "welcome", NO "voiceover", NO meta-references.
+- ONLY return the raw script text. Nothing else.
+- WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.
+"""
         completion = self.generate_response(prompt)
 
         # Apply regex to remove *
@@ -243,18 +251,25 @@ class YouTube:
             metadata (dict): The generated metadata.
         """
         title = self.generate_response(
-            f"Please generate a YouTube Video Title for the following subject, including hashtags: {self.subject}. Only return the title, nothing else. Limit the title under 80 characters. Be concise. YOU MUST WRITE THE TITLE IN {self.language}."
+            f"Please generate a YouTube Video Title for the following subject, including hashtags: {self.subject}. Only return the title, nothing else. Limit the title under 80 characters. Be concise. YOU MUST WRITE THE TITLE IN {self.language}. Do NOT wrap the title in quotes."
         )
 
-        # Truncate if still too long instead of retrying forever
+        # Strip quotes the LLM might add
+        title = title.strip().strip('"').strip("'").strip('"').strip('"')
+
+        # If truncation would cut a hashtag, remove hashtags instead
         if len(title) > 100:
-            if get_verbose():
-                warning(f"Generated Title is {len(title)} chars, truncating to 100...")
-            title = title[:97] + "..."
+            if "#" in title:
+                title = title[:title.index("#")].strip()
+            if len(title) > 100:
+                title = title[:100]
 
         description = self.generate_response(
-            f"Please generate a YouTube Video Description for the following script: {self.script}. Only return the description, nothing else. YOU MUST WRITE THE DESCRIPTION IN {self.language}."
+            f"Please generate a YouTube Video Description for the following script: {self.script}. Only return the description, nothing else. Do NOT wrap the description in quotes. YOU MUST WRITE THE DESCRIPTION IN {self.language}."
         )
+
+        # Strip quotes the LLM might add
+        description = description.strip().strip('"').strip("'").strip('\u201c').strip('\u201d')
 
         self.metadata = {"title": title, "description": description}
 
@@ -269,27 +284,38 @@ class YouTube:
         """
         n_prompts = 6
 
-        prompt = f"""Generate {n_prompts} Image Prompts for AI Image Generation.
+        # Split script into sections so the LLM knows exactly what each image must show
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', self.script) if s.strip()]
+        sections = []
+        per_section = max(1, len(sentences) // n_prompts)
+        for i in range(n_prompts):
+            start = i * per_section
+            end = start + per_section if i < n_prompts - 1 else len(sentences)
+            section_text = ' '.join(sentences[start:end])
+            if section_text:
+                sections.append(section_text)
+        # Pad if we got fewer sections
+        while len(sections) < n_prompts:
+            sections.append(self.subject)
 
-Topic: {self.subject}
-Script: {self.script}
+        sections_text = ""
+        for i, sec in enumerate(sections):
+            sections_text += f"\nSECTION {i+1}: \"{sec}\"\n"
 
-RULES:
-- Each prompt must visually illustrate a SPECIFIC part of the script, in order.
-- Be CONCRETE and LITERAL: describe exactly what should appear (objects, people, setting, lighting, colors, textures).
-- NEVER use abstract words like "visualization", "interpretation", "concept", "essence", "metaphor".
-- Each prompt MUST use a DIFFERENT visual style from this list (vary them, do not repeat):
-  * "cinematic wide shot, dramatic lighting, film grain, 8K ultra HD"
-  * "extreme close-up macro shot, shallow depth of field, bokeh background"
-  * "aerial drone view, sweeping landscape, golden hour lighting"
-  * "dark moody atmosphere, neon accents, volumetric fog, cyberpunk aesthetic"
-  * "hyper-realistic digital painting, vibrant saturated colors, detailed textures"
-  * "documentary photography style, natural light, raw authentic feel"
-- Each prompt must be detailed (40-80 words) describing the full scene composition.
-- Use only ASCII characters. Write prompts in English for best image quality.
+        prompt = f"""Generate exactly {n_prompts} image prompts for a video about: {self.subject}
 
-Return ONLY a JSON array of {n_prompts} strings.
-DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
+The script has been divided into {n_prompts} sections. Each image MUST match its section:
+{sections_text}
+INSTRUCTIONS:
+- Image 1 MUST illustrate SECTION 1, Image 2 MUST illustrate SECTION 2, etc.
+- Describe the LITERAL content of each section as a visual scene.
+- Example: if a section says "The ancient Egyptians built massive pyramids", write: "Massive Egyptian pyramids under construction, thousands of workers pulling limestone blocks, desert sand, blue sky, cranes made of wood, cinematic wide angle"
+- Be SPECIFIC: name real things (animals, buildings, objects, places, people).
+- Include: camera angle, lighting, colors, environment details.
+- Write in English. Each prompt: 30-60 words.
+- FORBIDDEN: visualization, concept, essence, metaphor, abstract, symbolic, interpretation.
+
+Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         completion = (
             str(self.generate_response(prompt))
@@ -316,18 +342,28 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
                 except Exception:
                     pass
 
-        # Fallback if parsing failed
+        # Fallback if parsing failed or too few prompts
+        fallback_prompts = [
+            f"{self.subject}, realistic photograph, wide angle, natural lighting, highly detailed, 8K",
+            f"{self.subject}, close-up detail shot, soft natural light, vivid colors, photorealistic",
+            f"{self.subject}, panoramic landscape view, golden hour, cinematic composition, detailed",
+            f"{self.subject}, historical illustration style, warm earth tones, detailed environment",
+            f"{self.subject}, overhead aerial perspective, dramatic clouds, vast scale, ultra detailed",
+            f"{self.subject}, documentary photograph, authentic setting, natural atmosphere, 4K quality",
+        ]
+
         if not image_prompts or not isinstance(image_prompts, list):
             if get_verbose():
                 warning("Failed to parse image prompts, using fallback prompts")
-            image_prompts = [
-                f"{self.subject}, cinematic wide shot, dramatic lighting, film grain, 8K ultra HD, detailed scene",
-                f"{self.subject}, extreme close-up macro shot, shallow depth of field, bokeh background, vivid colors",
-                f"{self.subject}, aerial drone view, sweeping landscape, golden hour lighting, breathtaking",
-                f"{self.subject}, dark moody atmosphere, neon accents, volumetric fog, cyberpunk aesthetic",
-                f"{self.subject}, hyper-realistic digital painting, vibrant saturated colors, detailed textures",
-                f"{self.subject}, documentary photography style, natural light, raw authentic feel, 4K",
-            ]
+            image_prompts = fallback_prompts
+        elif len(image_prompts) < n_prompts:
+            if get_verbose():
+                warning(f"Only got {len(image_prompts)} prompts, padding to {n_prompts}")
+            # Pad with fallback prompts to reach n_prompts
+            for fp in fallback_prompts:
+                if len(image_prompts) >= n_prompts:
+                    break
+                image_prompts.append(fp)
 
         # Limit to n_prompts
         image_prompts = image_prompts[:n_prompts]
@@ -364,22 +400,27 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
         return image_path
 
     def _try_huggingface(self, prompt: str) -> bytes:
-        """Try HuggingFace Inference API (new router URL)."""
+        """Try HuggingFace Inference API. Requires free HF token."""
+        from config import get_hf_api_key
+        hf_token = get_hf_api_key()
+        if not hf_token:
+            raise RuntimeError("HuggingFace token not configured (hf_api_key in config.json)")
+
         print(colored(f"    [HuggingFace] Generating...", "cyan"), flush=True)
+        headers = {"Authorization": f"Bearer {hf_token}"}
+
         models = [
-            "black-forest-labs/FLUX.1-schnell",
             "stabilityai/stable-diffusion-xl-base-1.0",
         ]
-        headers = {}
-        hf_token = os.environ.get("HF_TOKEN", "")
-        if hf_token:
-            headers["Authorization"] = f"Bearer {hf_token}"
 
         for model in models:
             try:
-                # Use the NEW router URL (old api-inference.huggingface.co is deprecated)
-                url = f"https://router.huggingface.co/hf-inference/models/{model}"
-                resp = requests.post(url, headers=headers, json={"inputs": prompt[:200]}, timeout=120)
+                resp = requests.post(
+                    f"https://router.huggingface.co/hf-inference/models/{model}",
+                    headers=headers,
+                    json={"inputs": prompt[:300]},
+                    timeout=120,
+                )
                 ct = resp.headers.get("content-type", "")
                 if resp.status_code == 200 and ("image" in ct or len(resp.content) > 5000):
                     print(colored("OK", "green"))
@@ -402,54 +443,205 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
             return resp.content
         raise RuntimeError(f"Pollinations returned status {resp.status_code}")
 
-    def _try_ai_horde(self, prompt: str) -> bytes:
-        """Try AI Horde - free crowdsourced Stable Diffusion (512x512 for speed)."""
-        print(colored(f"    [AI Horde] Submitting...", "cyan"), end=" ", flush=True)
-        headers = {"apikey": "0000000000", "Content-Type": "application/json"}
+    def _try_pollinations_turbo(self, prompt: str) -> bytes:
+        """Try Pollinations.ai with turbo model (faster, more available than FLUX)."""
+        import urllib.parse
+        short_prompt = prompt[:500]
+        encoded = urllib.parse.quote(short_prompt)
+        seed = int(time.time()) + 42
+        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true&seed={seed}&model=turbo"
+        print(colored(f"    [Pollinations turbo] Generating...", "cyan"), flush=True)
+        resp = requests.get(url, timeout=180)
+        if resp.status_code == 200 and len(resp.content) > 5000:
+            print(colored("OK", "green"))
+            return resp.content
+        raise RuntimeError(f"Pollinations turbo returned status {resp.status_code}")
+
+    def _try_pollinations_realism(self, prompt: str) -> bytes:
+        """Try Pollinations.ai with flux-realism model (photorealistic style)."""
+        import urllib.parse
+        short_prompt = prompt[:500]
+        encoded = urllib.parse.quote(short_prompt)
+        seed = int(time.time()) + 99
+        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true&seed={seed}&model=flux-realism"
+        print(colored(f"    [Pollinations flux-realism] Generating...", "cyan"), flush=True)
+        resp = requests.get(url, timeout=180)
+        if resp.status_code == 200 and len(resp.content) > 5000:
+            print(colored("OK", "green"))
+            return resp.content
+        raise RuntimeError(f"Pollinations flux-realism returned status {resp.status_code}")
+
+    def _try_ideogram(self, prompt: str) -> bytes:
+        """Try Ideogram API (very high quality, free tier ~25 images/day)."""
+        from config import get_ideogram_api_key
+        api_key = get_ideogram_api_key()
+        if not api_key:
+            raise RuntimeError("Ideogram API key not configured")
+
+        print(colored(f"    [Ideogram] Generating...", "cyan"), flush=True)
+        headers = {"Api-Key": api_key, "Content-Type": "application/json"}
         payload = {
-            "prompt": prompt[:200] + " ### ultra detailed, cinematic, 4k",
-            "params": {
-                "width": 512,
-                "height": 512,
-                "steps": 15,
-                "cfg_scale": 7,
-                "sampler_name": "k_euler",
-            },
-            "nsfw": False,
-            "models": ["stable_diffusion"],
-            "r2": True,
+            "image_request": {
+                "prompt": prompt[:1000],
+                "model": "V_2",
+                "aspect_ratio": "ASPECT_9_16",
+            }
         }
         resp = requests.post(
-            "https://stablehorde.net/api/v2/generate/async",
-            json=payload, headers=headers, timeout=30,
+            "https://api.ideogram.ai/generate",
+            headers=headers, json=payload, timeout=120,
         )
-        if resp.status_code not in (200, 202):
-            raise RuntimeError(f"AI Horde submit failed: {resp.status_code}")
+        resp.raise_for_status()
+        data = resp.json()
+        images = data.get("data", [])
+        if not images:
+            raise RuntimeError("Ideogram: no images returned")
+        img_url = images[0].get("url", "")
+        if not img_url:
+            raise RuntimeError("Ideogram: no image URL")
+        img_resp = requests.get(img_url, timeout=60)
+        if img_resp.status_code == 200 and len(img_resp.content) > 5000:
+            print(colored("OK", "green"))
+            return img_resp.content
+        raise RuntimeError("Ideogram: failed to download image")
 
-        job_id = resp.json().get("id")
-        if not job_id:
-            raise RuntimeError("AI Horde: no job ID returned")
+    def _try_leonardo(self, prompt: str) -> bytes:
+        """Try Leonardo AI API (excellent quality, $5 free credit)."""
+        from config import get_leonardo_api_key
+        api_key = get_leonardo_api_key()
+        if not api_key:
+            raise RuntimeError("Leonardo AI API key not configured")
 
-        for tick in range(40):  # max ~3.5 min
+        print(colored(f"    [Leonardo AI] Generating...", "cyan"), flush=True)
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "prompt": prompt[:1000],
+            "modelId": "b24e16ff-06e3-43eb-8d33-4416c2d75876",  # Leonardo Lightning XL
+            "width": 576,
+            "height": 1024,
+            "num_images": 1,
+        }
+        resp = requests.post(
+            "https://cloud.leonardo.ai/api/rest/v1/generations",
+            headers=headers, json=payload, timeout=30,
+        )
+        resp.raise_for_status()
+        gen_id = resp.json().get("sdGenerationJob", {}).get("generationId", "")
+        if not gen_id:
+            raise RuntimeError("Leonardo: no generation ID returned")
+
+        # Poll for completion
+        for _ in range(30):
             time.sleep(5)
-            status = requests.get(
-                f"https://stablehorde.net/api/v2/generate/status/{job_id}", timeout=15,
-            ).json()
-            q = status.get("queue_position", "?")
-            if tick % 4 == 0:
-                print(colored(f"q={q}", "cyan"), end=" ", flush=True)
-            if status.get("done"):
-                gens = status.get("generations", [])
-                if gens and gens[0].get("img"):
-                    img_resp = requests.get(gens[0]["img"], timeout=60)
-                    if img_resp.status_code == 200 and len(img_resp.content) > 1000:
+            status_resp = requests.get(
+                f"https://cloud.leonardo.ai/api/rest/v1/generations/{gen_id}",
+                headers=headers, timeout=15,
+            )
+            status_resp.raise_for_status()
+            gen = status_resp.json().get("generations_by_pk", {})
+            status = gen.get("status", "")
+            if status == "COMPLETE":
+                images = gen.get("generated_images", [])
+                if images:
+                    img_url = images[0].get("url", "")
+                    img_resp = requests.get(img_url, timeout=60)
+                    if img_resp.status_code == 200 and len(img_resp.content) > 5000:
                         print(colored("OK", "green"))
                         return img_resp.content
-                raise RuntimeError("AI Horde: no image in result")
-            if status.get("faulted"):
-                raise RuntimeError("AI Horde: job faulted")
+                raise RuntimeError("Leonardo: no image in result")
+            elif status == "FAILED":
+                raise RuntimeError("Leonardo: generation failed")
+        raise RuntimeError("Leonardo: timeout waiting for generation")
 
-        raise RuntimeError("AI Horde: timeout")
+    def _extract_search_query(self, prompt: str) -> str:
+        """Extract clean search keywords from an AI image prompt for stock photo search."""
+        import re
+        # Remove common AI style/photography keywords
+        style_words = r'\b(cinematic|dramatic|lighting|8K|4K|ultra|HD|macro|bokeh|aerial|drone|cyberpunk|hyper-realistic|vibrant|saturated|documentary|photography|shot|wide|close-up|extreme|detailed|textures?|colors?|film grain|neon|volumetric|fog|aesthetic|digital painting|golden hour|breathtaking|raw|authentic|feel|shallow depth|field|sweeping|portrait|style|composition|render|realistic|illustration|art|scene|view|high quality|resolution|background|foreground|angle|perspective|moody|atmosphere|accent|dark|light)\b'
+        cleaned = re.sub(style_words, '', prompt, flags=re.IGNORECASE)
+        cleaned = re.sub(r'[,\-:;"\'\(\)]', ' ', cleaned)
+        cleaned = ' '.join(cleaned.split())
+        # Take meaningful words (3-6) for search
+        words = [w for w in cleaned.split() if len(w) > 2][:6]
+        query = ' '.join(words) if words else self.subject
+        return query
+
+    def _try_pexels(self, prompt: str) -> bytes:
+        """Try Pexels stock photos API (free, reliable, HD). Requires free API key."""
+        from config import get_pexels_api_key
+        api_key = get_pexels_api_key()
+        if not api_key:
+            raise RuntimeError("Pexels API key not configured")
+
+        import urllib.parse
+        import random
+        query = self._extract_search_query(prompt)
+        print(colored(f"    [Pexels] Searching: {query[:50]}...", "cyan"), flush=True)
+        headers = {"Authorization": api_key}
+        # Fetch more results and pick a random page for more variety
+        page = random.randint(1, 3)
+        resp = requests.get(
+            f"https://api.pexels.com/v1/search?query={urllib.parse.quote(query)}&per_page=15&page={page}",
+            headers=headers, timeout=30,
+        )
+        resp.raise_for_status()
+        photos = resp.json().get("photos", [])
+        if not photos:
+            raise RuntimeError("Pexels: no photos found")
+
+        # Filter out already-used images
+        available = [p for p in photos if p["src"]["large2x"] not in self._used_stock_urls]
+        if not available:
+            available = photos  # all used, allow repeats as last resort
+
+        photo = random.choice(available)
+        img_url = photo["src"]["large2x"]  # high-res version
+        self._used_stock_urls.add(img_url)
+        img_resp = requests.get(img_url, timeout=60)
+        if img_resp.status_code == 200 and len(img_resp.content) > 5000:
+            print(colored("OK", "green"))
+            return img_resp.content
+        raise RuntimeError("Pexels: failed to download image")
+
+    def _try_pixabay(self, prompt: str) -> bytes:
+        """Try Pixabay stock photos API (free, reliable, HD). Requires free API key."""
+        from config import get_pixabay_api_key
+        api_key = get_pixabay_api_key()
+        if not api_key:
+            raise RuntimeError("Pixabay API key not configured")
+
+        import urllib.parse
+        import random
+        query = self._extract_search_query(prompt)
+        print(colored(f"    [Pixabay] Searching: {query[:50]}...", "cyan"), flush=True)
+        page = random.randint(1, 3)
+        resp = requests.get(
+            f"https://pixabay.com/api/?key={api_key}&q={urllib.parse.quote(query)}&image_type=photo&per_page=15&page={page}&min_width=1080",
+            timeout=30,
+        )
+        resp.raise_for_status()
+        hits = resp.json().get("hits", [])
+        if not hits:
+            raise RuntimeError("Pixabay: no photos found")
+
+        # Filter out already-used images
+        available = [h for h in hits if h.get("largeImageURL", "") not in self._used_stock_urls]
+        if not available:
+            available = hits
+
+        hit = random.choice(available)
+        img_url = hit.get("largeImageURL", hit.get("webformatURL", ""))
+        if not img_url:
+            raise RuntimeError("Pixabay: no image URL in result")
+        self._used_stock_urls.add(img_url)
+        img_resp = requests.get(img_url, timeout=60)
+        if img_resp.status_code == 200 and len(img_resp.content) > 5000:
+            print(colored("OK", "green"))
+            return img_resp.content
+        raise RuntimeError("Pixabay: failed to download image")
 
     def _try_picsum_stock(self, prompt: str) -> bytes:
         """Fallback: HD stock photo from Picsum (fast, always works)."""
@@ -527,90 +719,27 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
 
         return image_path
 
-    def _submit_horde_batch(self, prompts: List[str]) -> List[str]:
-        """Submit ALL image prompts to AI Horde at once, returns job IDs."""
-        headers = {"apikey": "0000000000", "Content-Type": "application/json"}
-        job_ids = []
-        for prompt in prompts:
-            payload = {
-                "prompt": prompt[:200] + " ### ultra detailed, cinematic, 4k",
-                "params": {"width": 512, "height": 512, "steps": 15, "cfg_scale": 7, "sampler_name": "k_euler"},
-                "nsfw": False,
-                "models": ["stable_diffusion"],
-                "r2": True,
-            }
-            try:
-                resp = requests.post(
-                    "https://stablehorde.net/api/v2/generate/async",
-                    json=payload, headers=headers, timeout=30,
-                )
-                if resp.status_code in (200, 202):
-                    jid = resp.json().get("id", "")
-                    job_ids.append(jid)
-                    print(colored(f"    Submitted job {jid[:8]}...", "cyan"))
-                else:
-                    job_ids.append("")
-                    print(colored(f"    Submit failed: {resp.status_code}", "red"))
-            except Exception as e:
-                job_ids.append("")
-                print(colored(f"    Submit error: {str(e)[:60]}", "red"))
-        return job_ids
-
-    def _collect_horde_batch(self, job_ids: List[str], prompts: List[str]) -> List[bytes]:
-        """Poll all AI Horde jobs until done (parallel wait = much faster)."""
-        results = [None] * len(job_ids)
-        pending = {i for i, jid in enumerate(job_ids) if jid}
-
-        for tick in range(40):  # max ~3.5 min
-            if not pending:
-                break
-            time.sleep(5)
-            done_this_round = []
-            for i in list(pending):
-                try:
-                    st = requests.get(
-                        f"https://stablehorde.net/api/v2/generate/status/{job_ids[i]}", timeout=10,
-                    ).json()
-                    if st.get("done"):
-                        gens = st.get("generations", [])
-                        if gens and gens[0].get("img"):
-                            img_resp = requests.get(gens[0]["img"], timeout=60)
-                            if img_resp.status_code == 200 and len(img_resp.content) > 1000:
-                                results[i] = img_resp.content
-                                print(colored(f"    Image {i+1} ready ({len(img_resp.content)//1024}KB)", "green"))
-                        done_this_round.append(i)
-                    elif st.get("faulted"):
-                        done_this_round.append(i)
-                except Exception:
-                    pass
-            for i in done_this_round:
-                pending.discard(i)
-            if pending and tick % 3 == 0:
-                queues = []
-                for i in pending:
-                    try:
-                        st = requests.get(f"https://stablehorde.net/api/v2/generate/status/{job_ids[i]}", timeout=5).json()
-                        queues.append(str(st.get("queue_position", "?")))
-                    except Exception:
-                        queues.append("?")
-                print(colored(f"    [{tick*5}s] Waiting... queues: [{', '.join(queues)}]", "cyan"))
-
-        return results
-
     def generate_images_batch(self, prompts: List[str]) -> None:
         """
-        Generate ALL images using Pollinations.ai as primary provider (free, 1080x1920, good quality).
-        Falls back to HuggingFace → AI Horde → Pillow for any that fail.
+        Generate ALL images using multiple providers in cascade.
+        Pollinations FLUX → Pollinations turbo → Pollinations flux-realism → HuggingFace → Pillow fallback.
         """
-        print(colored(f"\n  [Images] Generating {len(prompts)} images via Pollinations.ai...", "blue"))
+        print(colored(f"\n  [Images] Generating {len(prompts)} images...", "blue"))
 
         for i, prompt in enumerate(prompts):
             print(colored(f"\n  Image {i+1}/{len(prompts)}", "blue"))
             saved = False
             for name, fn in [
-                ("Pollinations.ai", self._try_pollinations),
+                # Tier 1: Free unlimited AI generators (no daily limits)
+                ("Pollinations FLUX", self._try_pollinations),
+                ("Pollinations turbo", self._try_pollinations_turbo),
+                ("Pollinations flux-realism", self._try_pollinations_realism),
+                # Tier 2: High-quality AI generators (free credit)
+                ("Leonardo AI", self._try_leonardo),
                 ("HuggingFace", self._try_huggingface),
-                ("AI Horde", self._try_ai_horde),
+                # Tier 3: Stock photos (reliable, always available)
+                ("Pexels", self._try_pexels),
+                ("Pixabay", self._try_pixabay),
             ]:
                 try:
                     img_bytes = fn(prompt)
@@ -643,9 +772,10 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
             path (str): The path to the generated image.
         """
         providers = [
-            ("Pollinations.ai", self._try_pollinations),
+            ("Pollinations FLUX", self._try_pollinations),
+            ("Pollinations turbo", self._try_pollinations_turbo),
+            ("Pollinations flux-realism", self._try_pollinations_realism),
             ("HuggingFace", self._try_huggingface),
-            ("AI Horde", self._try_ai_horde),
         ]
 
         print(colored(f"  [Image] {prompt[:80]}...", "blue"))
@@ -703,7 +833,7 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
 
         cache = get_youtube_cache_path()
 
-        with open(cache, "r") as file:
+        with open(cache, "r", encoding="utf-8") as file:
             previous_json = json.loads(file.read())
 
             # Find our account
@@ -713,7 +843,7 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
                     account["videos"].append(video)
 
             # Commit changes
-            with open(cache, "w") as f:
+            with open(cache, "w", encoding="utf-8") as f:
                 f.write(json.dumps(previous_json))
 
     def generate_subtitles(self, audio_path: str) -> str:
@@ -915,42 +1045,40 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
 
         clips = []
         tot_dur = 0
-        # Add downloaded clips over and over until the duration of the audio (max_duration) has been reached
-        while tot_dur < max_duration:
-            for image_path in self.images:
-                clip = ImageClip(image_path)
-                clip.duration = req_dur
-                clip = clip.set_fps(30)
+        # Add each image once, distributing duration evenly
+        for image_path in self.images:
+            if tot_dur >= max_duration:
+                break
+            clip = ImageClip(image_path)
+            clip.duration = req_dur
+            clip = clip.set_fps(30)
 
-                # Not all images are same size,
-                # so we need to resize them
-                if round((clip.w / clip.h), 4) < 0.5625:
-                    if get_verbose():
-                        info(f" => Resizing Image: {image_path} to 1080x1920")
-                    clip = crop(
-                        clip,
-                        width=clip.w,
-                        height=round(clip.w / 0.5625),
-                        x_center=clip.w / 2,
-                        y_center=clip.h / 2,
-                    )
-                else:
-                    if get_verbose():
-                        info(f" => Resizing Image: {image_path} to 1920x1080")
-                    clip = crop(
-                        clip,
-                        width=round(0.5625 * clip.h),
-                        height=clip.h,
-                        x_center=clip.w / 2,
-                        y_center=clip.h / 2,
-                    )
-                clip = clip.resize((1080, 1920))
+            # Not all images are same size,
+            # so we need to resize them
+            if round((clip.w / clip.h), 4) < 0.5625:
+                if get_verbose():
+                    info(f" => Resizing Image: {image_path} to 1080x1920")
+                clip = crop(
+                    clip,
+                    width=clip.w,
+                    height=round(clip.w / 0.5625),
+                    x_center=clip.w / 2,
+                    y_center=clip.h / 2,
+                )
+            else:
+                if get_verbose():
+                    info(f" => Resizing Image: {image_path} to 1920x1080")
+                clip = crop(
+                    clip,
+                    width=round(0.5625 * clip.h),
+                    height=clip.h,
+                    x_center=clip.w / 2,
+                    y_center=clip.h / 2,
+                )
+            clip = clip.resize((1080, 1920))
 
-                # FX (Fade In)
-                # clip = clip.fadein(2)
-
-                clips.append(clip)
-                tot_dur += clip.duration
+            clips.append(clip)
+            tot_dur += clip.duration
 
         final_clip = concatenate_videoclips(clips)
         final_clip = final_clip.set_fps(30)
@@ -1053,6 +1181,475 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
         self.video_path = os.path.abspath(path)
 
         return path
+
+    # ============================================================
+    #  LONG VIDEO PIPELINE (5-10 minutes, 16:9 landscape)
+    # ============================================================
+
+    def generate_long_script(self) -> str:
+        """
+        Generates a structured long-form script with chapters for a 5-10 minute video.
+        The script is split into: hook, 4-5 body sections, and a closing.
+        """
+        prompt = f"""You are an expert documentary narrator and scriptwriter.
+Write a compelling 5-to-7-minute narration script about the following topic.
+
+Topic: {self.subject}
+
+STRUCTURE (use these exact section markers):
+[INTRO]
+A powerful opening hook (2-3 sentences). Start with a mind-blowing fact, a provocative question, or a bold claim that instantly grabs attention.
+
+[SECTION 1: <title>]
+First main point (4-5 sentences). Dive deep into the first fascinating aspect of the topic.
+
+[SECTION 2: <title>]
+Second main point (4-5 sentences). Explore a different angle or build on the previous section.
+
+[SECTION 3: <title>]
+Third main point (4-5 sentences). Reveal surprising connections or lesser-known facts.
+
+[SECTION 4: <title>]
+Fourth main point (4-5 sentences). The climax — the most mind-blowing part of the topic.
+
+[CLOSING]
+A memorable conclusion (2-3 sentences). End with a thought-provoking reflection that stays with the viewer.
+
+STYLE RULES:
+- Write like a passionate storyteller, NOT a textbook. Use vivid, sensory language.
+- Each sentence should flow naturally into the next, as if spoken aloud.
+- Use rhetorical questions, surprising comparisons, and emotional hooks.
+- Keep sentences SHORT and punchy (under 20 words each).
+- Total script should be approximately 800-1200 words (5-7 minutes when spoken).
+- WRITE ENTIRELY IN {self.language}. Every single word must be in {self.language}.
+- DO NOT include any stage directions, speaker labels, or meta-text.
+- DO NOT use markdown formatting, bullet points, or numbered lists.
+- ONLY return the script with the section markers as shown above.
+"""
+        completion = self.generate_response(prompt)
+        completion = re.sub(r"\*", "", completion)
+
+        if not completion or len(completion) < 200:
+            error("Long script generation failed or too short.")
+            raise RuntimeError("Failed to generate long script")
+
+        self.script = completion
+
+        if get_verbose():
+            word_count = len(completion.split())
+            info(f" => Generated long script: {word_count} words")
+
+        return completion
+
+    def generate_long_metadata(self) -> dict:
+        """
+        Generates metadata optimized for long-form YouTube videos.
+        """
+        title = self.generate_response(
+            f"Generate a compelling YouTube video title for this topic: {self.subject}. "
+            f"Make it intriguing and click-worthy but NOT clickbait. Include 1-2 relevant hashtags. "
+            f"Keep it under 80 characters. Only return the title. "
+            f"YOU MUST WRITE IN {self.language}."
+        )
+
+        if len(title) > 100:
+            title = title[:97] + "..."
+
+        description = self.generate_response(
+            f"""Generate a YouTube video description for a long-form video with this script:
+
+{self.script[:2000]}
+
+Include:
+- A brief 2-sentence summary of the video
+- 5-8 relevant hashtags
+- A call to action (subscribe, like, comment)
+
+Write entirely in {self.language}. Only return the description."""
+        )
+
+        self.metadata = {"title": title, "description": description}
+        return self.metadata
+
+    def generate_long_prompts(self) -> List[str]:
+        """
+        Generates 15-18 image prompts for a long video, covering each section of the script.
+        """
+        n_prompts = 16
+
+        prompt = f"""Generate exactly {n_prompts} Image Prompts for AI Image Generation.
+
+This is for a long-form documentary-style video. The images will be shown in 16:9 landscape format.
+
+Script:
+{self.script[:3000]}
+
+RULES:
+- Generate EXACTLY {n_prompts} prompts, distributed across ALL sections of the script.
+- Each prompt must illustrate a SPECIFIC moment or concept from the script.
+- Be CONCRETE: describe exactly what appears (objects, people, setting, lighting, colors, textures, composition).
+- NEVER use abstract words like "visualization", "concept", "essence", "metaphor".
+- Each prompt MUST specify a DIFFERENT cinematic style. Rotate through these:
+  * "cinematic wide shot, dramatic lighting, film grain, 8K ultra HD, 16:9 landscape"
+  * "extreme close-up, shallow depth of field, bokeh, macro detail"
+  * "aerial establishing shot, sweeping vista, golden hour, epic scale"
+  * "dark atmospheric scene, volumetric lighting, moody shadows"
+  * "hyper-realistic CGI render, vivid colors, detailed textures, studio lighting"
+  * "documentary photography, natural light, authentic feel, photojournalistic"
+  * "space/cosmic visualization, deep field, stars, nebula, astronomical"
+  * "microscopic or scientific imagery, detailed cross-section, educational diagram style"
+- Each prompt should be 40-80 words describing the full scene.
+- Write prompts in English for best image generation quality.
+
+Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
+
+        completion = (
+            str(self.generate_response(prompt))
+            .replace("```json", "")
+            .replace("```", "")
+            .strip()
+        )
+
+        image_prompts = []
+        try:
+            parsed = json.loads(completion)
+            if isinstance(parsed, list):
+                image_prompts = [str(p) for p in parsed if isinstance(p, str)]
+        except Exception:
+            match = re.search(r'\[.*\]', completion, re.DOTALL)
+            if match:
+                try:
+                    image_prompts = json.loads(match.group())
+                except Exception:
+                    pass
+
+        if not image_prompts or len(image_prompts) < 4:
+            if get_verbose():
+                warning("Failed to parse long video prompts, using fallback")
+            image_prompts = [
+                f"{self.subject}, cinematic wide shot, dramatic lighting, 8K, landscape",
+                f"{self.subject}, extreme close-up detail, shallow depth of field, bokeh",
+                f"{self.subject}, aerial drone view, golden hour, sweeping landscape",
+                f"{self.subject}, dark moody atmosphere, volumetric fog, neon accents",
+                f"{self.subject}, hyper-realistic CGI, vivid saturated colors, studio lighting",
+                f"{self.subject}, documentary photography, natural light, raw authentic",
+                f"{self.subject}, cosmic space visualization, deep field stars, nebula",
+                f"{self.subject}, scientific microscopic imagery, detailed cross-section",
+                f"{self.subject}, cinematic panorama, film grain, dramatic sky, 8K",
+                f"{self.subject}, intimate portrait shot, rim lighting, emotional",
+                f"{self.subject}, futuristic technology visualization, holographic, blue tones",
+                f"{self.subject}, underwater or fluid dynamics, bioluminescent, ethereal",
+                f"{self.subject}, ancient historical scene, warm tones, detailed architecture",
+                f"{self.subject}, abstract geometric patterns, fractal, mathematical beauty",
+                f"{self.subject}, sunset silhouette, dramatic contrast, wide angle",
+                f"{self.subject}, time-lapse style, motion blur, dynamic energy, vivid",
+            ]
+
+        image_prompts = image_prompts[:n_prompts]
+        self.image_prompts = image_prompts
+
+        if get_verbose():
+            info(f" => Generated {len(image_prompts)} long video image prompts")
+
+        return image_prompts
+
+    def generate_long_images(self, prompts: List[str]) -> None:
+        """
+        Generate images for long video in 16:9 landscape format (1920x1080).
+        Uses Pollinations FLUX as primary provider.
+        """
+        print(colored(f"\n  [Long Video] Generating {len(prompts)} images (1920x1080)...", "blue"))
+
+        for i, prompt in enumerate(prompts):
+            print(colored(f"\n  Image {i+1}/{len(prompts)}", "blue"))
+            saved = False
+
+            # Try Pollinations with landscape dimensions
+            for name, fn in [
+                ("Pollinations.ai FLUX", lambda p: self._try_pollinations_landscape(p)),
+                ("HuggingFace", self._try_huggingface),
+            ]:
+                try:
+                    img_bytes = fn(prompt)
+                    if img_bytes and len(img_bytes) > 1000:
+                        self._persist_image(img_bytes, name)
+                        saved = True
+                        break
+                except Exception as e:
+                    if get_verbose():
+                        warning(f"    {name} failed: {str(e)[:100]}")
+                    time.sleep(1)
+
+            if not saved:
+                self._generate_fallback_image_landscape(prompt)
+
+        success(f"All {len(self.images)} long video images ready!")
+
+    def _try_pollinations_landscape(self, prompt: str) -> bytes:
+        """Pollinations.ai in 16:9 landscape for long videos."""
+        import urllib.parse
+        encoded = urllib.parse.quote(prompt[:500])
+        seed = int(time.time())
+        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1920&height=1080&nologo=true&seed={seed}&model=flux"
+        print(colored(f"    [Pollinations FLUX 16:9] Generating...", "cyan"), flush=True)
+        resp = requests.get(url, timeout=180)
+        if resp.status_code == 200 and len(resp.content) > 5000:
+            print(colored("OK", "green"))
+            return resp.content
+        raise RuntimeError(f"Pollinations returned status {resp.status_code}")
+
+    def _generate_fallback_image_landscape(self, prompt: str) -> str:
+        """Fallback landscape image (1920x1080) when all providers fail."""
+        from PIL import Image, ImageDraw, ImageFont
+        import random as rand_mod
+
+        if get_verbose():
+            warning("All providers failed. Creating styled fallback image (landscape)...")
+
+        color_schemes = [
+            ((15, 15, 80), (80, 20, 120)),
+            ((10, 50, 80), (20, 100, 100)),
+            ((60, 10, 60), (120, 30, 80)),
+            ((10, 40, 20), (30, 100, 60)),
+        ]
+        c1, c2 = rand_mod.choice(color_schemes)
+        img = Image.new("RGB", (1920, 1080))
+        draw = ImageDraw.Draw(img)
+
+        for y in range(1080):
+            r = int(c1[0] + (c2[0] - c1[0]) * y / 1080)
+            g = int(c1[1] + (c2[1] - c1[1]) * y / 1080)
+            b = int(c1[2] + (c2[2] - c1[2]) * y / 1080)
+            draw.line([(0, y), (1920, y)], fill=(r, g, b))
+
+        try:
+            font_path = os.path.join(get_fonts_dir(), get_font())
+            font = ImageFont.truetype(font_path, 48)
+        except Exception:
+            font = ImageFont.load_default()
+
+        words = prompt.split()
+        text_lines, current_line = [], ""
+        for word in words:
+            test = f"{current_line} {word}".strip()
+            if len(test) > 45:
+                text_lines.append(current_line)
+                current_line = word
+            else:
+                current_line = test
+        if current_line:
+            text_lines.append(current_line)
+
+        y_pos = 1080 // 2 - (len(text_lines) * 60) // 2
+        for line in text_lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            w = bbox[2] - bbox[0]
+            draw.text(((1920 - w) // 2 + 3, y_pos + 3), line, fill=(0, 0, 0), font=font)
+            draw.text(((1920 - w) // 2, y_pos), line, fill="white", font=font)
+            y_pos += 60
+
+        image_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".png")
+        img.save(image_path)
+        self.images.append(image_path)
+        return image_path
+
+    def combine_long(self) -> str:
+        """
+        Combines images and audio into a long-form 16:9 landscape video.
+        No subtitles, cinematic Ken Burns effect (slow zoom/pan), smooth transitions.
+        """
+        combined_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".mp4")
+        threads = get_threads()
+        tts_clip = AudioFileClip(self.tts_path)
+        max_duration = tts_clip.duration
+        req_dur = max_duration / len(self.images)
+
+        print(colored(f"[+] Combining {len(self.images)} images into long video ({max_duration:.0f}s)...", "blue"))
+
+        valid_images = [p for p in self.images if os.path.exists(p)]
+        if not valid_images:
+            raise FileNotFoundError("No valid images found")
+        self.images = valid_images
+
+        clips = []
+        tot_dur = 0
+
+        while tot_dur < max_duration:
+            for image_path in self.images:
+                if tot_dur >= max_duration:
+                    break
+
+                clip_dur = min(req_dur, max_duration - tot_dur)
+                if clip_dur < 0.5:
+                    break
+
+                try:
+                    img_clip = ImageClip(image_path).set_duration(clip_dur)
+
+                    # Resize to 1920x1080 with proper cropping
+                    w, h = img_clip.size
+                    aspect = w / h
+                    target_aspect = 1920 / 1080
+
+                    if aspect > target_aspect:
+                        # Image is wider — scale by height, crop width
+                        img_clip = img_clip.resize(height=1080)
+                        img_clip = crop(img_clip, x_center=img_clip.w / 2, y_center=540, width=1920, height=1080)
+                    else:
+                        # Image is taller — scale by width, crop height
+                        img_clip = img_clip.resize(width=1920)
+                        img_clip = crop(img_clip, x_center=960, y_center=img_clip.h / 2, width=1920, height=1080)
+
+                    img_clip = img_clip.set_fps(30)
+
+                    # Ken Burns effect: slow zoom in (1.0x to 1.15x over clip duration)
+                    # Crops into the center progressively (fast, numpy-only)
+                    import numpy as np
+                    def make_zoom(clip_obj, dur):
+                        base_frame = clip_obj.get_frame(0)
+                        h_f, w_f = base_frame.shape[:2]
+                        def zoom_effect(get_frame, t):
+                            frame = get_frame(t)
+                            zoom = 1.0 + 0.15 * (t / dur)
+                            new_w = int(w_f / zoom)
+                            new_h = int(h_f / zoom)
+                            x1 = (w_f - new_w) // 2
+                            y1 = (h_f - new_h) // 2
+                            cropped = frame[y1:y1+new_h, x1:x1+new_w]
+                            # Fast nearest-neighbor upscale via np.repeat
+                            sy = h_f / new_h
+                            sx = w_f / new_w
+                            row_idx = np.minimum(np.arange(h_f) * new_h // h_f, new_h - 1)
+                            col_idx = np.minimum(np.arange(w_f) * new_w // w_f, new_w - 1)
+                            return cropped[np.ix_(row_idx, col_idx)]
+                        return clip_obj.fl(zoom_effect)
+
+                    img_clip = make_zoom(img_clip, clip_dur)
+
+                    # Crossfade: fade in first 0.5s, fade out last 0.5s
+                    if clip_dur > 1.5:
+                        img_clip = img_clip.crossfadein(0.5).crossfadeout(0.5)
+
+                    clips.append(img_clip)
+                    tot_dur += clip_dur
+
+                except Exception as e:
+                    if get_verbose():
+                        warning(f"Skipping image {image_path}: {e}")
+                    continue
+
+        if not clips:
+            raise RuntimeError("No clips could be created from images")
+
+        # Concatenate with crossfade transitions
+        print(colored("[+] Applying transitions...", "blue"), flush=True)
+        final_clip = concatenate_videoclips(clips, method="compose")
+        final_clip = final_clip.set_fps(30)
+
+        # Audio: TTS + background music
+        print(colored("[+] Mixing audio...", "blue"), flush=True)
+        random_song = choose_random_song()
+        music_clip = AudioFileClip(random_song).set_fps(44100)
+
+        # Loop music if shorter than TTS
+        if music_clip.duration < tts_clip.duration:
+            loops_needed = int(tts_clip.duration // music_clip.duration) + 1
+            music_clip = concatenate_audioclips([music_clip] * loops_needed)
+        music_clip = music_clip.subclip(0, tts_clip.duration)
+
+        # Background music at 10% volume for long videos (subtle ambient)
+        music_clip = music_clip.fx(afx.volumex, 0.10)
+
+        # Fade in music at start, fade out at end
+        music_clip = music_clip.audio_fadein(3.0).audio_fadeout(3.0)
+
+        comp_audio = CompositeAudioClip([tts_clip.set_fps(44100), music_clip])
+
+        final_clip = final_clip.set_audio(comp_audio)
+        final_clip = final_clip.set_duration(tts_clip.duration)
+
+        print(colored("[+] Rendering long video (this may take several minutes)...", "blue"), flush=True)
+        final_clip.write_videofile(
+            combined_path,
+            threads=threads,
+            fps=30,
+            codec="libx264",
+            audio_codec="aac",
+            preset="medium",
+        )
+
+        success(f'Wrote long video to "{combined_path}"')
+        return combined_path
+
+    def generate_long_video(self, tts_instance: TTS) -> str:
+        """
+        Full pipeline for generating a long-form YouTube video (5-10 minutes).
+        16:9 landscape, documentary style, no subtitles.
+
+        Args:
+            tts_instance (TTS): Instance of TTS Class.
+
+        Returns:
+            path (str): Path to the generated MP4 file.
+        """
+        info("=" * 50)
+        info("  LONG VIDEO GENERATION PIPELINE")
+        info("=" * 50)
+
+        # Step 1: Generate Topic
+        info("\n[1/6] Generating topic...")
+        self.generate_topic()
+        success(f" Topic: {self.subject}")
+
+        # Step 2: Generate long script with chapters
+        info("\n[2/6] Generating long-form script...")
+        self.generate_long_script()
+
+        # Step 3: Generate metadata
+        info("\n[3/6] Generating title & description...")
+        self.generate_long_metadata()
+        success(f" Title: {self.metadata['title']}")
+
+        # Step 4: Generate image prompts
+        info("\n[4/6] Generating image prompts...")
+        self.images = []  # Reset images
+        self.generate_long_prompts()
+
+        # Step 5: Generate images (landscape 1920x1080)
+        info("\n[5/6] Generating images...")
+        self.generate_long_images(self.image_prompts)
+
+        # Step 6: Generate TTS with natural voice
+        info("\n[6/6] Generating narration audio...")
+        path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".wav")
+
+        # Clean script of section markers for TTS, keep the text
+        tts_script = self.script
+        tts_script = re.sub(r'\[INTRO\]', '', tts_script)
+        tts_script = re.sub(r'\[SECTION \d+:.*?\]', '', tts_script)
+        tts_script = re.sub(r'\[CLOSING\]', '', tts_script)
+        tts_script = re.sub(r'\[CIERRE\]', '', tts_script)
+        tts_script = re.sub(r'\[SECCIÓN \d+:.*?\]', '', tts_script)
+        tts_script = re.sub(r'\[INTRODUCCIÓN\]', '', tts_script)
+        tts_script = re.sub(r"[^\w\s.?!,;:'\"-]", "", tts_script)
+        tts_script = re.sub(r'\n{3,}', '\n\n', tts_script).strip()
+
+        # Use the long-form TTS with SSML prosody for natural narration
+        tts_instance.synthesize_long(tts_script, path, voice_id="es-MX-JorgeNeural")
+        self.tts_path = path
+
+        if get_verbose():
+            audio_dur = AudioFileClip(path).duration
+            info(f" => Audio duration: {audio_dur:.0f} seconds ({audio_dur/60:.1f} min)")
+
+        # Step 7: Combine everything
+        info("\n[+] Assembling final video...")
+        video_path = self.combine_long()
+
+        self.video_path = os.path.abspath(video_path)
+        success(f"\n=> Long video generated: {video_path}")
+
+        return video_path
 
     def get_channel_id(self) -> str:
         """
@@ -1296,13 +1893,13 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
         """
         if not os.path.exists(get_youtube_cache_path()):
             # Create the cache file
-            with open(get_youtube_cache_path(), "w") as file:
+            with open(get_youtube_cache_path(), "w", encoding="utf-8") as file:
                 json.dump({"videos": []}, file, indent=4)
             return []
 
         videos = []
         # Read the cache file
-        with open(get_youtube_cache_path(), "r") as file:
+        with open(get_youtube_cache_path(), "r", encoding="utf-8") as file:
             previous_json = json.loads(file.read())
             # Find our account
             accounts = previous_json["accounts"]

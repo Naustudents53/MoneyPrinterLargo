@@ -243,6 +243,31 @@ def get_assemblyai_api_key() -> str:
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         return json.load(file)["assembly_ai_api_key"]
 
+def get_pexels_api_key() -> str:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        configured = json.load(file).get("pexels_api_key", "")
+        return configured or os.environ.get("PEXELS_API_KEY", "")
+
+def get_pixabay_api_key() -> str:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        configured = json.load(file).get("pixabay_api_key", "")
+        return configured or os.environ.get("PIXABAY_API_KEY", "")
+
+def get_ideogram_api_key() -> str:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        configured = json.load(file).get("ideogram_api_key", "")
+        return configured or os.environ.get("IDEOGRAM_API_KEY", "")
+
+def get_leonardo_api_key() -> str:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        configured = json.load(file).get("leonardo_api_key", "")
+        return configured or os.environ.get("LEONARDO_API_KEY", "")
+
+def get_hf_api_key() -> str:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        configured = json.load(file).get("hf_api_key", "")
+        return configured or os.environ.get("HF_TOKEN", "")
+
 def get_stt_provider() -> str:
     """
     Gets the configured STT provider.

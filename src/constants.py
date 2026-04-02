@@ -6,7 +6,7 @@ TWITTER_TEXTAREA_CLASS = "public-DraftStyleDefault-block public-DraftStyleDefaul
 TWITTER_POST_BUTTON_XPATH = "/html/body/div[1]/div/div/div[2]/main/div/div/div/div[1]/div/div[3]/div/div[2]/div[1]/div/div/div/div[2]/div[2]/div[2]/div/div/div/div[3]"
 
 OPTIONS = [
-    "YouTube Shorts Automation",
+    "YouTube Automation",
     "Twitter Bot",
     "Affiliate Marketing",
     "Outreach",
@@ -29,7 +29,8 @@ TWITTER_CRON_OPTIONS = [
 
 YOUTUBE_OPTIONS = [
     "Upload Short",
-    "Show all Shorts",
+    "Upload Long Video",
+    "Show all Videos",
     "Setup CRON Job",
     "Quit"
 ]

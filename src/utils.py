@@ -47,7 +47,7 @@ def build_url(youtube_video_id: str) -> str:
 
 def rem_temp_files() -> None:
     """
-    Removes temporary files in the `.mp` directory.
+    Removes temporary files in the `.mp` directory and MoviePy temp files in project root.
 
     Returns:
         None
@@ -60,6 +60,14 @@ def rem_temp_files() -> None:
     for file in files:
         if not file.endswith(".json"):
             os.remove(os.path.join(mp_dir, file))
+
+    # Clean MoviePy temp files from project root
+    for file in os.listdir(ROOT_DIR):
+        if "TEMP_MPY" in file:
+            try:
+                os.remove(os.path.join(ROOT_DIR, file))
+            except Exception:
+                pass
 
 
 def fetch_songs() -> None:

@@ -214,11 +214,20 @@ def main():
                     tts = TTS()
 
                     if user_input == 1:
+                        # Upload Short
                         youtube.generate_video(tts)
                         upload_to_yt = question("Do you want to upload this video to YouTube? (Yes/No): ")
                         if upload_to_yt.lower() == "yes":
                             youtube.upload_video()
                     elif user_input == 2:
+                        # Upload Long Video
+                        info("Starting Long Video Generation (5-10 min)...")
+                        youtube.generate_long_video(tts)
+                        upload_to_yt = question("Do you want to upload this video to YouTube? (Yes/No): ")
+                        if upload_to_yt.lower() == "yes":
+                            youtube.upload_video()
+                    elif user_input == 3:
+                        # Show all Videos
                         videos = youtube.get_videos()
 
                         if len(videos) > 0:
@@ -235,7 +244,8 @@ def main():
                             print(videos_table)
                         else:
                             warning(" No videos found.")
-                    elif user_input == 3:
+                    elif user_input == 4:
+                        # Setup CRON Job
                         info("How often do you want to upload?")
 
                         info("\n============ OPTIONS ============", False)
@@ -263,7 +273,7 @@ def main():
                             success("Set up CRON Job.")
                         else:
                             break
-                    elif user_input == 4:
+                    elif user_input == 5:
                         if get_verbose():
                             info(" => Climbing Options Ladder...", False)
                         break
