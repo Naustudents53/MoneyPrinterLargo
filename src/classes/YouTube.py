@@ -1046,11 +1046,16 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         clips = []
         tot_dur = 0
         # Add each image once, distributing duration evenly
-        for image_path in self.images:
+        for idx, image_path in enumerate(self.images):
             if tot_dur >= max_duration:
                 break
+            # Last clip gets remaining duration to avoid float mismatch
+            if idx == len(self.images) - 1:
+                this_dur = max_duration - tot_dur
+            else:
+                this_dur = req_dur
             clip = ImageClip(image_path)
-            clip.duration = req_dur
+            clip.duration = this_dur
             clip = clip.set_fps(30)
 
             # Not all images are same size,
@@ -1132,7 +1137,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         comp_audio = CompositeAudioClip([tts_clip.set_fps(44100), random_song_clip])
 
         final_clip = final_clip.set_audio(comp_audio)
-        final_clip = final_clip.set_duration(tts_clip.duration)
+        # Don't force set_duration — clips already sum to max_duration exactly
 
         if subtitles is not None:
             final_clip = CompositeVideoClip([final_clip, subtitles])
