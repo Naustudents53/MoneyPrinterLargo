@@ -197,26 +197,25 @@ class YouTube:
         """
         sentence_length = get_script_sentence_length()
         prompt = f"""
-        Generate a script for a video in {sentence_length} sentences, depending on the subject of the video.
+        Write a script for a short video narration in EXACTLY {sentence_length} sentences about the subject below.
 
-        The script is to be returned as a string with the specified number of paragraphs.
+        STYLE GUIDELINES:
+        - Write as if you are a passionate storyteller sharing fascinating knowledge with a friend.
+        - Start with a hook: an intriguing question, a surprising fact, or a bold statement that grabs attention immediately.
+        - Build curiosity throughout — each sentence should make the viewer want to hear the next one.
+        - Use vivid, sensory language. Instead of "black holes are big", say "a single black hole can swallow a star whole in seconds".
+        - End with a thought-provoking conclusion that leaves the viewer thinking.
+        - Keep sentences flowing naturally, as if spoken aloud. Avoid robotic or overly formal tone.
 
-        Here is an example of a string:
-        "This is an example string."
+        STRICT RULES:
+        - EXACTLY {sentence_length} sentences. No more, no less.
+        - Each sentence should be SHORT and punchy (under 20 words ideally).
+        - NO markdown, NO formatting, NO titles, NO bullet points.
+        - NO "welcome to this video", NO "voiceover", NO "narrator", NO meta-references.
+        - ONLY return the raw script text. Nothing else.
+        - YOU MUST WRITE ENTIRELY IN {self.language}. Every single word must be in {self.language}.
 
-        Do not under any circumstance reference this prompt in your response.
-
-        Get straight to the point, don't start with unnecessary things like, "welcome to this video".
-
-        Obviously, the script should be related to the subject of the video.
-        
-        YOU MUST NOT EXCEED THE {sentence_length} SENTENCES LIMIT. MAKE SURE THE {sentence_length} SENTENCES ARE SHORT.
-        YOU MUST NOT INCLUDE ANY TYPE OF MARKDOWN OR FORMATTING IN THE SCRIPT, NEVER USE A TITLE.
-        YOU MUST WRITE THE SCRIPT IN THE LANGUAGE SPECIFIED IN [LANGUAGE].
-        ONLY RETURN THE RAW CONTENT OF THE SCRIPT. DO NOT INCLUDE "VOICEOVER", "NARRATOR" OR SIMILAR INDICATORS OF WHAT SHOULD BE SPOKEN AT THE BEGINNING OF EACH PARAGRAPH OR LINE. YOU MUST NOT MENTION THE PROMPT, OR ANYTHING ABOUT THE SCRIPT ITSELF. ALSO, NEVER TALK ABOUT THE AMOUNT OF PARAGRAPHS OR LINES. JUST WRITE THE SCRIPT
-        
         Subject: {self.subject}
-        Language: {self.language}
         """
         completion = self.generate_response(prompt)
 
@@ -268,7 +267,7 @@ class YouTube:
         Returns:
             image_prompts (List[str]): Generated List of image prompts.
         """
-        n_prompts = 4
+        n_prompts = 6
 
         prompt = f"""Generate {n_prompts} Image Prompts for AI Image Generation.
 
@@ -276,14 +275,20 @@ Topic: {self.subject}
 Script: {self.script}
 
 RULES:
-- Each prompt must visually illustrate a SPECIFIC part of the script above.
-- Prompt 1 illustrates the first part, prompt 2 the second part, and so on.
-- Be concrete and literal: describe exactly what should appear in the image (objects, people, setting, colors).
-- Do NOT use abstract or vague words like "visualization", "interpretation", "concept", "essence".
-- Include the visual style: "photorealistic, high quality, 4K, cinematic lighting"
-- Use only ASCII characters.
+- Each prompt must visually illustrate a SPECIFIC part of the script, in order.
+- Be CONCRETE and LITERAL: describe exactly what should appear (objects, people, setting, lighting, colors, textures).
+- NEVER use abstract words like "visualization", "interpretation", "concept", "essence", "metaphor".
+- Each prompt MUST use a DIFFERENT visual style from this list (vary them, do not repeat):
+  * "cinematic wide shot, dramatic lighting, film grain, 8K ultra HD"
+  * "extreme close-up macro shot, shallow depth of field, bokeh background"
+  * "aerial drone view, sweeping landscape, golden hour lighting"
+  * "dark moody atmosphere, neon accents, volumetric fog, cyberpunk aesthetic"
+  * "hyper-realistic digital painting, vibrant saturated colors, detailed textures"
+  * "documentary photography style, natural light, raw authentic feel"
+- Each prompt must be detailed (40-80 words) describing the full scene composition.
+- Use only ASCII characters. Write prompts in English for best image quality.
 
-Return ONLY a JSON array of strings. Example: ["prompt 1", "prompt 2", "prompt 3", "prompt 4"]
+Return ONLY a JSON array of {n_prompts} strings.
 DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
 
         completion = (
@@ -316,10 +321,12 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
             if get_verbose():
                 warning("Failed to parse image prompts, using fallback prompts")
             image_prompts = [
-                f"{self.subject}, photorealistic, high quality, 4K, cinematic lighting, detailed",
-                f"{self.subject}, close-up shot, photorealistic, vivid colors, sharp focus, 4K",
-                f"{self.subject}, wide angle shot, photorealistic, cinematic composition, high detail",
-                f"{self.subject}, dramatic angle, photorealistic, professional photography, 4K resolution",
+                f"{self.subject}, cinematic wide shot, dramatic lighting, film grain, 8K ultra HD, detailed scene",
+                f"{self.subject}, extreme close-up macro shot, shallow depth of field, bokeh background, vivid colors",
+                f"{self.subject}, aerial drone view, sweeping landscape, golden hour lighting, breathtaking",
+                f"{self.subject}, dark moody atmosphere, neon accents, volumetric fog, cyberpunk aesthetic",
+                f"{self.subject}, hyper-realistic digital painting, vibrant saturated colors, detailed textures",
+                f"{self.subject}, documentary photography style, natural light, raw authentic feel, 4K",
             ]
 
         # Limit to n_prompts
@@ -382,14 +389,14 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
         raise RuntimeError("HuggingFace: all models failed")
 
     def _try_pollinations(self, prompt: str) -> bytes:
-        """Try Pollinations.ai image generation (primary provider - free, no key, good quality)."""
+        """Try Pollinations.ai image generation (primary provider - free, no key, best quality with flux model)."""
         import urllib.parse
         short_prompt = prompt[:500]
         encoded = urllib.parse.quote(short_prompt)
         seed = int(time.time())
-        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true&seed={seed}"
-        print(colored(f"    [Pollinations.ai] Generating...", "cyan"), flush=True)
-        resp = requests.get(url, timeout=120)
+        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true&seed={seed}&model=flux"
+        print(colored(f"    [Pollinations.ai FLUX] Generating...", "cyan"), flush=True)
+        resp = requests.get(url, timeout=180)
         if resp.status_code == 200 and len(resp.content) > 5000:
             print(colored("OK", "green"))
             return resp.content
@@ -1121,8 +1128,11 @@ DO NOT return anything else. DO NOT wrap in markdown. ONLY the JSON array."""
                 warning(f"Expected 2+ textboxes, found {len(textboxes)}")
 
             title_el = textboxes[0]
-            # Clear existing title using keyboard shortcuts (works on contenteditable)
-            title_el.click()
+            # Use JavaScript click to bypass overlay dialogs (dialog-scrim, social-suggestions)
+            # that YouTube Studio renders on top of the title field.
+            driver.execute_script("arguments[0].scrollIntoView(true);", title_el)
+            time.sleep(0.5)
+            driver.execute_script("arguments[0].click();", title_el)
             time.sleep(0.5)
             title_el.send_keys(Keys.CONTROL + "a")
             time.sleep(0.3)
