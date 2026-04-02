@@ -135,9 +135,30 @@ def main():
                 table.add_row([cached_accounts.index(account) + 1, colored(account["id"], "cyan"), colored(account["nickname"], "blue"), colored(account["niche"], "green")])
 
             print(table)
-            info("Type 'd' to delete an account.", False)
+            info("Type 'd' to delete an account, 'n' to add a new account.", False)
 
-            user_input = question("Select an account to start (or 'd' to delete): ").strip()
+            user_input = question("Select an account to start (or 'd'/'n'): ").strip()
+
+            if user_input.lower() == "n":
+                generated_uuid = str(uuid4())
+                success(f" => Generated ID: {generated_uuid}")
+                nickname = question(" => Enter a nickname for this account: ")
+                fp_profile = question(" => Enter the path to the Firefox profile: ")
+                niche = question(" => Enter the account niche: ")
+                language = question(" => Enter the account language: ")
+
+                account_data = {
+                    "id": generated_uuid,
+                    "nickname": nickname,
+                    "firefox_profile": fp_profile,
+                    "niche": niche,
+                    "language": language,
+                    "videos": [],
+                }
+
+                add_account("youtube", account_data)
+                success("Account configured successfully!")
+                return
 
             if user_input.lower() == "d":
                 delete_input = question("Enter account number to delete: ").strip()
