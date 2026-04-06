@@ -75,6 +75,7 @@ class YouTube:
 
         self.images = []
         self._used_stock_urls: set = set()
+        self.word_timestamps = None
 
         # Initialize the Firefox profile
         self.options: Options = Options()
@@ -798,7 +799,8 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
     def generate_script_to_speech(self, tts_instance: TTS) -> str:
         """
-        Converts the generated script into Speech using KittenTTS and returns the path to the wav file.
+        Converts the generated script into Speech and returns the path to the wav file.
+        Also captures word-level timestamps for karaoke subtitles when available.
 
         Args:
             tts_instance (tts): Instance of TTS Class.
@@ -808,15 +810,17 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         """
         path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".wav")
 
-        # Clean script, remove every character that is not a word character, a space, a period, a question mark, or an exclamation mark.
+        # Clean script
         self.script = re.sub(r"[^\w\s.?!]", "", self.script)
 
-        tts_instance.synthesize(self.script, path)
+        path, word_timestamps = tts_instance.synthesize_with_timestamps(self.script, path)
+        self.word_timestamps = word_timestamps
 
         self.tts_path = path
 
         if get_verbose():
-            info(f' => Wrote TTS to "{path}"')
+            ts_info = f" ({len(word_timestamps)} words timed)" if word_timestamps else ""
+            info(f' => Wrote TTS to "{path}"{ts_info}')
 
         return path
 
@@ -1008,6 +1012,167 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         return srt_path
 
+    def _build_karaoke_subtitles(self, audio_duration: float):
+        """
+        Build word-by-word karaoke subtitle clip from word_timestamps.
+        Shows groups of up to 5 words with multi-line wrapping; the active
+        word is highlighted in yellow — modern YouTube Shorts style.
+        """
+        from PIL import Image, ImageDraw, ImageFont
+        import numpy as np
+
+        words = self.word_timestamps
+        if not words:
+            return None
+
+        font_path = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
+        font_size = 80
+        font = ImageFont.truetype(font_path, font_size)
+        canvas_w = 1080
+        max_line_width = 920
+        word_spacing = 28
+        line_spacing = 0  # ascent+descent already provides natural spacing
+        max_words_per_group = 5
+        max_lines = 3
+
+        # Measure height of a single line using full font metrics (ascent + descent)
+        # plus stroke so descenders (g, y, p) and strokes never get clipped
+        ascent, descent = font.getmetrics()
+        line_h = ascent + descent
+
+        # --- Helper: wrap a list of texts into lines that fit max_line_width ---
+        def _wrap_group(texts):
+            """Returns list of lines, each line is a list of (text, width) tuples."""
+            lines = []
+            current_line = []
+            current_w = 0
+            for t in texts:
+                bb = font.getbbox(t)
+                tw = bb[2] - bb[0]
+                test_w = current_w + tw + (word_spacing if current_line else 0)
+                if current_line and test_w > max_line_width:
+                    lines.append(current_line)
+                    current_line = [(t, tw)]
+                    current_w = tw
+                else:
+                    current_line.append((t, tw))
+                    current_w = test_w
+            if current_line:
+                lines.append(current_line)
+            return lines
+
+        # --- Group words (up to 5, but never exceeding max_lines when wrapped) ---
+        groups = []
+        current_group = []
+
+        for w in words:
+            candidate = current_group + [w]
+            candidate_texts = [gw["word"].upper() for gw in candidate]
+            lines_needed = len(_wrap_group(candidate_texts))
+            if len(candidate) > max_words_per_group or lines_needed > max_lines:
+                if current_group:
+                    groups.append(current_group)
+                current_group = [w]
+            else:
+                current_group = candidate
+        if current_group:
+            groups.append(current_group)
+
+        # --- Build index: global word index → (group_idx, local_idx) ---
+        word_to_group = {}
+        gi = 0
+        for g_idx, group in enumerate(groups):
+            for l_idx in range(len(group)):
+                word_to_group[gi] = (g_idx, l_idx)
+                gi += 1
+
+        # --- Pre-render one frame per word (group with that word highlighted) ---
+        # First pass: determine max canvas height across all groups
+        max_num_lines = 1
+        for group in groups:
+            texts = [gw["word"].upper() for gw in group]
+            lines = _wrap_group(texts)
+            max_num_lines = max(max_num_lines, len(lines))
+
+        stroke_pad = 6 * 2  # stroke_width extends outward on all sides
+        canvas_h = max_num_lines * line_h + (max_num_lines - 1) * line_spacing + stroke_pad + 20
+
+        rendered = {}  # global_word_idx → (rgb np.array, alpha np.array)
+
+        for word_idx, (g_idx, l_idx) in word_to_group.items():
+            group = groups[g_idx]
+            texts = [gw["word"].upper() for gw in group]
+            lines = _wrap_group(texts)
+
+            img = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+
+            # Track which global-in-group index we're drawing
+            word_counter = 0
+            y = 20
+            for line in lines:
+                line_total_w = sum(tw for _, tw in line) + word_spacing * (len(line) - 1)
+                x = (canvas_w - line_total_w) // 2
+                for t, tw in line:
+                    if word_counter == l_idx:
+                        draw.text((x, y), t, fill=(255, 215, 0), font=font,
+                                  stroke_width=6, stroke_fill="black")
+                    else:
+                        draw.text((x, y), t, fill="white", font=font,
+                                  stroke_width=6, stroke_fill="black")
+                    x += tw + word_spacing
+                    word_counter += 1
+                y += line_h + line_spacing
+
+            arr = np.array(img)
+            rendered[word_idx] = (arr[:, :, :3], arr[:, :, 3].astype(np.float64) / 255.0)
+
+        # Blank frame for silence gaps
+        blank_rgb = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
+        blank_alpha = np.zeros((canvas_h, canvas_w), dtype=np.float64)
+
+        # --- Lookup: find active word at time t ---
+        def find_active(t):
+            for i, w in enumerate(words):
+                if w["start"] <= t <= w["end"]:
+                    return i
+            # Between words: keep showing the last spoken word
+            for i in range(len(words) - 1):
+                if words[i]["end"] < t < words[i + 1]["start"]:
+                    return i
+            if words and t >= words[-1]["start"]:
+                return len(words) - 1
+            return -1
+
+        def make_rgb(t):
+            idx = find_active(t)
+            if idx < 0 or idx not in rendered:
+                return blank_rgb
+            return rendered[idx][0]
+
+        def make_mask(t):
+            idx = find_active(t)
+            if idx < 0 or idx not in rendered:
+                return blank_alpha
+            return rendered[idx][1]
+
+        clip = VideoClip(make_rgb, duration=audio_duration).set_fps(30)
+        mask = VideoClip(make_mask, duration=audio_duration, ismask=True).set_fps(30)
+        clip = clip.set_mask(mask)
+        clip = clip.set_position(("center", 1300))
+        return clip
+
+    def _estimate_word_timestamps(self, audio_duration: float):
+        """Estimate word timestamps from script when TTS didn't provide them."""
+        words = self.script.split()
+        if not words:
+            return []
+        dur_per_word = audio_duration / len(words)
+        return [
+            {"start": i * dur_per_word, "end": (i + 1) * dur_per_word, "word": w}
+            for i, w in enumerate(words)
+        ]
+
     def combine(self) -> str:
         """
         Combines everything into the final video.
@@ -1020,21 +1185,6 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         tts_clip = AudioFileClip(self.tts_path)
         max_duration = tts_clip.duration
         req_dur = max_duration / len(self.images)
-
-        # Make a generator that returns a TextClip when called with consecutive
-        # Style: Poppins Black on royal-blue box — top-tier YT Shorts look
-        _sub_font = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
-        generator = lambda txt: TextClip(
-            txt.upper(),
-            font=_sub_font,
-            fontsize=80,
-            color="white",
-            stroke_color="black",
-            stroke_width=6,
-            size=(900, None),
-            method="caption",
-            bg_color="#4169E1",  # Royal Blue background box
-        )
 
         print(colored("[+] Combining images...", "blue"))
 
@@ -1096,35 +1246,16 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         subtitles = None
         try:
-            print(colored("[+] Generating subtitles...", "blue"), flush=True)
-            subtitles_path = self.generate_subtitles(self.tts_path)
+            print(colored("[+] Building karaoke subtitles...", "blue"), flush=True)
 
-            # Equalize and parse subtitles with explicit UTF-8 encoding.
-            # We bypass srt_equalizer's file I/O and MoviePy's file_to_subtitles()
-            # because neither specifies encoding="utf-8", which corrupts accented
-            # characters (á, é, í, ó, ú, ñ) on Windows (defaults to cp1252).
-            import srt as _srt
-            from srt_equalizer.srt_equalizer import split_subtitle as _split_sub
+            # If TTS didn't provide word timestamps, estimate them
+            if not self.word_timestamps:
+                self.word_timestamps = self._estimate_word_timestamps(max_duration)
 
-            with open(subtitles_path, "r", encoding="utf-8") as f:
-                subs = list(_srt.parse(f.read()))
+            subtitles = self._build_karaoke_subtitles(max_duration)
 
-            equalized = []
-            idx = 1
-            for sub in subs:
-                parts = _split_sub(sub, target_chars=40, start_from_index=idx)
-                equalized.extend(parts)
-                idx += len(parts)
-
-            # Pass parsed list directly to SubtitlesClip (bypasses MoviePy's open() without encoding)
-            parsed_subs = [
-                ((s.start.total_seconds(), s.end.total_seconds()), s.content)
-                for s in equalized
-            ]
-
-            subtitles = SubtitlesClip(parsed_subs, generator)
-            subtitles = subtitles.set_pos(("center", 1350))
-            print(colored("[+] Subtitles ready.", "green"), flush=True)
+            if subtitles is not None:
+                print(colored("[+] Karaoke subtitles ready.", "green"), flush=True)
         except Exception as e:
             warning(f"Failed to generate subtitles, continuing without subtitles: {e}")
 

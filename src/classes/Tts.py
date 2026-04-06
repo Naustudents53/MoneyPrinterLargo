@@ -106,42 +106,72 @@ class TTS:
 
         return output_file
 
-    def _synthesize_edge_tts(self, text, output_file):
+    def synthesize_with_timestamps(self, text, output_file=os.path.join(ROOT_DIR, ".mp", "audio.wav")):
+        """Synthesize audio AND return word-level timestamps.
+
+        Returns:
+            (output_file, word_timestamps) where word_timestamps is a list of
+            {"start": float_seconds, "end": float_seconds, "word": str} or None.
+        """
+        if self._provider == "edge_tts":
+            return self._synthesize_edge_tts_with_timestamps(text, output_file)
+        # KittenTTS has no word timing — synthesize normally, return None
+        self._synthesize_kitten(text, output_file)
+        return output_file, None
+
+    def _synthesize_edge_tts_with_timestamps(self, text, output_file):
+        """Edge-TTS synthesis capturing word-level boundary events."""
         import edge_tts
         import subprocess
         import shutil
 
-        # Map voice name to edge-tts voice ID
         voice_id = EDGE_TTS_VOICES.get(self._voice, self._voice)
-
-        # edge-tts outputs MP3
         mp3_path = output_file.rsplit(".", 1)[0] + ".mp3"
+        word_timestamps = []
 
         async def _generate():
-            communicate = edge_tts.Communicate(text, voice_id)
-            await communicate.save(mp3_path)
+            communicate = edge_tts.Communicate(text, voice_id, boundary="WordBoundary")
+            audio_chunks = []
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_chunks.append(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    offset_s = chunk["offset"] / 10_000_000
+                    duration_s = chunk["duration"] / 10_000_000
+                    word_timestamps.append({
+                        "start": offset_s,
+                        "end": offset_s + duration_s,
+                        "word": chunk["text"],
+                    })
+            with open(mp3_path, "wb") as f:
+                for c in audio_chunks:
+                    f.write(c)
 
         asyncio.run(_generate())
 
-        # Convert mp3 to wav for compatibility with the rest of the pipeline
+        # Convert mp3 → wav
         if output_file.endswith(".wav"):
             ffmpeg_path = self._find_ffmpeg()
             if ffmpeg_path:
                 try:
                     subprocess.run(
                         [ffmpeg_path, "-i", mp3_path, "-y", output_file],
-                        capture_output=True, timeout=60
+                        capture_output=True, timeout=60,
                     )
                     os.remove(mp3_path)
                 except Exception:
                     shutil.move(mp3_path, output_file)
             else:
-                # No ffmpeg, just rename - moviepy can handle mp3 too
                 shutil.move(mp3_path, output_file)
         else:
             shutil.move(mp3_path, output_file)
 
-        return output_file
+        return output_file, word_timestamps
+
+    def _synthesize_edge_tts(self, text, output_file):
+        """Edge-TTS synthesis (without word timestamps)."""
+        path, _ = self._synthesize_edge_tts_with_timestamps(text, output_file)
+        return path
 
     @staticmethod
     def _find_ffmpeg() -> str | None:
