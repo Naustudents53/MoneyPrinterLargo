@@ -351,9 +351,14 @@ def get_imagemagick_path() -> str:
         return json.load(file)["imagemagick_path"]
 
 def get_llm_provider() -> str:
-    """Gets the LLM provider (ollama or pollinations)."""
+    """Gets the LLM provider (ollama, pollinations, or gemini)."""
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("llm_provider", "pollinations")
+        return json.load(file).get("llm_provider", "gemini")
+
+def get_gemini_model() -> str:
+    """Gets the Gemini model for text generation."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return json.load(file).get("gemini_model", "gemini-2.5-flash")
 
 def get_pollinations_text_model() -> str:
     """Gets the Pollinations text model name."""

@@ -1,6 +1,6 @@
 import requests
 
-from config import get_ollama_base_url, get_llm_provider, get_pollinations_text_model
+from config import get_ollama_base_url, get_llm_provider, get_pollinations_text_model, get_nanobanana2_api_key, get_gemini_model
 
 _selected_model: str | None = None
 _llm_provider: str | None = None
@@ -56,16 +56,23 @@ _SYSTEM_PROMPT = (
 def generate_text(prompt: str, model_name: str = None) -> str:
     provider = _llm_provider or get_llm_provider()
 
-    # Build ordered list: primary first, then fallback
-    # Each provider resolves its own model independently
-    if provider == "pollinations":
+    # Build ordered list: primary first, then fallbacks
+    if provider == "gemini":
+        providers = [
+            ("gemini", lambda: _generate_text_gemini(prompt)),
+            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
+            ("ollama", lambda: _generate_text_ollama(prompt, None)),
+        ]
+    elif provider == "pollinations":
         providers = [
             ("pollinations", lambda: _generate_text_pollinations(prompt, model_name)),
+            ("gemini", lambda: _generate_text_gemini(prompt)),
             ("ollama", lambda: _generate_text_ollama(prompt, None)),
         ]
     else:
         providers = [
             ("ollama", lambda: _generate_text_ollama(prompt, model_name or _selected_model)),
+            ("gemini", lambda: _generate_text_gemini(prompt)),
             ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
         ]
 
@@ -77,7 +84,7 @@ def generate_text(prompt: str, model_name: str = None) -> str:
                 raise RuntimeError(f"LLM returned a conversational/garbage response: {result[:80]}")
             return result
         except Exception as e:
-            print(f"  ⚠ LLM provider '{name}' failed: {e}")
+            print(f"  [!] LLM provider '{name}' failed: {e}")
             last_error = e
 
     raise RuntimeError(f"All LLM providers failed. Last error: {last_error}")
@@ -165,3 +172,40 @@ def _generate_text_ollama(prompt: str, model: str = None) -> str:
     )
 
     return response["message"]["content"].strip()
+
+
+def _generate_text_gemini(prompt: str) -> str:
+    """Generate text using Google Gemini API (free tier)."""
+    api_key = get_nanobanana2_api_key()
+    if not api_key:
+        raise RuntimeError("No Gemini API key configured (nanobanana2_api_key)")
+
+    model = get_gemini_model()
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+    payload = {
+        "system_instruction": {
+            "parts": [{"text": _SYSTEM_PROMPT}]
+        },
+        "contents": [
+            {"role": "user", "parts": [{"text": prompt}]}
+        ],
+        "generationConfig": {
+            "temperature": 0.7,
+        },
+    }
+
+    response = requests.post(url, json=payload, timeout=120)
+    response.raise_for_status()
+    data = response.json()
+
+    # Extract text from Gemini response
+    candidates = data.get("candidates", [])
+    if not candidates:
+        raise RuntimeError(f"Gemini returned no candidates: {data}")
+
+    parts = candidates[0].get("content", {}).get("parts", [])
+    if not parts:
+        raise RuntimeError(f"Gemini returned empty parts: {data}")
+
+    return parts[0].get("text", "").strip()
