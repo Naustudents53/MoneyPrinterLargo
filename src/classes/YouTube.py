@@ -118,13 +118,8 @@ class YouTube:
         self.options.add_argument("-profile")
         self.options.add_argument(temp_profile)
 
-        # Set the service
-        self.service: Service = Service(GeckoDriverManager().install())
-
-        # Initialize the browser
-        self.browser: webdriver.Firefox = webdriver.Firefox(
-            service=self.service, options=self.options
-        )
+        # Browser is initialized lazily just before upload (see _ensure_browser)
+        self.browser: webdriver.Firefox = None
 
     @property
     def niche(self) -> str:
@@ -1707,6 +1702,33 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         return video_path
 
+    def _ensure_browser(self) -> None:
+        """
+        Ensures the Firefox browser is running and connected.
+        Launches (or re-launches) the browser if it is None or the session has died.
+        Called lazily just before upload so a browser crash during video generation
+        does not discard the finished video.
+        """
+        session_alive = False
+        if self.browser is not None:
+            try:
+                # A simple property access will raise if the session is dead
+                _ = self.browser.current_url
+                session_alive = True
+            except Exception:
+                session_alive = False
+                try:
+                    self.browser.quit()
+                except Exception:
+                    pass
+                self.browser = None
+
+        if not session_alive:
+            info(" => Conectando con Firefox...")
+            service = Service(GeckoDriverManager().install())
+            self.browser = webdriver.Firefox(service=service, options=self.options)
+            success(" => Firefox conectado.")
+
     def get_channel_id(self) -> str:
         """
         Gets the Channel ID of the YouTube Account.
@@ -1734,6 +1756,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.common.keys import Keys
 
+        self._ensure_browser()
         driver = self.browser
         verbose = get_verbose()
         wait = WebDriverWait(driver, 30)
