@@ -255,11 +255,14 @@ CRITICAL RULES:
             metadata (dict): The generated metadata.
         """
         title = self.generate_response(
-            f"Please generate a YouTube Video Title for the following subject, including hashtags: {self.subject}. Only return the title, nothing else. Limit the title under 80 characters. Be concise. YOU MUST WRITE THE TITLE IN {self.language}. Do NOT wrap the title in quotes."
+            f"Please generate a YouTube Video Title for the following subject: {self.subject}. "
+            f"Optionally include 1-2 relevant hashtags at the end (but only if they fit naturally). "
+            f"Only return the title, nothing else. Limit the title under 80 characters. Be concise. "
+            f"YOU MUST WRITE THE TITLE IN {self.language}. Do NOT wrap the title in quotes. Do NOT start or end with any quote character."
         )
 
-        # Strip quotes the LLM might add
-        title = title.strip().strip('"').strip("'").strip('"').strip('"')
+        # Strip any quotes the LLM might add (regular, curly, single)
+        title = re.sub(r'^[\"\'\u201c\u201d\u2018\u2019]+|[\"\'\u201c\u201d\u2018\u2019]+$', '', title.strip()).strip()
 
         # If truncation would cut a hashtag, remove hashtags instead
         if len(title) > 100:
@@ -269,11 +272,11 @@ CRITICAL RULES:
                 title = title[:100]
 
         description = self.generate_response(
-            f"Please generate a YouTube Video Description for the following script: {self.script}. Only return the description, nothing else. Do NOT wrap the description in quotes. YOU MUST WRITE THE DESCRIPTION IN {self.language}."
+            f"Please generate a YouTube Video Description for the following script: {self.script}. Only return the description, nothing else. Do NOT wrap the description in quotes. Do NOT start or end with any quote character. YOU MUST WRITE THE DESCRIPTION IN {self.language}."
         )
 
-        # Strip quotes the LLM might add
-        description = description.strip().strip('"').strip("'").strip('\u201c').strip('\u201d')
+        # Strip any quotes the LLM might add (regular, curly, single)
+        description = re.sub(r'^[\"\'\u201c\u201d\u2018\u2019]+|[\"\'\u201c\u201d\u2018\u2019]+$', '', description.strip()).strip()
 
         self.metadata = {"title": title, "description": description}
 
@@ -1259,13 +1262,20 @@ STYLE RULES:
         """
         title = self.generate_response(
             f"Generate a compelling YouTube video title for this topic: {self.subject}. "
-            f"Make it intriguing and click-worthy but NOT clickbait. Include 1-2 relevant hashtags. "
+            f"Make it intriguing and click-worthy but NOT clickbait. Optionally include 1-2 relevant hashtags at the end (only if they fit naturally). "
             f"Keep it under 80 characters. Only return the title. "
+            f"Do NOT wrap the title in quotes. Do NOT start or end with any quote character. "
             f"YOU MUST WRITE IN {self.language}."
         )
 
+        # Strip any quotes the LLM might add (regular, curly, single)
+        title = re.sub(r'^[\"\'\u201c\u201d\u2018\u2019]+|[\"\'\u201c\u201d\u2018\u2019]+$', '', title.strip()).strip()
+
         if len(title) > 100:
-            title = title[:97] + "..."
+            if "#" in title:
+                title = title[:title.index("#")].strip()
+            if len(title) > 100:
+                title = title[:100]
 
         description = self.generate_response(
             f"""Generate a YouTube video description for a long-form video with this script:
@@ -1277,8 +1287,12 @@ Include:
 - 5-8 relevant hashtags
 - A call to action (subscribe, like, comment)
 
+Do NOT wrap the description in quotes. Do NOT start or end with any quote character.
 Write entirely in {self.language}. Only return the description."""
         )
+
+        # Strip any quotes the LLM might add (regular, curly, single)
+        description = re.sub(r'^[\"\'\u201c\u201d\u2018\u2019]+|[\"\'\u201c\u201d\u2018\u2019]+$', '', description.strip()).strip()
 
         self.metadata = {"title": title, "description": description}
         return self.metadata
