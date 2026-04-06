@@ -179,7 +179,11 @@ class YouTube:
             pass
 
         completion = self.generate_response(
-            f"""Generate ONE specific, focused topic for a short video within this niche: {self.niche}
+            f"""Generate ONE specific, focused topic for a short video.
+
+YOUR NICHE (you MUST stay strictly within this niche): {self.niche}
+
+CRITICAL RULE: The topic MUST be directly and obviously related to the niche above. Do NOT generate topics about unrelated subjects like history, politics, celebrities, cinema, or any field outside the niche. If the niche is about the universe and the mind, the topic must be about the universe and the mind — NOT about historical figures, civilizations, or unrelated events.
 
 The topic must be ONE concrete story, event, mystery, or fact — NOT a broad category.
 
@@ -730,12 +734,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             print(colored(f"\n  Image {i+1}/{len(prompts)}", "blue"))
             saved = False
             for name, fn in [
-                # Tier 1: Free unlimited AI generators (no daily limits)
+                # Tier 1: High-quality AI generator
+                ("Leonardo AI", self._try_leonardo),
+                # Tier 2: Free unlimited AI generators (no daily limits)
                 ("Pollinations FLUX", self._try_pollinations),
                 ("Pollinations turbo", self._try_pollinations_turbo),
                 ("Pollinations flux-realism", self._try_pollinations_realism),
-                # Tier 2: High-quality AI generators (free credit)
-                ("Leonardo AI", self._try_leonardo),
                 ("HuggingFace", self._try_huggingface),
                 # Tier 3: Stock photos (reliable, always available)
                 ("Pexels", self._try_pexels),
@@ -1020,15 +1024,18 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         req_dur = max_duration / len(self.images)
 
         # Make a generator that returns a TextClip when called with consecutive
+        # Style: Poppins Black on royal-blue box — top-tier YT Shorts look
+        _sub_font = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
         generator = lambda txt: TextClip(
-            txt,
-            font=os.path.join(get_fonts_dir(), "Montserrat-ExtraBold.ttf"),
+            txt.upper(),
+            font=_sub_font,
             fontsize=80,
             color="white",
             stroke_color="black",
-            stroke_width=4,
-            size=(1000, None),
+            stroke_width=6,
+            size=(900, None),
             method="caption",
+            bg_color="#4169E1",  # Royal Blue background box
         )
 
         print(colored("[+] Combining images...", "blue"))
@@ -1118,7 +1125,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             ]
 
             subtitles = SubtitlesClip(parsed_subs, generator)
-            subtitles = subtitles.set_pos(("center", 1400))
+            subtitles = subtitles.set_pos(("center", 1350))
             print(colored("[+] Subtitles ready.", "green"), flush=True)
         except Exception as e:
             warning(f"Failed to generate subtitles, continuing without subtitles: {e}")
@@ -1358,10 +1365,60 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         return image_prompts
 
+    def _try_leonardo_landscape(self, prompt: str) -> bytes:
+        """Try Leonardo AI API in 16:9 landscape format for long videos."""
+        from config import get_leonardo_api_key
+        api_key = get_leonardo_api_key()
+        if not api_key:
+            raise RuntimeError("Leonardo AI API key not configured")
+
+        print(colored(f"    [Leonardo AI 16:9] Generating...", "cyan"), flush=True)
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "prompt": prompt[:1000],
+            "modelId": "b24e16ff-06e3-43eb-8d33-4416c2d75876",  # Leonardo Lightning XL
+            "width": 1024,
+            "height": 576,
+            "num_images": 1,
+        }
+        resp = requests.post(
+            "https://cloud.leonardo.ai/api/rest/v1/generations",
+            headers=headers, json=payload, timeout=30,
+        )
+        resp.raise_for_status()
+        gen_id = resp.json().get("sdGenerationJob", {}).get("generationId", "")
+        if not gen_id:
+            raise RuntimeError("Leonardo: no generation ID returned")
+
+        for _ in range(30):
+            time.sleep(5)
+            status_resp = requests.get(
+                f"https://cloud.leonardo.ai/api/rest/v1/generations/{gen_id}",
+                headers=headers, timeout=15,
+            )
+            status_resp.raise_for_status()
+            gen = status_resp.json().get("generations_by_pk", {})
+            status = gen.get("status", "")
+            if status == "COMPLETE":
+                images = gen.get("generated_images", [])
+                if images:
+                    img_url = images[0].get("url", "")
+                    img_resp = requests.get(img_url, timeout=60)
+                    if img_resp.status_code == 200 and len(img_resp.content) > 5000:
+                        print(colored("OK", "green"))
+                        return img_resp.content
+                raise RuntimeError("Leonardo: no image in result")
+            elif status == "FAILED":
+                raise RuntimeError("Leonardo: generation failed")
+        raise RuntimeError("Leonardo: timeout waiting for generation")
+
     def generate_long_images(self, prompts: List[str]) -> None:
         """
         Generate images for long video in 16:9 landscape format (1920x1080).
-        Uses Pollinations FLUX as primary provider.
+        Cascade: Leonardo AI → Pollinations FLUX → HuggingFace → Pillow fallback.
         """
         print(colored(f"\n  [Long Video] Generating {len(prompts)} images (1920x1080)...", "blue"))
 
@@ -1369,8 +1426,8 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             print(colored(f"\n  Image {i+1}/{len(prompts)}", "blue"))
             saved = False
 
-            # Try Pollinations with landscape dimensions
             for name, fn in [
+                ("Leonardo AI", lambda p: self._try_leonardo_landscape(p)),
                 ("Pollinations.ai FLUX", lambda p: self._try_pollinations_landscape(p)),
                 ("HuggingFace", self._try_huggingface),
             ]:
@@ -1507,29 +1564,9 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
                     img_clip = img_clip.set_fps(30)
 
-                    # Ken Burns effect: slow zoom in (1.0x to 1.15x over clip duration)
-                    # Crops into the center progressively (fast, numpy-only)
-                    import numpy as np
-                    def make_zoom(clip_obj, dur):
-                        base_frame = clip_obj.get_frame(0)
-                        h_f, w_f = base_frame.shape[:2]
-                        def zoom_effect(get_frame, t):
-                            frame = get_frame(t)
-                            zoom = 1.0 + 0.15 * (t / dur)
-                            new_w = int(w_f / zoom)
-                            new_h = int(h_f / zoom)
-                            x1 = (w_f - new_w) // 2
-                            y1 = (h_f - new_h) // 2
-                            cropped = frame[y1:y1+new_h, x1:x1+new_w]
-                            # Fast nearest-neighbor upscale via np.repeat
-                            sy = h_f / new_h
-                            sx = w_f / new_w
-                            row_idx = np.minimum(np.arange(h_f) * new_h // h_f, new_h - 1)
-                            col_idx = np.minimum(np.arange(w_f) * new_w // w_f, new_w - 1)
-                            return cropped[np.ix_(row_idx, col_idx)]
-                        return clip_obj.fl(zoom_effect)
-
-                    img_clip = make_zoom(img_clip, clip_dur)
+                    # Ken Burns effect: slow zoom in (1.0x to 1.10x)
+                    # Uses resize() which is much faster than per-frame numpy ops
+                    img_clip = img_clip.resize(lambda t: 1 + 0.10 * (t / clip_dur))
 
                     # Crossfade: fade in first 0.5s, fade out last 0.5s
                     if clip_dur > 1.5:
@@ -1580,7 +1617,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             fps=30,
             codec="libx264",
             audio_codec="aac",
-            preset="medium",
+            preset="ultrafast",
         )
 
         success(f'Wrote long video to "{combined_path}"')

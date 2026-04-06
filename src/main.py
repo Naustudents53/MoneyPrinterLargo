@@ -131,8 +131,8 @@ def main():
             table = PrettyTable()
             table.field_names = ["ID", "UUID", "Nickname", "Niche"]
 
-            for account in cached_accounts:
-                table.add_row([cached_accounts.index(account) + 1, colored(account["id"], "cyan"), colored(account["nickname"], "blue"), colored(account["niche"], "green")])
+            for idx, account in enumerate(cached_accounts):
+                table.add_row([idx + 1, colored(account["id"], "cyan"), colored(account["nickname"], "blue"), colored(account["niche"], "green")])
 
             print(table)
             info("Type 'd' to delete an account, 'n' to add a new account.", False)
@@ -164,8 +164,8 @@ def main():
                 delete_input = question("Enter account number to delete: ").strip()
                 account_to_delete = None
 
-                for account in cached_accounts:
-                    if str(cached_accounts.index(account) + 1) == delete_input:
+                for idx, account in enumerate(cached_accounts):
+                    if str(idx + 1) == delete_input:
                         account_to_delete = account
                         break
 
@@ -184,9 +184,10 @@ def main():
 
             selected_account = None
 
-            for account in cached_accounts:
-                if str(cached_accounts.index(account) + 1) == user_input:
+            for idx, account in enumerate(cached_accounts):
+                if str(idx + 1) == user_input:
                     selected_account = account
+                    break
 
             if selected_account is None:
                 error("Invalid account selected. Please try again.", "red")
@@ -305,8 +306,8 @@ def main():
             table = PrettyTable()
             table.field_names = ["ID", "UUID", "Nickname", "Account Topic"]
 
-            for account in cached_accounts:
-                table.add_row([cached_accounts.index(account) + 1, colored(account["id"], "cyan"), colored(account["nickname"], "blue"), colored(account["topic"], "green")])
+            for idx, account in enumerate(cached_accounts):
+                table.add_row([idx + 1, colored(account["id"], "cyan"), colored(account["nickname"], "blue"), colored(account["topic"], "green")])
 
             print(table)
             info("Type 'd' to delete an account.", False)
@@ -317,8 +318,8 @@ def main():
                 delete_input = question("Enter account number to delete: ").strip()
                 account_to_delete = None
 
-                for account in cached_accounts:
-                    if str(cached_accounts.index(account) + 1) == delete_input:
+                for idx, account in enumerate(cached_accounts):
+                    if str(idx + 1) == delete_input:
                         account_to_delete = account
                         break
 
@@ -337,9 +338,10 @@ def main():
 
             selected_account = None
 
-            for account in cached_accounts:
-                if str(cached_accounts.index(account) + 1) == user_input:
+            for idx, account in enumerate(cached_accounts):
+                if str(idx + 1) == user_input:
                     selected_account = account
+                    break
 
             if selected_account is None:
                 error("Invalid account selected. Please try again.", "red")
@@ -447,8 +449,8 @@ def main():
             table = PrettyTable()
             table.field_names = ["ID", "Affiliate Link", "Twitter Account UUID"]
 
-            for product in cached_products:
-                table.add_row([cached_products.index(product) + 1, colored(product["affiliate_link"], "cyan"), colored(product["twitter_uuid"], "blue")])
+            for idx, product in enumerate(cached_products):
+                table.add_row([idx + 1, colored(product["affiliate_link"], "cyan"), colored(product["twitter_uuid"], "blue")])
 
             print(table)
 
@@ -456,9 +458,10 @@ def main():
 
             selected_product = None
 
-            for product in cached_products:
-                if str(cached_products.index(product) + 1) == user_input:
+            for idx, product in enumerate(cached_products):
+                if str(idx + 1) == user_input:
                     selected_product = product
+                    break
 
             if selected_product is None:
                 error("Invalid product selected. Please try again.", "red")
