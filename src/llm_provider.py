@@ -4,6 +4,7 @@ from config import get_ollama_base_url, get_llm_provider, get_pollinations_text_
 
 _selected_model: str | None = None
 _llm_provider: str | None = None
+_disabled_providers: set = set()
 
 
 def _ollama_client():
@@ -78,13 +79,18 @@ def generate_text(prompt: str, model_name: str = None) -> str:
 
     last_error = None
     for name, fn in providers:
+        if name in _disabled_providers:
+            continue
         try:
             result = fn()
             if _is_garbage_response(result):
                 raise RuntimeError(f"LLM returned a conversational/garbage response: {result[:80]}")
+            print(f"  [✓] Using LLM provider: {name}")
             return result
         except Exception as e:
             print(f"  [!] LLM provider '{name}' failed: {e}")
+            _disabled_providers.add(name)
+            print(f"  [!] Disabling '{name}' for the rest of this session.")
             last_error = e
 
     raise RuntimeError(f"All LLM providers failed. Last error: {last_error}")
@@ -108,6 +114,7 @@ def _is_garbage_response(text: str) -> bool:
 
 def _generate_text_pollinations(prompt: str, model: str = None) -> str:
     import time as _time
+    import random as _random
 
     model = model or get_pollinations_text_model() or "openai"
 
@@ -118,6 +125,8 @@ def _generate_text_pollinations(prompt: str, model: str = None) -> str:
             {"role": "user", "content": prompt},
         ],
         "stream": False,
+        "seed": _random.randint(1, 999999),
+        "cache": False,
     }
 
     last_error = None
@@ -144,8 +153,9 @@ def _generate_text_pollinations(prompt: str, model: str = None) -> str:
         try:
             import urllib.parse
             encoded = urllib.parse.quote(prompt[:500])
+            seed = _random.randint(1, 999999)
             resp = requests.get(
-                f"https://text.pollinations.ai/{encoded}?model={model}",
+                f"https://text.pollinations.ai/{encoded}?model={model}&seed={seed}&noCache=true",
                 timeout=120,
             )
             resp.raise_for_status()

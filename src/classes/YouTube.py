@@ -174,6 +174,8 @@ class YouTube:
         except Exception:
             pass
 
+        import random
+        creativity_seed = random.randint(1, 100000)
         completion = self.generate_response(
             f"""Generate ONE specific, focused topic for a short video.
 
@@ -188,7 +190,9 @@ GOOD example: "La maldición de la tumba de Tutankamón: ¿qué les pasó a los 
 GOOD example: "¿Por qué los romanos usaban orina para lavar la ropa?" (one specific curiosity)
 GOOD example: "El día que un asteroide exterminó al 75% de la vida en la Tierra" (one specific event)
 
-Return ONLY the topic in one sentence. Write in {self.language}. Nothing else.{previous_topics}"""
+Return ONLY the topic in one sentence. Write in {self.language}. Nothing else.{previous_topics}
+
+(Creativity seed: {creativity_seed} — use this to inspire a unique, unexpected angle.)"""
         )
 
         if not completion:
@@ -1293,7 +1297,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             tts_instance (TTS): Instance of TTS Class.
 
         Returns:
-            path (str): The path to the generated MP4 File.
+            path (str): The path to the generated MP4 File, or empty string if cancelled.
         """
         # Generate the Topic
         self.generate_topic()
