@@ -5,6 +5,7 @@ from config import get_ollama_base_url, get_llm_provider, get_pollinations_text_
 _selected_model: str | None = None
 _llm_provider: str | None = None
 _disabled_providers: set = set()
+_last_used_provider: str | None = None
 
 
 def _ollama_client():
@@ -85,7 +86,10 @@ def generate_text(prompt: str, model_name: str = None) -> str:
             result = fn()
             if _is_garbage_response(result):
                 raise RuntimeError(f"LLM returned a conversational/garbage response: {result[:80]}")
-            print(f"  [✓] Using LLM provider: {name}")
+            global _last_used_provider
+            if name != _last_used_provider:
+                print(f"  [✓] Switched to LLM provider: {name}")
+                _last_used_provider = name
             return result
         except Exception as e:
             print(f"  [!] LLM provider '{name}' failed: {e}")
