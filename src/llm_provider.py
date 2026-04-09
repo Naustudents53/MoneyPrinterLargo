@@ -1,6 +1,6 @@
 import requests
 
-from config import get_ollama_base_url, get_llm_provider, get_pollinations_text_model, get_nanobanana2_api_key, get_gemini_model
+from config import get_ollama_base_url, get_llm_provider, get_pollinations_text_model, get_nanobanana2_api_key, get_gemini_model, get_gemini_models
 
 _selected_model: str | None = None
 _llm_provider: str | None = None
@@ -189,13 +189,12 @@ def _generate_text_ollama(prompt: str, model: str = None) -> str:
 
 
 def _generate_text_gemini(prompt: str) -> str:
-    """Generate text using Google Gemini API (free tier)."""
+    """Generate text using Google Gemini API (free tier), cascading through models."""
     api_key = get_nanobanana2_api_key()
     if not api_key:
         raise RuntimeError("No Gemini API key configured (nanobanana2_api_key)")
 
-    model = get_gemini_model()
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    models = get_gemini_models()
 
     payload = {
         "system_instruction": {
@@ -209,17 +208,29 @@ def _generate_text_gemini(prompt: str) -> str:
         },
     }
 
-    response = requests.post(url, json=payload, timeout=120)
-    response.raise_for_status()
-    data = response.json()
+    last_error = None
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        try:
+            response = requests.post(url, json=payload, timeout=120)
+            response.raise_for_status()
+            data = response.json()
 
-    # Extract text from Gemini response
-    candidates = data.get("candidates", [])
-    if not candidates:
-        raise RuntimeError(f"Gemini returned no candidates: {data}")
+            candidates = data.get("candidates", [])
+            if not candidates:
+                raise RuntimeError(f"Gemini returned no candidates: {data}")
 
-    parts = candidates[0].get("content", {}).get("parts", [])
-    if not parts:
-        raise RuntimeError(f"Gemini returned empty parts: {data}")
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if not parts:
+                raise RuntimeError(f"Gemini returned empty parts: {data}")
 
-    return parts[0].get("text", "").strip()
+            text = parts[0].get("text", "").strip()
+            if text:
+                print(f"  [Gemini] Using model: {model}")
+                return text
+            raise RuntimeError("Gemini returned empty text")
+        except Exception as e:
+            print(f"  [Gemini] Model '{model}' failed: {e}")
+            last_error = e
+
+    raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")

@@ -356,9 +356,18 @@ def get_llm_provider() -> str:
         return json.load(file).get("llm_provider", "gemini")
 
 def get_gemini_model() -> str:
-    """Gets the Gemini model for text generation."""
+    """Gets the primary Gemini model for text generation."""
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         return json.load(file).get("gemini_model", "gemini-2.5-flash")
+
+def get_gemini_models() -> list[str]:
+    """Gets the ordered list of Gemini models to try (best first)."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        models = json.load(file).get("gemini_models", [])
+    if models:
+        return models
+    # Fallback: just the single configured model
+    return [get_gemini_model()]
 
 def get_pollinations_text_model() -> str:
     """Gets the Pollinations text model name."""
