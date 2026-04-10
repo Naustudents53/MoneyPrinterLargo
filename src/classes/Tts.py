@@ -20,6 +20,9 @@ EDGE_TTS_VOICES = {
     "Pablo": "es-ES-AlvaroNeural",
 }
 
+# Deep narrator voice for long-form documentary videos (Spain, neutral & authoritative)
+LONG_VIDEO_NARRATOR = "es-ES-AlvaroNeural"
+
 
 class TTS:
     def __init__(self) -> None:
@@ -49,8 +52,8 @@ class TTS:
 
     def synthesize_long(self, text, output_file, voice_id=None):
         """
-        Synthesize long-form text with SSML prosody for more natural narration.
-        Uses a slower rate and adds pauses between paragraphs for a documentary feel.
+        Synthesize long-form text for documentary-style narration.
+        Uses a deep, slow voice with pauses between paragraphs.
         """
         import edge_tts
         import subprocess
@@ -59,31 +62,19 @@ class TTS:
         vid = voice_id or EDGE_TTS_VOICES.get(self._voice, self._voice)
         mp3_path = output_file.rsplit(".", 1)[0] + ".mp3"
 
-        # Split into paragraphs and add SSML pauses between them
+        # Add natural pauses between paragraphs for documentary feel
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         if not paragraphs:
             paragraphs = [text]
-
-        # Build SSML with prosody: slightly slower rate for documentary feel
-        ssml_parts = []
-        for i, para in enumerate(paragraphs):
-            # Escape XML special characters
-            safe = para.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            ssml_parts.append(safe)
-            if i < len(paragraphs) - 1:
-                ssml_parts.append('<break time="800ms"/>')
-
-        ssml_body = " ".join(ssml_parts)
-        ssml = (
-            f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="es-MX">'
-            f'<voice name="{vid}">'
-            f'<prosody rate="-5%" pitch="+0Hz">'
-            f'{ssml_body}'
-            f'</prosody></voice></speak>'
-        )
+        # Join with ellipsis pause markers — edge_tts treats these as natural pauses
+        narration_text = " ... ".join(paragraphs)
 
         async def _generate():
-            communicate = edge_tts.Communicate(ssml, vid)
+            # Deep narrator: slower rate, lower pitch for gravitas
+            communicate = edge_tts.Communicate(
+                narration_text, vid,
+                rate="-8%", pitch="-15Hz"
+            )
             await communicate.save(mp3_path)
 
         asyncio.run(_generate())

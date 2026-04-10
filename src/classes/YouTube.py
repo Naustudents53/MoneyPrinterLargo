@@ -1333,69 +1333,99 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
     def generate_long_script(self) -> str:
         """
-        Generates a structured long-form script with chapters for a 5-10 minute video.
-        The script is split into: hook, 4-5 body sections, and a closing.
+        Generates a structured long-form script with chapters for a 7-12 minute video.
+        The script is split into: hook, 6-7 body sections, and a closing.
         """
-        prompt = f"""You are an expert documentary narrator and scriptwriter.
-Write a compelling 5-to-7-minute narration script about the following topic.
+        lang = self.language
+        prompt = f"""Eres un narrador experto de documentales y guionista profesional.
+Escribe un guion de narración cautivador de 8 a 12 minutos sobre el siguiente tema.
 
-Topic: {self.subject}
+Tema: {self.subject}
 
-STRUCTURE (use these exact section markers):
+ESTRUCTURA (usa estos marcadores exactos):
 [INTRO]
-A powerful opening hook (2-3 sentences). Start with a mind-blowing fact, a provocative question, or a bold claim that instantly grabs attention.
+Un gancho inicial poderoso (3-4 oraciones). Empieza con un dato impactante, una pregunta provocadora o una afirmación audaz que capture la atención inmediatamente.
 
-[SECTION 1: <title>]
-First main point (4-5 sentences). Dive deep into the first fascinating aspect of the topic.
+[SECTION 1: <título>]
+Primer punto principal (6-8 oraciones). Profundiza en el primer aspecto fascinante del tema.
 
-[SECTION 2: <title>]
-Second main point (4-5 sentences). Explore a different angle or build on the previous section.
+[SECTION 2: <título>]
+Segundo punto principal (6-8 oraciones). Explora un ángulo diferente o construye sobre la sección anterior.
 
-[SECTION 3: <title>]
-Third main point (4-5 sentences). Reveal surprising connections or lesser-known facts.
+[SECTION 3: <título>]
+Tercer punto principal (6-8 oraciones). Revela conexiones sorprendentes o hechos poco conocidos.
 
-[SECTION 4: <title>]
-Fourth main point (4-5 sentences). The climax — the most mind-blowing part of the topic.
+[SECTION 4: <título>]
+Cuarto punto principal (6-8 oraciones). Añade más profundidad al tema con detalles fascinantes.
+
+[SECTION 5: <título>]
+Quinto punto principal (6-8 oraciones). El clímax — la parte más impactante del tema.
+
+[SECTION 6: <título>]
+Sexto punto principal (6-8 oraciones). Consecuencias, legado, o impacto en la actualidad.
 
 [CLOSING]
-A memorable conclusion (2-3 sentences). End with a thought-provoking reflection that stays with the viewer.
+Una conclusión memorable (3-4 oraciones). Termina con una reflexión que se quede con el espectador.
 
-STYLE RULES:
-- Write like a passionate storyteller, NOT a textbook. Use vivid, sensory language.
-- Each sentence should flow naturally into the next, as if spoken aloud.
-- Use rhetorical questions, surprising comparisons, and emotional hooks.
-- Keep sentences SHORT and punchy (under 20 words each).
-- Total script should be approximately 800-1200 words (5-7 minutes when spoken).
-- WRITE ENTIRELY IN {self.language}. Every single word must be in {self.language}.
-- DO NOT include any stage directions, speaker labels, or meta-text.
-- DO NOT use markdown formatting, bullet points, or numbered lists.
-- ONLY return the script with the section markers as shown above.
+REGLAS DE ESTILO:
+- Escribe como un narrador apasionado, NO como un libro de texto. Usa lenguaje vívido y sensorial.
+- Cada oración debe fluir naturalmente hacia la siguiente, como si se hablara en voz alta.
+- Usa preguntas retóricas, comparaciones sorprendentes y ganchos emocionales.
+- Mantén las oraciones CORTAS y contundentes (máximo 20 palabras cada una).
+- El guion COMPLETO debe tener entre 1500 y 2200 palabras (8-12 minutos al hablar).
+- ESCRIBE TODO EN {lang}. Cada palabra debe estar en {lang}. NO uses inglés.
+- NO incluyas acotaciones, etiquetas de hablante ni meta-texto.
+- NO uses formato markdown, viñetas ni listas numeradas.
+- NO incluyas URLs, enlaces, citas ni referencias de ningún tipo.
+- SOLO devuelve el guion con los marcadores de sección como se muestra arriba. Sin preámbulos ni notas.
 """
-        completion = self.generate_response(prompt)
-        completion = re.sub(r"\*", "", completion)
+        # Try up to 3 times to get a long enough script
+        best = ""
+        for attempt in range(3):
+            if attempt > 0:
+                warning(f"Script too short ({len(best.split())} words). Attempt {attempt + 1}/3...")
+            completion = self.generate_response(prompt)
+            completion = self._clean_llm_script(completion)
+            if len(completion.split()) > len(best.split()):
+                best = completion
+            if len(best.split()) >= 800:
+                break
 
-        if not completion or len(completion) < 200:
-            error("Long script generation failed or too short.")
-            raise RuntimeError("Failed to generate long script")
+        # If still short, try expanding what we have
+        if len(best.split()) < 800:
+            warning(f"Expanding short script ({len(best.split())} words)...")
+            expand_prompt = (
+                f"Expande y desarrolla MUCHO más el siguiente guion de narración. "
+                f"Añade más detalles, datos históricos, descripciones vívidas y contexto. "
+                f"El resultado debe tener al menos 1500 palabras. "
+                f"Mantén los marcadores de sección [SECTION]. "
+                f"ESCRIBE TODO EN {self.language}.\n\n{best}"
+            )
+            expanded = self.generate_response(expand_prompt)
+            expanded = self._clean_llm_script(expanded)
+            if len(expanded.split()) > len(best.split()):
+                best = expanded
 
-        self.script = completion
+        if not best or len(best.split()) < 200:
+            raise RuntimeError(f"Failed to generate long script (only {len(best.split())} words)")
+
+        self.script = best
 
         if get_verbose():
-            word_count = len(completion.split())
-            info(f" => Generated long script: {word_count} words")
+            info(f" => Generated long script: {len(best.split())} words")
 
-        return completion
+        return best
 
     def generate_long_metadata(self) -> dict:
         """
         Generates metadata optimized for long-form YouTube videos.
         """
         title = self.generate_response(
-            f"Generate a compelling YouTube video title for this topic: {self.subject}. "
-            f"Make it intriguing and click-worthy but NOT clickbait. Optionally include 1-2 relevant hashtags at the end (only if they fit naturally). "
-            f"Keep it under 80 characters. Only return the title. "
-            f"Do NOT wrap the title in quotes. Do NOT start or end with any quote character. "
-            f"YOU MUST WRITE IN {self.language}."
+            f"Genera un título atractivo para un video de YouTube sobre este tema: {self.subject}. "
+            f"Debe ser intrigante y llamativo pero NO clickbait. Opcionalmente incluye 1-2 hashtags relevantes al final. "
+            f"Máximo 80 caracteres. Solo devuelve el título. "
+            f"NO pongas comillas alrededor del título. "
+            f"ESCRIBE EN {self.language}. TODO debe estar en {self.language}."
         )
 
         # Strip any quotes the LLM might add (regular, curly, single)
@@ -1408,17 +1438,17 @@ STYLE RULES:
                 title = title[:100]
 
         description = self.generate_response(
-            f"""Generate a YouTube video description for a long-form video with this script:
+            f"""Genera una descripción de YouTube para un video largo con este guion:
 
 {self.script[:2000]}
 
-Include:
-- A brief 2-sentence summary of the video
-- 5-8 relevant hashtags
-- A call to action (subscribe, like, comment)
+Incluye:
+- Un resumen breve de 2 oraciones del video
+- 5-8 hashtags relevantes
+- Un llamado a la acción (suscribirse, dar like, comentar)
 
-Do NOT wrap the description in quotes. Do NOT start or end with any quote character.
-Write entirely in {self.language}. Only return the description."""
+NO pongas comillas alrededor de la descripción.
+ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
         )
 
         # Strip any quotes the LLM might add (regular, curly, single)
@@ -1429,9 +1459,9 @@ Write entirely in {self.language}. Only return the description."""
 
     def generate_long_prompts(self) -> List[str]:
         """
-        Generates 15-18 image prompts for a long video, covering each section of the script.
+        Generates 20-24 image prompts for a long video, covering each section of the script.
         """
-        n_prompts = 16
+        n_prompts = 22
 
         prompt = f"""Generate exactly {n_prompts} Image Prompts for AI Image Generation.
 
@@ -1499,6 +1529,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 f"{self.subject}, abstract geometric patterns, fractal, mathematical beauty",
                 f"{self.subject}, sunset silhouette, dramatic contrast, wide angle",
                 f"{self.subject}, time-lapse style, motion blur, dynamic energy, vivid",
+                f"{self.subject}, epic battlefield scene, smoke and dust, cinematic 8K",
+                f"{self.subject}, candlelit interior, warm shadows, intimate atmosphere",
+                f"{self.subject}, stormy dramatic sky, lightning, powerful landscape",
+                f"{self.subject}, ancient map or manuscript, sepia tones, historical detail",
+                f"{self.subject}, crowd scene, dramatic perspective, documentary realism",
+                f"{self.subject}, ruins and decay, overgrown nature, post-apocalyptic beauty",
             ]
 
         image_prompts = image_prompts[:n_prompts]
@@ -1659,6 +1695,63 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         self.images.append(image_path)
         return image_path
 
+    @staticmethod
+    def _clean_llm_script(text: str) -> str:
+        """Clean raw LLM response: remove JSON artifacts, API metadata, markdown."""
+        if not text:
+            return ""
+        # Remove full JSON wrapper: {"role":"assistant","content":"..."}
+        # Match from start: optional { "role" : "..." , "content" : "  up to first real content
+        text = re.sub(
+            r'^\s*\{?\s*"?role"?\s*:\s*"?\w+"?\s*,?\s*"?content"?\s*:\s*"?',
+            '', text
+        )
+        # Remove trailing JSON closure: " } at the end
+        text = re.sub(r'"\s*\}?\s*$', '', text)
+        # Remove code blocks
+        text = re.sub(r'```[\s\S]*?```', '', text)
+        # Remove asterisks and markdown
+        text = re.sub(r"\*+", "", text)
+        text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+        # Remove LLM preamble like "Here's the script:" or "Aquí tienes:"
+        text = re.sub(r'^(Here\'s|Here is|Aquí (está|tienes|te presento)|A continuación)[^\n]*\n', '', text, flags=re.IGNORECASE)
+        # Remove trailing notes
+        text = re.sub(r'\n\s*(Note:|Nota:|---|\*\*\*|This script|Este guion)[^\n]*$', '', text, flags=re.IGNORECASE)
+        return text.strip()
+
+    @staticmethod
+    def _clean_script_for_tts(script: str) -> str:
+        """Clean LLM output so only spoken narration remains."""
+        text = script
+
+        # Remove section markers (English and Spanish)
+        text = re.sub(r'\[(INTRO|INTRODUCCIÓN|CLOSING|CIERRE)\]', '', text)
+        text = re.sub(r'\[(SECTION|SECCIÓN)\s*\d+:[^\]]*\]', '', text)
+
+        # Remove single-line JSON artifacts (NOT greedy across lines)
+        text = re.sub(r'"role"\s*:\s*"[^"]*"', '', text)
+        text = re.sub(r'"content"\s*:\s*"', '', text)
+        text = re.sub(r'```[^`]*```', '', text)
+
+        # Remove any URLs
+        text = re.sub(r'https?://\S+', '', text)
+        text = re.sub(r'www\.\S+', '', text)
+
+        # Remove markdown artifacts
+        text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)  # [text](url) → text
+        text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+        text = re.sub(r'\*+', '', text)
+
+        # Remove stray JSON braces and quotes at start/end
+        text = re.sub(r'^\s*[\{\}]\s*', '', text)
+        text = re.sub(r'\s*[\{\}]\s*$', '', text)
+
+        # Collapse whitespace
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r' {2,}', ' ', text)
+
+        return text.strip()
+
     def combine_long(self) -> str:
         """
         Combines images and audio into a long-form 16:9 landscape video.
@@ -1692,30 +1785,27 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 try:
                     img_clip = ImageClip(image_path).set_duration(clip_dur)
 
-                    # Resize to 1920x1080 with proper cropping
+                    # Resize to 1920x1080
                     w, h = img_clip.size
                     aspect = w / h
                     target_aspect = 1920 / 1080
 
                     if aspect > target_aspect:
-                        # Image is wider — scale by height, crop width
                         img_clip = img_clip.resize(height=1080)
                         img_clip = crop(img_clip, x_center=img_clip.w / 2, y_center=540, width=1920, height=1080)
                     else:
-                        # Image is taller — scale by width, crop height
                         img_clip = img_clip.resize(width=1920)
                         img_clip = crop(img_clip, x_center=960, y_center=img_clip.h / 2, width=1920, height=1080)
 
-                    img_clip = img_clip.set_fps(30)
+                    # Ken Burns: gentle slow zoom (1.0x → 1.08x over clip duration)
+                    # Use default arg to capture clip_dur in the closure
+                    img_clip = img_clip.resize(lambda t, d=clip_dur: 1 + 0.08 * (t / d))
 
-                    # Ken Burns effect: slow zoom in (1.0x to 1.10x)
-                    # Uses resize() which is much faster than per-frame numpy ops
-                    img_clip = img_clip.resize(lambda t: 1 + 0.10 * (t / clip_dur))
+                    # Crossfade between images
+                    if clip_dur > 2.0:
+                        img_clip = img_clip.crossfadein(0.8)
 
-                    # Crossfade: fade in first 0.5s, fade out last 0.5s
-                    if clip_dur > 1.5:
-                        img_clip = img_clip.crossfadein(0.5).crossfadeout(0.5)
-
+                    img_clip = img_clip.set_fps(24)
                     clips.append(img_clip)
                     tot_dur += clip_dur
 
@@ -1727,10 +1817,15 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         if not clips:
             raise RuntimeError("No clips could be created from images")
 
-        # Concatenate with crossfade transitions
+        # Concatenate with crossfade overlap between clips
         print(colored("[+] Applying transitions...", "blue"), flush=True)
-        final_clip = concatenate_videoclips(clips, method="compose")
-        final_clip = final_clip.set_fps(30)
+        padding = -0.8 if len(clips) > 1 else 0
+        final_clip = concatenate_videoclips(clips, padding=padding, method="compose")
+        final_clip = final_clip.set_fps(24)
+
+        # Trim video to match TTS duration exactly
+        if final_clip.duration > max_duration:
+            final_clip = final_clip.subclip(0, max_duration)
 
         # Audio: TTS + background music
         print(colored("[+] Mixing audio...", "blue"), flush=True)
@@ -1751,17 +1846,19 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         comp_audio = CompositeAudioClip([tts_clip.set_fps(44100), music_clip])
 
+        # Set audio THEN duration — order matters for MoviePy
+        final_clip = final_clip.set_duration(max_duration)
         final_clip = final_clip.set_audio(comp_audio)
-        final_clip = final_clip.set_duration(tts_clip.duration)
 
-        print(colored("[+] Rendering long video (this may take several minutes)...", "blue"), flush=True)
+        print(colored("[+] Rendering long video...", "blue"), flush=True)
         final_clip.write_videofile(
             combined_path,
             threads=threads,
-            fps=30,
+            fps=24,
             codec="libx264",
             audio_codec="aac",
             preset="ultrafast",
+            audio=True,
         )
 
         success(f'Wrote long video to "{combined_path}"')
@@ -1809,24 +1906,27 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         info("\n[6/6] Generating narration audio...")
         path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".wav")
 
-        # Clean script of section markers for TTS, keep the text
-        tts_script = self.script
-        tts_script = re.sub(r'\[INTRO\]', '', tts_script)
-        tts_script = re.sub(r'\[SECTION \d+:.*?\]', '', tts_script)
-        tts_script = re.sub(r'\[CLOSING\]', '', tts_script)
-        tts_script = re.sub(r'\[CIERRE\]', '', tts_script)
-        tts_script = re.sub(r'\[SECCIÓN \d+:.*?\]', '', tts_script)
-        tts_script = re.sub(r'\[INTRODUCCIÓN\]', '', tts_script)
-        tts_script = re.sub(r"[^\w\s.?!,;:'\"-]", "", tts_script)
-        tts_script = re.sub(r'\n{3,}', '\n\n', tts_script).strip()
+        # Clean script for TTS: remove ALL non-narration content
+        tts_script = self._clean_script_for_tts(self.script)
 
-        # Use the long-form TTS with SSML prosody for natural narration
-        tts_instance.synthesize_long(tts_script, path, voice_id="es-MX-JorgeNeural")
-        self.tts_path = path
+        # Fallback: if cleaning wiped everything, use the raw script
+        if not tts_script or len(tts_script.split()) < 50:
+            warning("TTS cleaning removed too much content, using raw script")
+            tts_script = re.sub(r'\[.*?\]', '', self.script).strip()
 
         if get_verbose():
+            info(f" => TTS script preview (first 200 chars): {tts_script[:200]}")
+
+        # Use deep narrator voice for documentary-style long videos
+        from .Tts import LONG_VIDEO_NARRATOR
+        tts_instance.synthesize_long(tts_script, path, voice_id=LONG_VIDEO_NARRATOR)
+        self.tts_path = path
+
+        if os.path.exists(path) and os.path.getsize(path) > 1000:
             audio_dur = AudioFileClip(path).duration
             info(f" => Audio duration: {audio_dur:.0f} seconds ({audio_dur/60:.1f} min)")
+        else:
+            raise RuntimeError(f"TTS failed to generate audio file at {path}")
 
         # Step 7: Combine everything
         info("\n[+] Assembling final video...")

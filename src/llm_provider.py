@@ -6,6 +6,7 @@ _selected_model: str | None = None
 _llm_provider: str | None = None
 _disabled_providers: set = set()
 _last_used_provider: str | None = None
+_disabled_gemini_models: set = set()
 
 
 def _ollama_client():
@@ -51,7 +52,9 @@ _SYSTEM_PROMPT = (
     "You are a content generation assistant. You NEVER engage in conversation. "
     "You NEVER ask questions. You NEVER say 'sure', 'of course', 'here you go', "
     "'let me know', or any pleasantries. You ONLY output exactly what is requested. "
-    "No preamble, no explanation, no meta-commentary. Just the raw content."
+    "No preamble, no explanation, no meta-commentary. Just the raw content. "
+    "NEVER include JSON, API metadata, role labels, or any technical artifacts in your output. "
+    "When asked to write in a specific language, you MUST write ENTIRELY in that language."
 )
 
 
@@ -208,8 +211,12 @@ def _generate_text_gemini(prompt: str) -> str:
         },
     }
 
+    available_models = [m for m in models if m not in _disabled_gemini_models]
+    if not available_models:
+        raise RuntimeError("All Gemini models have been rate-limited this session")
+
     last_error = None
-    for model in models:
+    for model in available_models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         try:
             response = requests.post(url, json=payload, timeout=120)
@@ -231,6 +238,10 @@ def _generate_text_gemini(prompt: str) -> str:
             raise RuntimeError("Gemini returned empty text")
         except Exception as e:
             print(f"  [Gemini] Model '{model}' failed: {e}")
+            # Disable rate-limited models for the session
+            if "429" in str(e) or "Too Many Requests" in str(e):
+                _disabled_gemini_models.add(model)
+                print(f"  [Gemini] Disabling '{model}' (rate limited) for this session.")
             last_error = e
 
     raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")

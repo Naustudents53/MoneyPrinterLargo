@@ -517,7 +517,11 @@ if __name__ == "__main__":
     llm_provider = get_llm_provider()
     set_llm_provider(llm_provider)
 
-    if llm_provider == "pollinations":
+    if llm_provider == "gemini":
+        from config import get_gemini_models
+        models = get_gemini_models()
+        success(f"Using Gemini LLM (cascade: {' → '.join(models)})")
+    elif llm_provider == "pollinations":
         # Use Pollinations.ai (free, no local server needed)
         configured_model = get_pollinations_text_model()
         if configured_model:
