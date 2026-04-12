@@ -1204,18 +1204,17 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         clips = []
         tot_dur = 0
-        # Add each image once, distributing duration evenly
+        n_images = len(self.images)
+        # Add each image once, distributing duration evenly across the full TTS length
         for idx, image_path in enumerate(self.images):
-            if tot_dur >= max_duration:
-                break
-            # Last clip gets remaining duration to avoid float mismatch
-            if idx == len(self.images) - 1:
+            # Last clip absorbs any float remainder so total == max_duration exactly
+            if idx == n_images - 1:
                 this_dur = max_duration - tot_dur
             else:
                 this_dur = req_dur
-            clip = ImageClip(image_path)
-            clip.duration = this_dur
-            clip = clip.set_fps(30)
+            if this_dur <= 0:
+                break
+            clip = ImageClip(image_path).set_duration(this_dur).set_fps(30)
 
             # Not all images are same size,
             # so we need to resize them
@@ -1240,9 +1239,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     y_center=clip.h / 2,
                 )
             clip = clip.resize((1080, 1920))
+            # Re-assert duration after crop/resize (MoviePy can drop it on some transforms)
+            clip = clip.set_duration(this_dur)
 
             clips.append(clip)
-            tot_dur += clip.duration
+            tot_dur += this_dur
 
         final_clip = concatenate_videoclips(clips)
         final_clip = final_clip.set_fps(30)
