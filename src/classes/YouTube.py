@@ -1188,7 +1188,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         threads = get_threads()
         tts_clip = AudioFileClip(self.tts_path)
         max_duration = tts_clip.duration
-        req_dur = max_duration / len(self.images)
+        # Crossfade overlap between clips — compensate so the composed total == max_duration
+        crossfade = 0.4
+        n_imgs = len(self.images)
+        total_overlap = crossfade * max(0, n_imgs - 1)
+        req_dur = (max_duration + total_overlap) / n_imgs
 
         print(colored("[+] Combining images...", "blue"))
 
@@ -1204,12 +1208,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         clips = []
         tot_dur = 0
-        n_images = len(self.images)
+        target_total = max_duration + total_overlap
         # Add each image once, distributing duration evenly across the full TTS length
         for idx, image_path in enumerate(self.images):
-            # Last clip absorbs any float remainder so total == max_duration exactly
-            if idx == n_images - 1:
-                this_dur = max_duration - tot_dur
+            # Last clip absorbs any float remainder so composed total == max_duration exactly
+            if idx == n_imgs - 1:
+                this_dur = target_total - tot_dur
             else:
                 this_dur = req_dur
             if this_dur <= 0:
@@ -1250,8 +1254,8 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 clip = clip.resize(lambda t, d=this_dur: 1.06 - 0.06 * (t / d))
 
             # Subtle crossfade in (except first clip) for smooth transitions
-            if idx > 0 and this_dur > 1.0:
-                clip = clip.crossfadein(0.4)
+            if idx > 0 and this_dur > crossfade:
+                clip = clip.crossfadein(crossfade)
 
             # Re-assert duration after transforms (MoviePy can drop it on resize with lambda)
             clip = clip.set_duration(this_dur)
@@ -1259,8 +1263,9 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             clips.append(clip)
             tot_dur += this_dur
 
-        # Negative padding overlaps clips by 0.4s so crossfades blend smoothly
-        padding = -0.4 if len(clips) > 1 else 0
+        # Negative padding overlaps clips by `crossfade` seconds for smooth blending.
+        # Duration was pre-compensated so composed total == max_duration (no black tail).
+        padding = -crossfade if len(clips) > 1 else 0
         final_clip = concatenate_videoclips(clips, padding=padding, method="compose")
         final_clip = final_clip.set_fps(30)
         # Trim any float drift so video matches TTS exactly
