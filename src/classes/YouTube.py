@@ -1244,20 +1244,28 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 )
             clip = clip.resize((1080, 1920))
 
-            # Ken Burns: subtle zoom (alternating in/out per image for variety)
-            # Zoom range: 1.00x ↔ 1.06x over the clip's duration
+            # Ken Burns: subtle zoom (alternating in/out per image for variety).
+            # Pre-scale to 1.06x so zoom never reveals empty edges, then animate scale
+            # between 1.00 (fit) and ~1.06 (fill+zoom). We wrap in a fixed-size
+            # CompositeVideoClip so the output stays a deterministic 1080x1920 —
+            # this is critical: variable-size clips make concatenate_videoclips
+            # miscompute timing, which caused all images to play in the first half.
+            base = clip.resize(1.06).set_position("center")
             if idx % 2 == 0:
-                # Zoom in: 1.00 → 1.06
-                clip = clip.resize(lambda t, d=this_dur: 1 + 0.06 * (t / d))
+                # Zoom in: 0.943 → 1.000 (relative to the 1.06x base → 1.00 → 1.06 effective)
+                kb = base.resize(lambda t, d=this_dur: (1 / 1.06) + (1 - 1 / 1.06) * (t / d))
             else:
-                # Zoom out: 1.06 → 1.00
-                clip = clip.resize(lambda t, d=this_dur: 1.06 - 0.06 * (t / d))
+                # Zoom out: 1.000 → 0.943
+                kb = base.resize(lambda t, d=this_dur: 1 - (1 - 1 / 1.06) * (t / d))
+            kb = kb.set_position("center")
+
+            clip = CompositeVideoClip([kb], size=(1080, 1920)).set_duration(this_dur)
 
             # Subtle crossfade in (except first clip) for smooth transitions
             if idx > 0 and this_dur > crossfade:
                 clip = clip.crossfadein(crossfade)
 
-            # Re-assert duration after transforms (MoviePy can drop it on resize with lambda)
+            # Re-assert duration just in case
             clip = clip.set_duration(this_dur)
 
             clips.append(clip)
@@ -1302,10 +1310,16 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         comp_audio = CompositeAudioClip([tts_clip.set_fps(44100), random_song_clip])
 
         final_clip = final_clip.set_audio(comp_audio)
-        # Don't force set_duration — clips already sum to max_duration exactly
+        # Force exact duration match so no black frames can appear at the tail
+        final_clip = final_clip.set_duration(max_duration)
 
         if subtitles is not None:
-            final_clip = CompositeVideoClip([final_clip, subtitles])
+            # Clamp subtitles to video duration so they can't extend the composite
+            # past the last image (which would produce a black tail with subs visible).
+            subtitles = subtitles.set_duration(max_duration)
+            final_clip = CompositeVideoClip(
+                [final_clip, subtitles], size=(1080, 1920)
+            ).set_duration(max_duration)
 
         print(colored("[+] Rendering final video (this may take a minute)...", "blue"), flush=True)
         final_clip.write_videofile(combined_image_path, threads=threads)
