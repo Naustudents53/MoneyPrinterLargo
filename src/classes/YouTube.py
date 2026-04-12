@@ -1239,14 +1239,33 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     y_center=clip.h / 2,
                 )
             clip = clip.resize((1080, 1920))
-            # Re-assert duration after crop/resize (MoviePy can drop it on some transforms)
+
+            # Ken Burns: subtle zoom (alternating in/out per image for variety)
+            # Zoom range: 1.00x ↔ 1.06x over the clip's duration
+            if idx % 2 == 0:
+                # Zoom in: 1.00 → 1.06
+                clip = clip.resize(lambda t, d=this_dur: 1 + 0.06 * (t / d))
+            else:
+                # Zoom out: 1.06 → 1.00
+                clip = clip.resize(lambda t, d=this_dur: 1.06 - 0.06 * (t / d))
+
+            # Subtle crossfade in (except first clip) for smooth transitions
+            if idx > 0 and this_dur > 1.0:
+                clip = clip.crossfadein(0.4)
+
+            # Re-assert duration after transforms (MoviePy can drop it on resize with lambda)
             clip = clip.set_duration(this_dur)
 
             clips.append(clip)
             tot_dur += this_dur
 
-        final_clip = concatenate_videoclips(clips)
+        # Negative padding overlaps clips by 0.4s so crossfades blend smoothly
+        padding = -0.4 if len(clips) > 1 else 0
+        final_clip = concatenate_videoclips(clips, padding=padding, method="compose")
         final_clip = final_clip.set_fps(30)
+        # Trim any float drift so video matches TTS exactly
+        if final_clip.duration > max_duration:
+            final_clip = final_clip.subclip(0, max_duration)
         random_song = choose_random_song()
 
         subtitles = None
