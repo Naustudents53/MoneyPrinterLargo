@@ -157,27 +157,88 @@ class YouTube:
     def generate_topic(self) -> str:
         """
         Generates a topic based on the YouTube Channel niche.
-        Avoids repeating topics from previously uploaded videos.
+        Avoids repeating topics from previously uploaded videos using
+        a fuzzy-match guard + retry loop (the LLM alone drifts into
+        near-duplicates even when explicitly told not to).
 
         Returns:
             topic (str): The generated topic.
         """
-        # Gather previous video titles to avoid repetition
-        previous_topics = ""
+        import random
+        from difflib import SequenceMatcher
+
+        # Gather ALL previous topics (not just recent). Storage is small and
+        # a channel-lifetime duplicate is exactly what we want to catch.
+        past_topics: List[str] = []
         try:
             videos = self.get_videos()
-            if videos:
-                topics = [v.get("subject") or v.get("title") for v in videos if v.get("subject") or v.get("title")]
-                if topics:
-                    recent = topics[-15:]  # last 15 to keep prompt manageable
-                    previous_topics = "\n\nIMPORTANT: Do NOT repeat or rephrase any of these previously made videos:\n" + "\n".join(f"- {t}" for t in recent) + "\n\nGenerate a COMPLETELY DIFFERENT and ORIGINAL idea."
+            for v in videos:
+                for key in ("subject", "title"):
+                    val = v.get(key)
+                    if val and isinstance(val, str):
+                        past_topics.append(val.strip())
         except Exception:
             pass
 
-        import random
-        creativity_seed = random.randint(1, 100000)
-        completion = self.generate_response(
-            f"""Generate ONE specific, focused topic for a short video.
+        def _normalize(s: str) -> str:
+            s = s.lower()
+            s = re.sub(r"[^\w\s]", " ", s)
+            stop = {"el", "la", "los", "las", "de", "del", "que", "y", "en", "a",
+                    "un", "una", "por", "para", "the", "of", "a", "an", "and",
+                    "is", "was", "to", "in", "on", "who", "why", "how", "what"}
+            tokens = [t for t in s.split() if t and t not in stop]
+            return " ".join(tokens)
+
+        normalized_past = [_normalize(t) for t in past_topics]
+
+        def _is_duplicate(candidate: str) -> tuple[bool, str]:
+            norm = _normalize(candidate)
+            if not norm:
+                return False, ""
+            for original, past_norm in zip(past_topics, normalized_past):
+                if not past_norm:
+                    continue
+                # Exact normalized match or high token overlap
+                if norm == past_norm:
+                    return True, original
+                # Token-set overlap (catches rephrasings like swapped word order)
+                a, b = set(norm.split()), set(past_norm.split())
+                if a and b:
+                    overlap = len(a & b) / max(len(a), len(b))
+                    if overlap >= 0.7:
+                        return True, original
+                # Sequence similarity (catches minor rewordings)
+                if SequenceMatcher(None, norm, past_norm).ratio() >= 0.75:
+                    return True, original
+            return False, ""
+
+        # Build the block of topics to forbid in the prompt. Cap at 60
+        # to keep prompt reasonable but cover far more than the old 15.
+        forbidden_block = ""
+        if past_topics:
+            shown = past_topics[-60:]
+            forbidden_block = (
+                "\n\nIMPORTANT: Do NOT repeat, rephrase, or pick a similar angle "
+                "to ANY of these previously made videos:\n"
+                + "\n".join(f"- {t}" for t in shown)
+                + "\n\nGenerate a COMPLETELY DIFFERENT and ORIGINAL idea."
+            )
+
+        rejected: List[str] = []
+        completion = ""
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            creativity_seed = random.randint(1, 100000)
+            extra_reject = ""
+            if rejected:
+                extra_reject = (
+                    "\n\nYou already suggested these and they were REJECTED as duplicates — "
+                    "pick a completely unrelated angle:\n"
+                    + "\n".join(f"- {t}" for t in rejected)
+                )
+
+            candidate = self.generate_response(
+                f"""Generate ONE specific, focused topic for a short video.
 
 YOUR NICHE (you MUST stay strictly within this niche): {self.niche}
 
@@ -190,13 +251,39 @@ GOOD example: "La maldición de la tumba de Tutankamón: ¿qué les pasó a los 
 GOOD example: "¿Por qué los romanos usaban orina para lavar la ropa?" (one specific curiosity)
 GOOD example: "El día que un asteroide exterminó al 75% de la vida en la Tierra" (one specific event)
 
-Return ONLY the topic in one sentence. Write in {self.language}. Nothing else.{previous_topics}
+Return ONLY the topic in one sentence. Write in {self.language}. Nothing else.{forbidden_block}{extra_reject}
 
 (Creativity seed: {creativity_seed} — use this to inspire a unique, unexpected angle.)"""
-        )
+            )
+
+            candidate = (candidate or "").strip().strip('"').strip("'")
+            if not candidate:
+                continue
+
+            is_dup, matched = _is_duplicate(candidate)
+            if is_dup:
+                warning(
+                    f"Topic '{candidate[:80]}' collides with past '{matched[:80]}' "
+                    f"(attempt {attempt + 1}/{max_attempts}) — regenerating."
+                )
+                rejected.append(candidate)
+                continue
+
+            completion = candidate
+            break
 
         if not completion:
-            error("Failed to generate Topic.")
+            # All attempts collided; accept the last candidate rather than
+            # failing the whole run, but warn loudly.
+            if rejected:
+                warning(
+                    f"All {max_attempts} topic attempts collided with history. "
+                    f"Using last candidate anyway."
+                )
+                completion = rejected[-1]
+            else:
+                error("Failed to generate Topic.")
+                completion = ""
 
         self.subject = completion
 
