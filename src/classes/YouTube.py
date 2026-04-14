@@ -1188,15 +1188,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         threads = get_threads()
         tts_clip = AudioFileClip(self.tts_path)
         max_duration = tts_clip.duration
-        # Crossfade overlap between clips — compensate so the composed total == max_duration
-        crossfade = 0.4
-        n_imgs = len(self.images)
-        total_overlap = crossfade * max(0, n_imgs - 1)
-        req_dur = (max_duration + total_overlap) / n_imgs
 
         print(colored("[+] Combining images...", "blue"))
 
-        # Verify all images exist
+        # Verify all images exist BEFORE computing duration distribution —
+        # stale paths would inflate n_imgs and shrink req_dur, leaving a
+        # black tail where clips run out before the TTS does.
         valid_images = [p for p in self.images if os.path.exists(p)]
         if not valid_images:
             raise FileNotFoundError("No valid images found for video combination")
@@ -1205,6 +1202,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             if get_verbose():
                 warning(f"Missing {len(missing)} images, using {len(valid_images)} valid ones")
             self.images = valid_images
+
+        # Crossfade overlap between clips — compensate so the composed total == max_duration
+        crossfade = 0.4
+        n_imgs = len(self.images)
+        total_overlap = crossfade * max(0, n_imgs - 1)
+        req_dur = (max_duration + total_overlap) / n_imgs
 
         clips = []
         tot_dur = 0
@@ -1338,6 +1341,17 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         Returns:
             path (str): The path to the generated MP4 File, or empty string if cancelled.
         """
+        # Reset per-video state. Without this, a 2nd run in the same session
+        # inherits stale paths from the 1st (whose PNGs were wiped by
+        # rem_temp_files()), inflating n_imgs in combine() and leaving half
+        # the short as a black tail.
+        self.images = []
+        self.image_prompts = []
+        self.word_timestamps = None
+        self.tts_path = None
+        self.subtitles_path = None
+        self._used_stock_urls = set()
+
         # Generate the Topic
         self.generate_topic()
 
