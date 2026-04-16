@@ -1005,10 +1005,22 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         """
         path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".wav")
 
-        # Clean script
-        self.script = re.sub(r"[^\w\s.?!]", "", self.script)
+        # Sanitize while keeping punctuation (commas, colons, em-dashes, ¿¡)
+        # so Edge-TTS pauses naturally. The script we display keeps Roman
+        # numerals intact ("Cosimo I"); only the text fed to TTS expands them
+        # ("Cosimo primero") so pronunciation is correct.
+        self.script = clean_script_for_tts(self.script)
+        tts_text, regnal_subs = expand_regnal_numerals_tracked(self.script)
 
-        path, word_timestamps = tts_instance.synthesize_with_timestamps(self.script, path)
+        path, word_timestamps = tts_instance.synthesize_with_timestamps(tts_text, path)
+
+        # Put the Roman numerals back in the word-level timestamps so the
+        # karaoke subtitles read "I" / "XIV" while the audio says "primero" /
+        # "catorce".
+        if word_timestamps:
+            word_timestamps = restore_regnal_numerals_in_timestamps(
+                word_timestamps, regnal_subs
+            )
         self.word_timestamps = word_timestamps
 
         self.tts_path = path
@@ -2165,6 +2177,9 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         if not tts_script or len(tts_script.split()) < 50:
             warning("TTS cleaning removed too much content, using raw script")
             tts_script = re.sub(r'\[.*?\]', '', self.script).strip()
+
+        # Expand regnal numerals ("Luis XIV" -> "Luis catorce") for correct TTS pronunciation
+        tts_script = expand_regnal_numerals(tts_script)
 
         if get_verbose():
             info(f" => TTS script preview (first 200 chars): {tts_script[:200]}")
