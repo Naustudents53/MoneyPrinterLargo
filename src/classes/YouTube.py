@@ -369,9 +369,14 @@ CRITICAL RULES:
 
         return self.metadata
 
-    def generate_prompts(self) -> List[str]:
+    def generate_prompts(self, image_mode: str = "ai") -> List[str]:
         """
-        Generates AI Image Prompts based on the provided Video Script.
+        Generates Image Prompts based on the provided Video Script.
+
+        Args:
+            image_mode (str): "ai" → cinematic prompts for AI generators.
+                              "photos" → short search queries for real-photo sources
+                              (Wikimedia Commons, Pexels, Pixabay).
 
         Returns:
             image_prompts (List[str]): Generated List of image prompts.
@@ -396,7 +401,23 @@ CRITICAL RULES:
         for i, sec in enumerate(sections):
             sections_text += f"\nSECTION {i+1}: \"{sec}\"\n"
 
-        prompt = f"""Generate exactly {n_prompts} image prompts for a video about: {self.subject}
+        if image_mode == "photos":
+            prompt = f"""Generate exactly {n_prompts} short SEARCH QUERIES to find REAL historical/documentary photos on Wikimedia Commons and stock sites for a video about: {self.subject}
+
+The script has been divided into {n_prompts} sections. Each query must match its section:
+{sections_text}
+INSTRUCTIONS:
+- Query 1 finds a photo for SECTION 1, Query 2 for SECTION 2, etc.
+- Use PROPER NOUNS: real names of people, places, buildings, objects, events.
+- 3 to 7 words per query. No full sentences.
+- FORBIDDEN words: cinematic, dramatic, lighting, 8K, 4K, photorealistic, HD, macro, bokeh, shot, close-up, aerial, style, composition, render, aesthetic. No adjectives describing mood or camera.
+- Good examples: "Cosimo I de Medici portrait", "Torre dei Mannelli Florence", "Ponte Vecchio historical engraving", "Giorgio Vasari self-portrait".
+- Bad examples: "a dramatic portrait of a duke", "beautiful Italian architecture at golden hour".
+- Write in English (Wikimedia/stock sites index in English).
+
+Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
+        else:
+            prompt = f"""Generate exactly {n_prompts} image prompts for a video about: {self.subject}
 
 The script has been divided into {n_prompts} sections. Each image MUST match its section:
 {sections_text}
@@ -437,14 +458,17 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     pass
 
         # Fallback if parsing failed or too few prompts
-        fallback_prompts = [
-            f"{self.subject}, realistic photograph, wide angle, natural lighting, highly detailed, 8K",
-            f"{self.subject}, close-up detail shot, soft natural light, vivid colors, photorealistic",
-            f"{self.subject}, panoramic landscape view, golden hour, cinematic composition, detailed",
-            f"{self.subject}, historical illustration style, warm earth tones, detailed environment",
-            f"{self.subject}, overhead aerial perspective, dramatic clouds, vast scale, ultra detailed",
-            f"{self.subject}, documentary photograph, authentic setting, natural atmosphere, 4K quality",
-        ]
+        if image_mode == "photos":
+            fallback_prompts = [self.subject] * n_prompts
+        else:
+            fallback_prompts = [
+                f"{self.subject}, realistic photograph, wide angle, natural lighting, highly detailed, 8K",
+                f"{self.subject}, close-up detail shot, soft natural light, vivid colors, photorealistic",
+                f"{self.subject}, panoramic landscape view, golden hour, cinematic composition, detailed",
+                f"{self.subject}, historical illustration style, warm earth tones, detailed environment",
+                f"{self.subject}, overhead aerial perspective, dramatic clouds, vast scale, ultra detailed",
+                f"{self.subject}, documentary photograph, authentic setting, natural atmosphere, 4K quality",
+            ]
 
         if not image_prompts or not isinstance(image_prompts, list):
             if get_verbose():
@@ -737,6 +761,68 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             return img_resp.content
         raise RuntimeError("Pixabay: failed to download image")
 
+    def _try_wikimedia(self, prompt: str) -> bytes:
+        """
+        Search Wikimedia Commons for public-domain photos/paintings matching the prompt.
+        Best source for historical/documentary content — portraits, architecture, artworks.
+        No API key required.
+        """
+        import urllib.parse
+        import random
+
+        # In photos mode the prompt is already a clean search query.
+        # If it looks like an AI-style prompt (long / has style words), clean it.
+        query = prompt.strip()
+        if len(query) > 60 or any(w in query.lower() for w in ("cinematic", "8k", "lighting", "photorealistic")):
+            query = self._extract_search_query(prompt)
+
+        print(colored(f"    [Wikimedia] Searching: {query[:60]}...", "cyan"), flush=True)
+        headers = {"User-Agent": "MoneyPrinterV2/1.0 (https://github.com/; research use)"}
+        api_url = (
+            "https://commons.wikimedia.org/w/api.php"
+            "?action=query&format=json&generator=search&gsrnamespace=6"
+            f"&gsrsearch={urllib.parse.quote(query)}&gsrlimit=20"
+            "&prop=imageinfo&iiprop=url|size|mime"
+        )
+        resp = requests.get(api_url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        pages = resp.json().get("query", {}).get("pages", {})
+        if not pages:
+            raise RuntimeError("Wikimedia: no results")
+
+        # Collect usable images: min 600px on the short edge, raster only.
+        candidates = []
+        for page in pages.values():
+            info_list = page.get("imageinfo", [])
+            if not info_list:
+                continue
+            info = info_list[0]
+            url = info.get("url", "")
+            mime = info.get("mime", "")
+            w, h = info.get("width", 0), info.get("height", 0)
+            if not url or url in self._used_stock_urls:
+                continue
+            if mime not in ("image/jpeg", "image/png", "image/webp"):
+                continue
+            if min(w, h) < 600:
+                continue
+            candidates.append(url)
+
+        if not candidates:
+            raise RuntimeError("Wikimedia: no suitable images")
+
+        random.shuffle(candidates)
+        for img_url in candidates[:5]:
+            try:
+                img_resp = requests.get(img_url, headers=headers, timeout=60)
+                if img_resp.status_code == 200 and len(img_resp.content) > 10000:
+                    self._used_stock_urls.add(img_url)
+                    print(colored("OK", "green"))
+                    return img_resp.content
+            except Exception:
+                continue
+        raise RuntimeError("Wikimedia: failed to download any candidate")
+
     def _try_picsum_stock(self, prompt: str) -> bytes:
         """Fallback: HD stock photo from Picsum (fast, always works)."""
         print(colored(f"    [Picsum HD] Getting image...", "yellow"), flush=True)
@@ -813,17 +899,30 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         return image_path
 
-    def generate_images_batch(self, prompts: List[str]) -> None:
+    def generate_images_batch(self, prompts: List[str], image_mode: str = "ai") -> None:
         """
         Generate ALL images using multiple providers in cascade.
-        Pollinations FLUX → Pollinations turbo → Pollinations flux-realism → HuggingFace → Pillow fallback.
-        """
-        print(colored(f"\n  [Images] Generating {len(prompts)} images...", "blue"))
 
-        for i, prompt in enumerate(prompts):
-            print(colored(f"\n  Image {i+1}/{len(prompts)}", "blue"))
-            saved = False
-            for name, fn in [
+        Args:
+            prompts: List of image prompts / search queries.
+            image_mode: "ai" → AI generators first, stock photos as fallback (default).
+                        "photos" → Wikimedia / stock photos first, AI as last-resort fallback.
+        """
+        if image_mode == "photos":
+            print(colored(f"\n  [Images] Fetching {len(prompts)} real photos...", "blue"))
+            providers = [
+                # Tier 1: historical / documentary (best for real events, people, places)
+                ("Wikimedia Commons", self._try_wikimedia),
+                # Tier 2: modern stock photos
+                ("Pexels", self._try_pexels),
+                ("Pixabay", self._try_pixabay),
+                # Tier 3: AI fallback so the video never renders a gradient
+                ("Pollinations FLUX", self._try_pollinations),
+                ("Pollinations turbo", self._try_pollinations_turbo),
+            ]
+        else:
+            print(colored(f"\n  [Images] Generating {len(prompts)} images...", "blue"))
+            providers = [
                 # Tier 1: High-quality AI generator
                 ("Leonardo AI", self._try_leonardo),
                 # Tier 2: Free unlimited AI generators (no daily limits)
@@ -834,7 +933,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 # Tier 3: Stock photos (reliable, always available)
                 ("Pexels", self._try_pexels),
                 ("Pixabay", self._try_pixabay),
-            ]:
+            ]
+
+        for i, prompt in enumerate(prompts):
+            print(colored(f"\n  Image {i+1}/{len(prompts)}", "blue"))
+            saved = False
+            for name, fn in providers:
                 try:
                     img_bytes = fn(prompt)
                     if img_bytes and len(img_bytes) > 1000:
@@ -1418,12 +1522,15 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         return combined_image_path
 
-    def generate_video(self, tts_instance: TTS) -> str:
+    def generate_video(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai") -> str:
         """
         Generates a YouTube Short based on the provided niche and language.
 
         Args:
             tts_instance (TTS): Instance of TTS Class.
+            custom_topic (str): Optional user-provided topic. If given, skips auto topic generation.
+            image_mode (str): "ai" (default) uses AI image generators first.
+                              "photos" uses real photos (Wikimedia / Pexels / Pixabay) first.
 
         Returns:
             path (str): The path to the generated MP4 File, or empty string if cancelled.
@@ -1439,8 +1546,13 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         self.subtitles_path = None
         self._used_stock_urls = set()
 
-        # Generate the Topic
-        self.generate_topic()
+        # Generate the Topic (or use the user-provided one)
+        if custom_topic and custom_topic.strip():
+            self.subject = custom_topic.strip()
+            if get_verbose():
+                info(f" => Using custom topic: {self.subject}")
+        else:
+            self.generate_topic()
 
         # Generate the Script
         self.generate_script()
@@ -1448,11 +1560,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         # Generate the Metadata
         self.generate_metadata()
 
-        # Generate the Image Prompts
-        self.generate_prompts()
+        # Generate the Image Prompts (AI-style or search-query-style)
+        self.generate_prompts(image_mode=image_mode)
 
         # Generate the Images (parallel batch for speed)
-        self.generate_images_batch(self.image_prompts)
+        self.generate_images_batch(self.image_prompts, image_mode=image_mode)
 
         # Generate the TTS
         self.generate_script_to_speech(tts_instance)

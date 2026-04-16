@@ -216,7 +216,18 @@ def main():
 
                     if user_input == 1:
                         # Upload Short
-                        youtube.generate_video(tts)
+                        custom_topic = question(
+                            "Enter a custom topic (or leave empty to auto-generate): "
+                        ).strip()
+                        image_choice = question(
+                            "Image source - [1] AI (default), [2] Real photos: "
+                        ).strip()
+                        image_mode = "photos" if image_choice == "2" else "ai"
+                        youtube.generate_video(
+                            tts,
+                            custom_topic=custom_topic,
+                            image_mode=image_mode,
+                        )
                         upload_to_yt = question("Do you want to upload this video to YouTube? (Yes/No): ")
                         if upload_to_yt.lower() == "yes":
                             youtube.upload_video()
