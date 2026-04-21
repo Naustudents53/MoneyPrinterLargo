@@ -223,21 +223,27 @@ def main():
                             "Image source - [1] AI (default), [2] Real photos: "
                         ).strip()
                         image_mode = "photos" if image_choice == "2" else "ai"
-                        youtube.generate_video(
+                        video_path = youtube.generate_video(
                             tts,
                             custom_topic=custom_topic,
                             image_mode=image_mode,
                         )
-                        upload_to_yt = question("Do you want to upload this video to YouTube? (Yes/No): ")
-                        if upload_to_yt.lower() == "yes":
-                            youtube.upload_video()
+                        if not video_path:
+                            warning("Video generation aborted — nothing to upload.")
+                        else:
+                            upload_to_yt = question("Do you want to upload this video to YouTube? (Yes/No): ")
+                            if upload_to_yt.lower() == "yes":
+                                youtube.upload_video()
                     elif user_input == 2:
                         # Upload Long Video
                         info("Starting Long Video Generation (5-10 min)...")
-                        youtube.generate_long_video(tts)
-                        upload_to_yt = question("Do you want to upload this video to YouTube? (Yes/No): ")
-                        if upload_to_yt.lower() == "yes":
-                            youtube.upload_video()
+                        long_path = youtube.generate_long_video(tts)
+                        if not long_path:
+                            warning("Long video generation aborted — nothing to upload.")
+                        else:
+                            upload_to_yt = question("Do you want to upload this video to YouTube? (Yes/No): ")
+                            if upload_to_yt.lower() == "yes":
+                                youtube.upload_video()
                     elif user_input == 3:
                         # Show all Videos
                         videos = youtube.get_videos()

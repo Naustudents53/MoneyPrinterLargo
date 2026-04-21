@@ -84,7 +84,11 @@ def main():
                     acc["niche"],
                     acc["language"]
                 )
-                youtube.generate_video(tts)
+                video_path = youtube.generate_video(tts)
+                if not video_path:
+                    # Pipeline aborted (e.g. duplicate-topic guard): skip upload.
+                    error("Skipping upload: video generation aborted.")
+                    sys.exit(1)
                 youtube.upload_video()
                 if verbose:
                     success("Uploaded Short.")

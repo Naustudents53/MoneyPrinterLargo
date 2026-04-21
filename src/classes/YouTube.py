@@ -157,18 +157,27 @@ class YouTube:
     def generate_topic(self) -> str:
         """
         Generates a topic based on the YouTube Channel niche.
-        Avoids repeating topics from previously uploaded videos using
-        a fuzzy-match guard + retry loop (the LLM alone drifts into
-        near-duplicates even when explicitly told not to).
+        Channel-lifetime duplicate guard: if the LLM cannot produce a topic
+        that does not collide with any previously uploaded video, this method
+        returns "" (the caller must then abort — we NEVER knowingly publish a
+        repeat).
+
+        Detection layers, in order of strictness:
+          1. markdown/prefix cleanup (LLMs love wrapping in ** or "Topic:")
+          2. language guard (reject English when channel language is Spanish)
+          3. shared distinctive-entity match (e.g. "Hammurabi", "Cosimo I",
+             "Vasari" appearing in both candidate and a past topic → duplicate,
+             regardless of surrounding words)
+          4. token-overlap and sequence-similarity fallbacks
 
         Returns:
-            topic (str): The generated topic.
+            topic (str): The generated topic, or "" if all attempts collided.
         """
         import random
+        import unicodedata
         from difflib import SequenceMatcher
 
-        # Gather ALL previous topics (not just recent). Storage is small and
-        # a channel-lifetime duplicate is exactly what we want to catch.
+        # ---- 1. Collect full channel history ----
         past_topics: List[str] = []
         try:
             videos = self.get_videos()
@@ -180,64 +189,234 @@ class YouTube:
         except Exception:
             pass
 
+        # ---- 2. Vocab ----
+        ES_STOP = {
+            "el", "la", "los", "las", "de", "del", "que", "y", "en", "un", "una",
+            "por", "para", "con", "se", "su", "sus", "lo", "al", "como", "es",
+            "fue", "era", "ser", "son", "mas", "este", "esta", "esto", "estos",
+            "estas", "sobre", "entre", "pero", "si", "no", "ni", "cuando",
+            "donde", "quien", "que", "como", "cual", "cuales", "hacia", "desde",
+            "hasta", "sin", "ya", "muy", "mas", "menos", "todo", "toda", "todos",
+            "todas", "otro", "otra", "otros", "otras", "tambien", "solo", "solo",
+            "tras", "ante", "bajo",
+        }
+        EN_STOP = {
+            "the", "of", "a", "an", "and", "is", "was", "to", "in", "on", "who",
+            "why", "how", "what", "were", "are", "be", "been", "have", "has",
+            "had", "with", "from", "that", "this", "these", "those", "will",
+            "would", "can", "could", "should", "about", "into", "which", "where",
+            "when", "their", "its", "it", "by", "at", "as", "or", "but", "for",
+        }
+        STOP = ES_STOP | EN_STOP
+
+        def _strip_diacritics(s: str) -> str:
+            return "".join(
+                c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn"
+            )
+
+        def _strip_markdown(s: str) -> str:
+            """Remove markdown scaffolding, hashtags, and common LLM prefixes."""
+            if not s:
+                return ""
+            # Code blocks
+            s = re.sub(r"```[\s\S]*?```", " ", s)
+            s = re.sub(r"`+", "", s)
+            # Hashtags (#Foo, #HistoriaAntigua) — they'd otherwise be captured
+            # as distinctive entities, but every historical-channel video
+            # shares the same pool of tags so they collide spuriously.
+            s = re.sub(r"#\w+", " ", s, flags=re.UNICODE)
+            # Bold/italic/headers
+            s = re.sub(r"[*_#]+", "", s)
+            # Leading "Topic:", "Tema:", "Title:", "Titulo:"
+            s = re.sub(r"^\s*(?:topic|tema|title|t[ií]tulo)\s*:\s*", "", s, flags=re.I)
+            # Collapse whitespace
+            s = re.sub(r"\s+", " ", s).strip()
+            # Strip enclosing quotes (regular, curly, guillemets)
+            s = s.strip(" \t\"'“”‘’«»").strip()
+            return s
+
         def _normalize(s: str) -> str:
-            s = s.lower()
+            """Lowercase, strip diacritics & punctuation, drop stopwords."""
+            s = _strip_diacritics(s.lower())
             s = re.sub(r"[^\w\s]", " ", s)
-            stop = {"el", "la", "los", "las", "de", "del", "que", "y", "en", "a",
-                    "un", "una", "por", "para", "the", "of", "a", "an", "and",
-                    "is", "was", "to", "in", "on", "who", "why", "how", "what"}
-            tokens = [t for t in s.split() if t and t not in stop]
+            tokens = [t for t in s.split() if t and t not in STOP and len(t) > 1]
             return " ".join(tokens)
 
-        normalized_past = [_normalize(t) for t in past_topics]
+        # Common first-word capitalizations that shouldn't count as entities
+        SENTENCE_STARTERS = {
+            "el", "la", "los", "las", "un", "una", "the", "a", "an", "cuando",
+            "como", "donde", "por", "que", "cual", "hay", "esta", "este", "ese",
+            "esa", "aquel",
+        }
+
+        # Capitalized words that are common nouns/adjectives or broad
+        # region/era labels — too generic to count as a distinctive signature
+        # (otherwise any two videos set in Rome would share "emperador" or
+        # "roma" and get flagged as duplicates).
+        COMMON_CAP_NOISE = {
+            # Generic nouns/adjectives often capitalized
+            "antigua", "antiguo", "antiguos", "antiguas", "historia", "historico",
+            "historica", "mundo", "dios", "dioses", "rey", "reina", "emperador",
+            "faraon", "sabio", "filosofo", "filosofos", "filosofia", "legado",
+            "misterio", "misterios", "secreto", "secretos", "enigma", "leyenda",
+            "epoca", "siglo", "era", "anyo", "ano", "anos", "imperio", "reino",
+            "templo", "ciudad", "ciudades", "conquista", "batalla", "guerra",
+            "muerte", "vida", "revolucion", "civilizacion", "civilizaciones",
+            "new", "ancient", "great", "lost", "hidden", "secret", "mysterious",
+            "age", "bronze", "iron", "stone", "city", "cities", "temple",
+            "empire", "kingdom", "dynasty", "war", "battle",
+            # Broad regions/eras used constantly in historical content
+            "roma", "grecia", "egipto", "china", "persia", "mesopotamia",
+            "babilonia", "india", "japon", "europa", "asia", "africa", "america",
+            "italia", "espanya", "francia", "inglaterra", "alemania", "turquia",
+            "atenas", "esparta", "alejandria", "constantinopla", "oriente",
+            "occidente", "mediterraneo", "nilo", "tigris", "eufrates",
+            "renacimiento", "medieval", "barroco", "ilustracion",
+        }
+
+        def _extract_entities(original: str) -> set:
+            """
+            Distinctive signature tokens: proper nouns (capitalized mid-sentence),
+            roman numerals, and 4-digit years. Lowercased + diacritics stripped
+            so "Hammurabi" == "hammurabi" == "HAMMURABI".
+
+            Deliberately excludes generic capitalized words ("Antigua", "Emperador")
+            and long common nouns — those create false-positive collisions across
+            unrelated topics (e.g. any two videos set in Rome would share
+            "emperador"). A distinctive entity is a *named thing*: a person
+            (Hammurabi, Séneca), place (Pelusio, Medina), object or event
+            (Pelusio, Antikythera, Tzolk'in).
+            """
+            text = _strip_markdown(original)
+            ents: set = set()
+            raw = re.findall(r"[A-Za-zÁÉÍÓÚÑÜáéíóúñü0-9']+", text)
+            for i, tok in enumerate(raw):
+                norm = _strip_diacritics(tok.lower())
+                # Skip pure numbers (including years): a shared year between
+                # two unrelated events is not a signature — e.g. "hallazgo en
+                # 2024" and "desaparición en 2024" are different topics.
+                if re.fullmatch(r"\d+", tok):
+                    continue
+                # Roman numerals length >= 2 (II, III, IV, VI, VIII, XII) —
+                # single "I" is too ambiguous to treat as a signature on its
+                # own (and pairs with a named person next to it anyway).
+                if re.fullmatch(r"[IVXLCDM]{2,}", tok):
+                    ents.add(norm)
+                    continue
+                # Capitalized, not sentence-initial, not an ALL-CAPS acronym,
+                # not a known common/generic capitalized word.
+                if (
+                    tok[0].isupper()
+                    and i > 0
+                    and norm not in STOP
+                    and norm not in SENTENCE_STARTERS
+                    and norm not in COMMON_CAP_NOISE
+                    and len(tok) >= 3
+                    and not tok.isupper()
+                ):
+                    ents.add(norm)
+            return ents
+
+        def _looks_english(s: str) -> bool:
+            """Heuristic: reject obvious English when the channel is Spanish."""
+            if not s:
+                return False
+            lang = str(self.language or "").lower()
+            if not (lang.startswith("span") or lang.startswith("esp") or lang == "es"):
+                return False
+            toks = re.findall(r"[A-Za-z]+", s.lower())
+            if len(toks) < 4:
+                return False
+            en_hits = sum(1 for t in toks if t in EN_STOP)
+            es_hits = sum(1 for t in toks if t in ES_STOP)
+            # Clear English signal: several English stopwords and more EN than ES
+            return en_hits >= 3 and en_hits > es_hits
+
+        # ---- 3. Pre-compute past signatures ----
+        past_clean = [_strip_markdown(t) for t in past_topics]
+        past_norm = [_normalize(t) for t in past_clean]
+        past_entities = [_extract_entities(t) for t in past_clean]
+
+        # Frequency-based filter: an entity that shows up in >15% of past
+        # topics (with a floor of 3) is effectively a channel-wide theme
+        # rather than a distinctive subject — stop treating it as a signature.
+        # This keeps the guard from flagging "different Pharaoh" videos as
+        # duplicates just because both mention "Nilo".
+        from collections import Counter
+        _freq: Counter = Counter()
+        for _ents in past_entities:
+            _freq.update(_ents)
+        _common_threshold = max(3, len(past_entities) // 7)
+        common_entities = {e for e, c in _freq.items() if c > _common_threshold}
 
         def _is_duplicate(candidate: str) -> tuple[bool, str]:
-            norm = _normalize(candidate)
-            if not norm:
+            cand_clean = _strip_markdown(candidate)
+            if not cand_clean:
                 return False, ""
-            for original, past_norm in zip(past_topics, normalized_past):
-                if not past_norm:
+            cand_norm = _normalize(cand_clean)
+            cand_ents = _extract_entities(cand_clean)
+
+            for original, p_norm, p_ents in zip(past_topics, past_norm, past_entities):
+                if not p_norm:
                     continue
-                # Exact normalized match or high token overlap
-                if norm == past_norm:
+                # Exact normalized match
+                if cand_norm == p_norm:
                     return True, original
-                # Token-set overlap (catches rephrasings like swapped word order)
-                a, b = set(norm.split()), set(past_norm.split())
+                # Shared distinctive entity → same subject (catches "Hammurabi"
+                # x2, "Cosimo I Medici" x2, etc., even when the rest of the
+                # sentence is completely reworded). Exclude channel-wide
+                # common entities so "two different Pharaoh stories" don't
+                # collide on the shared region/era.
+                shared = (cand_ents & p_ents) - common_entities
+                if shared:
+                    return True, original
+                # Token-overlap fallback (tighter threshold than before)
+                a, b = set(cand_norm.split()), set(p_norm.split())
                 if a and b:
                     overlap = len(a & b) / max(len(a), len(b))
-                    if overlap >= 0.7:
+                    if overlap >= 0.55:
                         return True, original
-                # Sequence similarity (catches minor rewordings)
-                if SequenceMatcher(None, norm, past_norm).ratio() >= 0.75:
+                # Raw sequence similarity
+                if SequenceMatcher(None, cand_norm, p_norm).ratio() >= 0.7:
                     return True, original
             return False, ""
 
-        # Build the block of topics to forbid in the prompt. Cap at 60
-        # to keep prompt reasonable but cover far more than the old 15.
+        # ---- 4. Build forbidden block (topics + banned entities) ----
         forbidden_block = ""
         if past_topics:
-            shown = past_topics[-60:]
+            shown = past_clean[-60:]
+            all_ents: set = set()
+            for ents in past_entities[-60:]:
+                all_ents.update(ents)
+            entity_list = sorted(e for e in all_ents if len(e) >= 4)[:80]
             forbidden_block = (
                 "\n\nIMPORTANT: Do NOT repeat, rephrase, or pick a similar angle "
                 "to ANY of these previously made videos:\n"
                 + "\n".join(f"- {t}" for t in shown)
-                + "\n\nGenerate a COMPLETELY DIFFERENT and ORIGINAL idea."
             )
+            if entity_list:
+                forbidden_block += (
+                    "\n\nFORBIDDEN keywords/entities (already covered — your topic must NOT "
+                    "involve ANY of these people, places, events, or concepts):\n"
+                    + ", ".join(entity_list)
+                )
+            forbidden_block += "\n\nGenerate a COMPLETELY DIFFERENT and ORIGINAL idea."
 
+        # ---- 5. Generate with retries ----
         rejected: List[str] = []
         completion = ""
-        max_attempts = 5
+        max_attempts = 8
         for attempt in range(max_attempts):
             creativity_seed = random.randint(1, 100000)
             extra_reject = ""
             if rejected:
                 extra_reject = (
-                    "\n\nYou already suggested these and they were REJECTED as duplicates — "
+                    "\n\nYou already suggested these and they were REJECTED — "
                     "pick a completely unrelated angle:\n"
-                    + "\n".join(f"- {t}" for t in rejected)
+                    + "\n".join(f"- {t}" for t in rejected[-6:])
                 )
 
-            candidate = self.generate_response(
+            raw_candidate = self.generate_response(
                 f"""Generate ONE specific, focused topic for a short video.
 
 YOUR NICHE (you MUST stay strictly within this niche): {self.niche}
@@ -251,20 +430,34 @@ GOOD example: "La maldición de la tumba de Tutankamón: ¿qué les pasó a los 
 GOOD example: "¿Por qué los romanos usaban orina para lavar la ropa?" (one specific curiosity)
 GOOD example: "El día que un asteroide exterminó al 75% de la vida en la Tierra" (one specific event)
 
-Return ONLY the topic in one sentence. Write in {self.language}. Nothing else.{forbidden_block}{extra_reject}
+OUTPUT FORMAT (strict):
+- Return ONLY the topic as one plain sentence.
+- NO markdown (no **, no backticks, no headers).
+- NO prefixes like "Topic:", "Tema:", "Title:".
+- NO surrounding quotes.
+- WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.{forbidden_block}{extra_reject}
 
 (Creativity seed: {creativity_seed} — use this to inspire a unique, unexpected angle.)"""
             )
 
-            candidate = (candidate or "").strip().strip('"').strip("'")
+            candidate = _strip_markdown(raw_candidate or "")
             if not candidate:
+                continue
+
+            if _looks_english(candidate):
+                warning(
+                    f"Topic is not in {self.language} (attempt {attempt + 1}/{max_attempts}): "
+                    f"'{candidate[:80]}' — regenerating."
+                )
+                rejected.append(candidate)
                 continue
 
             is_dup, matched = _is_duplicate(candidate)
             if is_dup:
                 warning(
-                    f"Topic '{candidate[:80]}' collides with past '{matched[:80]}' "
-                    f"(attempt {attempt + 1}/{max_attempts}) — regenerating."
+                    f"Topic collides with past video (attempt {attempt + 1}/{max_attempts}).\n"
+                    f"   candidate: {candidate[:100]}\n"
+                    f"   past     : {matched[:100]}"
                 )
                 rejected.append(candidate)
                 continue
@@ -273,20 +466,16 @@ Return ONLY the topic in one sentence. Write in {self.language}. Nothing else.{f
             break
 
         if not completion:
-            # All attempts collided; accept the last candidate rather than
-            # failing the whole run, but warn loudly.
-            if rejected:
-                warning(
-                    f"All {max_attempts} topic attempts collided with history. "
-                    f"Using last candidate anyway."
-                )
-                completion = rejected[-1]
-            else:
-                error("Failed to generate Topic.")
-                completion = ""
+            # Channel-lifetime duplicate guard: we NEVER knowingly publish a
+            # repeat. Return "" so the caller aborts the run.
+            error(
+                f"Could not generate a unique topic after {max_attempts} attempts — "
+                f"refusing to publish a duplicate. Try again later or broaden the niche."
+            )
+            self.subject = ""
+            return ""
 
         self.subject = completion
-
         return completion
 
     def generate_script(self) -> str:
@@ -1566,6 +1755,17 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         else:
             self.generate_topic()
 
+        # Duplicate guard: generate_topic returns "" when it cannot produce a
+        # topic that has not already been used on this channel. We refuse to
+        # publish a repeat, so bail out cleanly.
+        if not self.subject or not self.subject.strip():
+            error(
+                "Aborting Short: no unique topic available. "
+                "No video will be generated or uploaded."
+            )
+            self.video_path = ""
+            return ""
+
         # Generate the Script
         self.generate_script()
 
@@ -2146,6 +2346,13 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         # Step 1: Generate Topic
         info("\n[1/6] Generating topic...")
         self.generate_topic()
+        if not self.subject or not self.subject.strip():
+            error(
+                "Aborting long video: no unique topic available. "
+                "No video will be generated or uploaded."
+            )
+            self.video_path = ""
+            return ""
         success(f" Topic: {self.subject}")
 
         # Step 2: Generate long script with chapters
@@ -2257,6 +2464,18 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.common.keys import Keys
+
+        # Guard: refuse to upload if the generation pipeline aborted (e.g.
+        # duplicate-topic guard fired).
+        if not getattr(self, "video_path", None) or not str(self.video_path).strip():
+            error("Cannot upload: no video was generated (video_path is empty).")
+            return False
+        if not os.path.isfile(self.video_path):
+            error(f"Cannot upload: video file not found at '{self.video_path}'.")
+            return False
+        if not getattr(self, "subject", None) or not str(self.subject).strip():
+            error("Cannot upload: subject is empty (pipeline aborted earlier).")
+            return False
 
         self._ensure_browser()
         driver = self.browser
