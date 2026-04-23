@@ -1,9 +1,11 @@
 import os
 import re
+import json
 import random
 import zipfile
 import requests
 import platform
+import unicodedata
 
 from status import *
 from config import *
@@ -278,12 +280,98 @@ def fetch_songs() -> None:
         error(f"Error occurred while fetching songs: {str(e)}")
 
 
-def choose_random_song() -> str:
+# Per-song theme tags. Add new entries here when dropping new files into Songs/.
+# Songs not listed are still selectable but score 0 against any subject.
+SONG_KEYWORDS = {
+    "ambient_melody.mp3": [
+        # Babylon — orquestal antigua, civilizaciones
+        "civilización", "civilizacion", "civilizaciones",
+        "imperio", "imperios", "antiguo", "antigua", "antigüedad", "antiguedad",
+        "egipto", "egipcio", "faraón", "faraon",
+        "mesopotamia", "babilonia", "babilonio", "sumeria", "sumerio",
+        "persia", "persa", "fenicia", "fenicio", "asiria", "asirio",
+        "maya", "azteca", "inca", "china antigua",
+        "civilization", "ancient", "empire", "babylon", "egypt", "pharaoh",
+    ],
+    "ascending_the_vale.mp3": [
+        # Orquestal ascendente, épica/heroica
+        "guerra", "guerras", "batalla", "batallas", "conquista", "conquistas",
+        "héroe", "heroe", "heroica", "heroico",
+        "victoria", "auge", "ascenso", "caída", "caida",
+        "alejandro", "césar", "cesar", "napoleón", "napoleon",
+        "espartano", "espartana", "legión", "legion", "general", "ejército", "ejercito",
+        "revolución", "revolucion", "independencia",
+        "war", "battle", "rise", "fall", "epic", "conquest", "hero", "heroic",
+    ],
+    "atlantean_twilight.mp3": [
+        # Ambient misterioso/contemplativo, filosofía/misterio
+        "filosofía", "filosofia", "filósofo", "filosofo", "filósofa", "filosofa",
+        "filosóficos", "filosoficos", "filosófica", "filosofica",
+        "estoicismo", "estoico", "epicureísmo", "epicureismo",
+        "platón", "platon", "aristóteles", "aristoteles",
+        "sócrates", "socrates", "nietzsche", "kant", "descartes",
+        "ética", "etica", "moral", "sabiduría", "sabiduria",
+        "misterio", "misterios", "leyenda", "leyendas", "mito", "mitos",
+        "atlántida", "atlantida", "perdido", "perdida", "olvidado", "olvidada",
+        "philosophy", "philosopher", "wisdom", "myth", "lost", "mystery",
+    ],
+}
+
+# How many of the most recently used songs to avoid when picking the next one.
+RECENT_SONG_HISTORY_LEN = 2
+
+
+def _normalize_text(text: str) -> str:
+    """Lowercase + strip diacritics so 'filosofía' and 'filosofia' both match."""
+    if not text:
+        return ""
+    nfkd = unicodedata.normalize("NFKD", text.lower())
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _song_history_path() -> str:
+    return os.path.join(ROOT_DIR, ".mp", "song_history.json")
+
+
+def _load_song_history() -> list:
+    path = _song_history_path()
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_song_history(history: list) -> None:
+    cache_dir = os.path.join(ROOT_DIR, ".mp")
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        with open(_song_history_path(), "w", encoding="utf-8") as f:
+            json.dump(history[-RECENT_SONG_HISTORY_LEN:], f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def choose_random_song(subject: str = "") -> str:
     """
-    Chooses a random song from the songs/ directory.
+    Picks a background music track from Songs/, biased by the video's subject.
+
+    Selection order:
+      1. Filter out the last RECENT_SONG_HISTORY_LEN songs played (so the same
+         track doesn't repeat back-to-back). If that empties the pool, fall back
+         to all songs.
+      2. Score remaining songs by counting SONG_KEYWORDS matches in the subject.
+      3. If any song scores > 0, pick uniformly among the top-scoring ones.
+         Otherwise pick uniformly at random.
+
+    Args:
+        subject: The video topic. Empty string = pure recency-aware random.
 
     Returns:
-        str: The path to the chosen song.
+        Absolute path to the chosen audio file.
     """
     try:
         songs_dir = os.path.join(ROOT_DIR, "Songs")
@@ -293,11 +381,31 @@ def choose_random_song() -> str:
             if os.path.isfile(os.path.join(songs_dir, name))
             and name.lower().endswith((".mp3", ".wav", ".m4a", ".aac", ".ogg"))
         ]
-        if len(songs) == 0:
+        if not songs:
             raise RuntimeError("No audio files found in Songs directory")
-        song = random.choice(songs)
-        success(f" => Chose song: {song}")
-        return os.path.join(ROOT_DIR, "Songs", song)
+
+        history = _load_song_history()
+        eligible = [s for s in songs if s not in history] or songs
+
+        norm_subject = _normalize_text(subject)
+        chosen = None
+        if norm_subject:
+            scored = []
+            for song in eligible:
+                kws = SONG_KEYWORDS.get(song, [])
+                score = sum(1 for kw in kws if _normalize_text(kw) in norm_subject)
+                scored.append((score, song))
+            max_score = max(s for s, _ in scored)
+            if max_score > 0:
+                top = [song for score, song in scored if score == max_score]
+                chosen = random.choice(top)
+                success(f' => Chose song: {chosen} (matched {max_score} keyword(s) for subject)')
+        if chosen is None:
+            chosen = random.choice(eligible)
+            success(f" => Chose song: {chosen}")
+
+        _save_song_history(history + [chosen])
+        return os.path.join(songs_dir, chosen)
     except Exception as e:
-        error(f"Error occurred while choosing random song: {str(e)}")
+        error(f"Error occurred while choosing song: {str(e)}")
         raise

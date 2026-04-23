@@ -1674,7 +1674,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         # Trim any float drift so video matches TTS exactly
         if final_clip.duration > max_duration:
             final_clip = final_clip.subclip(0, max_duration)
-        random_song = choose_random_song()
+        random_song = choose_random_song(getattr(self, "subject", ""))
 
         subtitles = None
         try:
@@ -2293,7 +2293,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         # Audio: TTS + background music
         print(colored("[+] Mixing audio...", "blue"), flush=True)
-        random_song = choose_random_song()
+        random_song = choose_random_song(getattr(self, "subject", ""))
         music_clip = AudioFileClip(random_song).set_fps(44100)
 
         # Loop music if shorter than TTS
