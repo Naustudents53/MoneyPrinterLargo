@@ -485,13 +485,39 @@ OUTPUT FORMAT (strict):
         Returns:
             script (str): The script of the video.
         """
+        import random
+
         sentence_length = get_script_sentence_length()
+
+        # Rotate hook style per run so every short doesn't open the same way.
+        # Spanish examples (content language) — the LLM adapts to self.language.
+        hook_styles = [
+            ("Classic curiosity question", '"¿Sabías que...?"'),
+            ("Conditional hypothesis", '"¿Qué pasaría si...?"'),
+            ("Invitation to imagine a scene", '"Imagínate esto:" o "Imagina que..."'),
+            ("Hidden secret reveal", '"Hay algo que nadie te contó sobre..."'),
+            ("Direct shocking statistic (no question)", '"El 90% de la gente no sabe que..."'),
+            ("Counterintuitive claim", '"Todo lo que crees sobre X está mal."'),
+            ("Time promise", '"En 30 segundos vas a entender por qué..."'),
+            ("Imperative / command", '"Olvídate de todo lo que aprendiste sobre..."'),
+            ("Warning", '"Si haces esto, tienes que saber algo ya mismo."'),
+            ("Mini historical scene", '"Año 1923. Todo cambió cuando..."'),
+            ("Provocative question", '"¿Por qué nadie habla de...?"'),
+            ("Numbered list tease", '"Hay 3 cosas sobre X que nunca te dijeron."'),
+            ("Impactful comparison", '"Esto es tan raro como..."'),
+            ("Negation cliffhanger", '"No vas a creer lo que pasó cuando..."'),
+        ]
+        hook_style, hook_example = random.choice(hook_styles)
+
+        if get_verbose():
+            info(f" => Hook style for this script: {hook_style}")
+
         prompt = f"""Write a narration script for a short video in EXACTLY {sentence_length} sentences.
 
 TOPIC: {self.subject}
 
 NARRATIVE STRUCTURE (follow this order):
-1. HOOK (sentence 1): Start with a question or shocking fact that grabs attention. Examples: "¿Sabías que...?", "¿Qué pasaría si...?", "Imagina que...", "Hay algo que nadie te contó sobre..."
+1. HOOK (sentence 1): The hook MUST use this exact style: {hook_style}. Example (adapt to the topic and to {self.language}): {hook_example}. Do NOT default to any other hook style.
 2. CONTEXT (sentences 2-3): Set the scene. When and where does this happen? What's the background?
 3. DEVELOPMENT (sentences 4-{sentence_length - 2}): Go deeper into the topic. Reveal details, facts, consequences. Build tension or curiosity. Each sentence should ADVANCE the story, not jump to unrelated facts.
 4. CONCLUSION (last 1-2 sentences): End with a powerful thought, a twist, or a mind-blowing takeaway.
