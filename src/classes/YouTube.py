@@ -2411,6 +2411,9 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             warning("TTS cleaning removed too much content, using raw script")
             tts_script = re.sub(r'\[.*?\]', '', self.script).strip()
 
+        # Expand spoken symbols ("90%" -> "90 por ciento") so TTS verbalizes them.
+        tts_script = expand_spoken_symbols(tts_script)
+
         # Expand regnal numerals ("Luis XIV" -> "Luis catorce") for correct TTS pronunciation
         tts_script = expand_regnal_numerals(tts_script)
 

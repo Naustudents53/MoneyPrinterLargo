@@ -132,6 +132,21 @@ def restore_regnal_numerals_in_timestamps(timestamps, replacements):
     return timestamps
 
 
+def expand_spoken_symbols(text: str) -> str:
+    """
+    Replace symbols the TTS can't pronounce (and that our whitelist strips)
+    with their Spanish spoken form, so both narration and subtitles render
+    naturally. Must run BEFORE clean_script_for_tts.
+
+    Example: '90%' -> '90 por ciento'.
+    """
+    # "90%" / "90 %" / "90.5%" -> "90 por ciento"
+    text = re.sub(r"(\d+(?:[.,]\d+)?)\s*%", r"\1 por ciento", text)
+    # Bare "%" on its own (rare but possible) -> " por ciento"
+    text = re.sub(r"%", " por ciento", text)
+    return text
+
+
 def clean_script_for_tts(text: str) -> str:
     """
     Sanitize script text for TTS and subtitles while PRESERVING punctuation
@@ -139,6 +154,9 @@ def clean_script_for_tts(text: str) -> str:
     ellipsis, parentheses, and Spanish opening marks (¿¡).
     Strips only markdown/control chars the LLM sometimes leaks.
     """
+    # Expand spoken symbols (%, etc.) first so they aren't silently dropped
+    # by the whitelist below.
+    text = expand_spoken_symbols(text)
     # Remove markdown / stray formatting chars that confuse TTS
     text = re.sub(r"[*_`#\[\]{}|\\<>]", "", text)
     # Collapse multiple spaces
