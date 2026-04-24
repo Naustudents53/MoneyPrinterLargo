@@ -31,6 +31,15 @@ from datetime import datetime
 change_settings({"IMAGEMAGICK_BINARY": get_imagemagick_path()})
 
 
+_PHOTO_STOPWORDS = {
+    "the", "a", "an", "and", "or", "of", "in", "on", "at", "to", "for", "with",
+    "about", "from", "by", "is", "was", "were", "are", "be", "been", "being",
+    "his", "her", "its", "their", "our", "your", "this", "that", "these", "those",
+    "de", "la", "el", "los", "las", "un", "una", "unos", "unas", "y", "o", "u",
+    "sobre", "con", "por", "para", "es", "era", "fue", "su", "sus", "del",
+}
+
+
 class YouTube:
     """
     Class for YouTube Automation.
@@ -493,19 +502,13 @@ OUTPUT FORMAT (strict):
         # Spanish examples (content language) — the LLM adapts to self.language.
         hook_styles = [
             ("Classic curiosity question", '"¿Sabías que...?"'),
-            ("Conditional hypothesis", '"¿Qué pasaría si...?"'),
             ("Invitation to imagine a scene", '"Imagínate esto:" o "Imagina que..."'),
-            ("Hidden secret reveal", '"Hay algo que nadie te contó sobre..."'),
             ("Direct shocking statistic (no question)", '"El 90% de la gente no sabe que..."'),
+            ("Hidden secret reveal", '"Hay algo que nadie te contó sobre..."'),
             ("Counterintuitive claim", '"Todo lo que crees sobre X está mal."'),
-            ("Time promise", '"En 30 segundos vas a entender por qué..."'),
-            ("Imperative / command", '"Olvídate de todo lo que aprendiste sobre..."'),
-            ("Warning", '"Si haces esto, tienes que saber algo ya mismo."'),
-            ("Mini historical scene", '"Año 1923. Todo cambió cuando..."'),
-            ("Provocative question", '"¿Por qué nadie habla de...?"'),
-            ("Numbered list tease", '"Hay 3 cosas sobre X que nunca te dijeron."'),
-            ("Impactful comparison", '"Esto es tan raro como..."'),
             ("Negation cliffhanger", '"No vas a creer lo que pasó cuando..."'),
+            ("Numbered list tease", '"Hay 3 cosas sobre X que nunca te dijeron."'),
+            ("Mini historical scene", '"Año 1923. Todo cambió cuando..."'),
         ]
         hook_style, hook_example = random.choice(hook_styles)
 
@@ -889,6 +892,26 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 raise RuntimeError("Leonardo: generation failed")
         raise RuntimeError("Leonardo: timeout waiting for generation")
 
+    def _topic_keywords(self) -> List[str]:
+        """Key lowercase tokens from self.subject, used to anchor stock searches to the topic."""
+        words = re.findall(r"[A-Za-zÀ-ÿ]+", (self.subject or "").lower())
+        return [w for w in words if len(w) > 2 and w not in _PHOTO_STOPWORDS]
+
+    def _anchor_query(self, query: str) -> str:
+        """Prepend up to 3 subject keywords not already in the query so stock results stay on-topic."""
+        keywords = self._topic_keywords()
+        if not keywords:
+            return query
+        q_lower = query.lower()
+        anchor = " ".join(kw for kw in keywords[:3] if kw not in q_lower)
+        return f"{anchor} {query}".strip() if anchor else query
+
+    def _query_tokens(self, *texts: str) -> set:
+        """Extract content-word tokens from the given strings for relevance checks."""
+        combined = " ".join(t for t in texts if t).lower()
+        tokens = re.findall(r"[a-zà-ÿ]+", combined)
+        return {t for t in tokens if len(t) > 2 and t not in _PHOTO_STOPWORDS}
+
     def _extract_search_query(self, prompt: str) -> str:
         """Extract clean search keywords from an AI image prompt for stock photo search."""
         import re
@@ -911,8 +934,15 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         import urllib.parse
         import random
-        query = self._extract_search_query(prompt)
-        print(colored(f"    [Pexels] Searching: {query[:50]}...", "cyan"), flush=True)
+
+        # In photos mode the LLM already generated a clean query — don't strip it further.
+        if getattr(self, "_image_mode", "ai") == "photos":
+            query = prompt.strip()
+        else:
+            query = self._extract_search_query(prompt)
+        query = self._anchor_query(query)
+
+        print(colored(f"    [Pexels] Searching: {query[:60]}...", "cyan"), flush=True)
         headers = {"Authorization": api_key}
         # Fetch more results and pick a random page for more variety
         page = random.randint(1, 3)
@@ -924,6 +954,14 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         photos = resp.json().get("photos", [])
         if not photos:
             raise RuntimeError("Pexels: no photos found")
+
+        # Relevance filter: alt text must share a keyword with the subject/query.
+        relevance_tokens = self._query_tokens(query, self.subject)
+        if relevance_tokens:
+            relevant = [p for p in photos if relevance_tokens & self._query_tokens(p.get("alt") or "")]
+            if not relevant:
+                raise RuntimeError("Pexels: no relevant photos (all off-topic)")
+            photos = relevant
 
         # Filter out already-used images
         available = [p for p in photos if p["src"]["large2x"] not in self._used_stock_urls]
@@ -948,8 +986,14 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         import urllib.parse
         import random
-        query = self._extract_search_query(prompt)
-        print(colored(f"    [Pixabay] Searching: {query[:50]}...", "cyan"), flush=True)
+
+        if getattr(self, "_image_mode", "ai") == "photos":
+            query = prompt.strip()
+        else:
+            query = self._extract_search_query(prompt)
+        query = self._anchor_query(query)
+
+        print(colored(f"    [Pixabay] Searching: {query[:60]}...", "cyan"), flush=True)
         page = random.randint(1, 3)
         resp = requests.get(
             f"https://pixabay.com/api/?key={api_key}&q={urllib.parse.quote(query)}&image_type=photo&per_page=15&page={page}&min_width=1080",
@@ -959,6 +1003,14 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         hits = resp.json().get("hits", [])
         if not hits:
             raise RuntimeError("Pixabay: no photos found")
+
+        # Relevance filter: Pixabay `tags` is a comma-separated list — require keyword overlap.
+        relevance_tokens = self._query_tokens(query, self.subject)
+        if relevance_tokens:
+            relevant = [h for h in hits if relevance_tokens & self._query_tokens(h.get("tags") or "")]
+            if not relevant:
+                raise RuntimeError("Pixabay: no relevant photos (all off-topic)")
+            hits = relevant
 
         # Filter out already-used images
         available = [h for h in hits if h.get("largeImageURL", "") not in self._used_stock_urls]
@@ -1123,6 +1175,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             image_mode: "ai" → AI generators first, stock photos as fallback (default).
                         "photos" → Wikimedia / stock photos first, AI as last-resort fallback.
         """
+        self._image_mode = image_mode
         if image_mode == "photos":
             print(colored(f"\n  [Images] Fetching {len(prompts)} real photos...", "blue"))
             providers = [
