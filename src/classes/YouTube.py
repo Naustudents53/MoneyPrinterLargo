@@ -892,6 +892,10 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 raise RuntimeError("Leonardo: generation failed")
         raise RuntimeError("Leonardo: timeout waiting for generation")
 
+    def _augment_for_ai_fallback(self, query: str) -> str:
+        """Wrap a short photo-mode search query with cinematic styling so AI generators render a usable image."""
+        return f"{query}, cinematic photograph, photorealistic, dramatic lighting, highly detailed, 4K"
+
     def _topic_keywords(self) -> List[str]:
         """Key lowercase tokens from self.subject, used to anchor stock searches to the topic."""
         words = re.findall(r"[A-Za-zÀ-ÿ]+", (self.subject or "").lower())
@@ -1180,35 +1184,40 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             print(colored(f"\n  [Images] Fetching {len(prompts)} real photos...", "blue"))
             providers = [
                 # Tier 1: historical / documentary (best for real events, people, places)
-                ("Wikimedia Commons", self._try_wikimedia),
+                ("Wikimedia Commons", self._try_wikimedia, "stock"),
                 # Tier 2: modern stock photos
-                ("Pexels", self._try_pexels),
-                ("Pixabay", self._try_pixabay),
-                # Tier 3: AI fallback so the video never renders a gradient
-                ("Pollinations FLUX", self._try_pollinations),
-                ("Pollinations turbo", self._try_pollinations_turbo),
+                ("Pexels", self._try_pexels, "stock"),
+                ("Pixabay", self._try_pixabay, "stock"),
+                # Tier 3: AI fallback when no real photo matches the topic
+                ("Leonardo AI", self._try_leonardo, "ai"),
+                ("Pollinations FLUX", self._try_pollinations, "ai"),
+                ("Pollinations turbo", self._try_pollinations_turbo, "ai"),
             ]
         else:
             print(colored(f"\n  [Images] Generating {len(prompts)} images...", "blue"))
             providers = [
                 # Tier 1: High-quality AI generator
-                ("Leonardo AI", self._try_leonardo),
+                ("Leonardo AI", self._try_leonardo, "ai"),
                 # Tier 2: Free unlimited AI generators (no daily limits)
-                ("Pollinations FLUX", self._try_pollinations),
-                ("Pollinations turbo", self._try_pollinations_turbo),
-                ("Pollinations flux-realism", self._try_pollinations_realism),
-                ("HuggingFace", self._try_huggingface),
+                ("Pollinations FLUX", self._try_pollinations, "ai"),
+                ("Pollinations turbo", self._try_pollinations_turbo, "ai"),
+                ("Pollinations flux-realism", self._try_pollinations_realism, "ai"),
+                ("HuggingFace", self._try_huggingface, "ai"),
                 # Tier 3: Stock photos (reliable, always available)
-                ("Pexels", self._try_pexels),
-                ("Pixabay", self._try_pixabay),
+                ("Pexels", self._try_pexels, "stock"),
+                ("Pixabay", self._try_pixabay, "stock"),
             ]
 
         for i, prompt in enumerate(prompts):
             print(colored(f"\n  Image {i+1}/{len(prompts)}", "blue"))
             saved = False
-            for name, fn in providers:
+            for name, fn, kind in providers:
                 try:
-                    img_bytes = fn(prompt)
+                    # In photos mode the LLM produces short search queries — AI providers need cinematic context to render well.
+                    effective_prompt = prompt
+                    if image_mode == "photos" and kind == "ai":
+                        effective_prompt = self._augment_for_ai_fallback(prompt)
+                    img_bytes = fn(effective_prompt)
                     if img_bytes and len(img_bytes) > 1000:
                         self._persist_image(img_bytes, name)
                         saved = True
