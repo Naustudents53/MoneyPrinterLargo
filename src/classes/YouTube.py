@@ -2725,48 +2725,54 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         n_total = len(self.images)
 
         t_phase = time.time()
-        while tot_dur < max_duration:
-            for image_path in self.images:
-                if tot_dur >= max_duration:
-                    break
+        from itertools import cycle
+        # Safety cap so a malformed image list (e.g. one image looping with tiny req_dur)
+        # cannot spin forever; in practice the clip_dur < 0.5 break exits well before this.
+        max_iterations = max(n_total * 4, 200)
+        for iteration, image_path in enumerate(cycle(self.images)):
+            if iteration >= max_iterations:
+                warning(f"    [Build] safety cap hit at {iteration} iterations; stopping.")
+                break
+            if tot_dur >= max_duration - 0.01:  # float-tolerant termination
+                break
 
-                clip_dur = min(req_dur, max_duration - tot_dur)
-                if clip_dur < 0.5:
-                    break
+            clip_dur = min(req_dur, max_duration - tot_dur)
+            if clip_dur < 0.5:
+                break
 
-                try:
-                    clip_idx += 1
-                    print(colored(f"    [Build] Clip {clip_idx}/{n_total} ({clip_dur:.1f}s)...", "cyan"), flush=True)
-                    img_clip = ImageClip(image_path).set_duration(clip_dur)
+            try:
+                clip_idx += 1
+                print(colored(f"    [Build] Clip {clip_idx}/{n_total} ({clip_dur:.1f}s)...", "cyan"), flush=True)
+                img_clip = ImageClip(image_path).set_duration(clip_dur)
 
-                    # Resize to 1920x1080
-                    w, h = img_clip.size
-                    aspect = w / h
-                    target_aspect = 1920 / 1080
+                # Resize to 1920x1080
+                w, h = img_clip.size
+                aspect = w / h
+                target_aspect = 1920 / 1080
 
-                    if aspect > target_aspect:
-                        img_clip = img_clip.resize(height=1080)
-                        img_clip = crop(img_clip, x_center=img_clip.w / 2, y_center=540, width=1920, height=1080)
-                    else:
-                        img_clip = img_clip.resize(width=1920)
-                        img_clip = crop(img_clip, x_center=960, y_center=img_clip.h / 2, width=1920, height=1080)
+                if aspect > target_aspect:
+                    img_clip = img_clip.resize(height=1080)
+                    img_clip = crop(img_clip, x_center=img_clip.w / 2, y_center=540, width=1920, height=1080)
+                else:
+                    img_clip = img_clip.resize(width=1920)
+                    img_clip = crop(img_clip, x_center=960, y_center=img_clip.h / 2, width=1920, height=1080)
 
-                    # Ken Burns: gentle slow zoom (1.0x → 1.08x over clip duration)
-                    # Use default arg to capture clip_dur in the closure
-                    img_clip = img_clip.resize(lambda t, d=clip_dur: 1 + 0.08 * (t / d))
+                # Ken Burns: gentle slow zoom (1.0x → 1.08x over clip duration)
+                # Use default arg to capture clip_dur in the closure
+                img_clip = img_clip.resize(lambda t, d=clip_dur: 1 + 0.08 * (t / d))
 
-                    # Crossfade between images
-                    if clip_dur > 2.0:
-                        img_clip = img_clip.crossfadein(0.8)
+                # Crossfade between images
+                if clip_dur > 2.0:
+                    img_clip = img_clip.crossfadein(0.8)
 
-                    img_clip = img_clip.set_fps(24)
-                    clips.append(img_clip)
-                    tot_dur += clip_dur
+                img_clip = img_clip.set_fps(24)
+                clips.append(img_clip)
+                tot_dur += clip_dur
 
-                except Exception as e:
-                    if get_verbose():
-                        warning(f"Skipping image {image_path}: {e}")
-                    continue
+            except Exception as e:
+                if get_verbose():
+                    warning(f"Skipping image {image_path}: {e}")
+                continue
         print(colored(f"    [Build] {len(clips)} clips ready in {time.time() - t_phase:.1f}s", "green"), flush=True)
 
         if not clips:
