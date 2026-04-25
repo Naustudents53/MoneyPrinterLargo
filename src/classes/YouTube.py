@@ -2900,7 +2900,6 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         threads = get_threads()
         tts_clip = AudioFileClip(self.tts_path)
         max_duration = tts_clip.duration
-        req_dur = max_duration / len(self.images)
 
         t_total = time.time()
         print(colored(f"[+] Combining {len(self.images)} images into long video ({max_duration:.0f}s)...", "blue"), flush=True)
@@ -2915,19 +2914,30 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         clip_idx = 0
         n_total = len(self.images)
 
+        # Compensate req_dur for the crossfade overlap so the VISIBLE duration matches
+        # the audio exactly. Each of the (n-1) crossfades eats CROSSFADE_DUR seconds, so
+        # we extend each clip a bit. Without this, the last ~23s of audio play over a
+        # black screen because the visible video ends early.
+        # Also reserve EXTRA_TAIL extra seconds on the last clip so it can fade out gracefully.
+        CROSSFADE_DUR = 0.8
+        EXTRA_TAIL = 1.5  # the last clip lingers 1.5s for the fade-out
+        overlap_total = CROSSFADE_DUR * (n_total - 1) if n_total > 1 else 0
+        req_dur = (max_duration + overlap_total + EXTRA_TAIL) / n_total
+
         t_phase = time.time()
         from itertools import cycle
         # Safety cap so a malformed image list (e.g. one image looping with tiny req_dur)
         # cannot spin forever; in practice the clip_dur < 0.5 break exits well before this.
         max_iterations = max(n_total * 4, 200)
+        target_total = max_duration + overlap_total + EXTRA_TAIL
         for iteration, image_path in enumerate(cycle(self.images)):
             if iteration >= max_iterations:
                 warning(f"    [Build] safety cap hit at {iteration} iterations; stopping.")
                 break
-            if tot_dur >= max_duration - 0.01:  # float-tolerant termination
+            if tot_dur >= target_total - 0.01:  # float-tolerant termination
                 break
 
-            clip_dur = min(req_dur, max_duration - tot_dur)
+            clip_dur = min(req_dur, target_total - tot_dur)
             if clip_dur < 0.5:
                 break
 
@@ -2972,13 +2982,18 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         # Concatenate with crossfade overlap between clips
         print(colored("[+] Applying transitions...", "blue"), flush=True)
         t_phase = time.time()
-        padding = -0.8 if len(clips) > 1 else 0
+        padding = -CROSSFADE_DUR if len(clips) > 1 else 0
         final_clip = concatenate_videoclips(clips, padding=padding, method="compose")
         final_clip = final_clip.set_fps(24)
 
-        # Trim video to match TTS duration exactly
-        if final_clip.duration > max_duration:
-            final_clip = final_clip.subclip(0, max_duration)
+        # The video should now last about (audio + EXTRA_TAIL); cap to (audio + EXTRA_TAIL)
+        # so we have a small visual tail beyond the last narration word that fades out.
+        target_visual_duration = max_duration + EXTRA_TAIL
+        if final_clip.duration > target_visual_duration:
+            final_clip = final_clip.subclip(0, target_visual_duration)
+
+        # Smooth fade-to-black at the very end so the closing doesn't cut abruptly.
+        final_clip = final_clip.fadeout(EXTRA_TAIL)
         print(colored(f"    [Transitions] done in {time.time() - t_phase:.1f}s", "green"), flush=True)
 
         # Audio: TTS + background music
@@ -2987,22 +3002,26 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         random_song = choose_random_song(getattr(self, "subject", ""))
         music_clip = AudioFileClip(random_song).set_fps(44100)
 
-        # Loop music if shorter than TTS
-        if music_clip.duration < tts_clip.duration:
-            loops_needed = int(tts_clip.duration // music_clip.duration) + 1
+        # Total audio runs slightly past the narration so the closing fade has music under it.
+        total_dur = max_duration + EXTRA_TAIL
+
+        # Loop music if shorter than the full timeline (narration + fade tail)
+        if music_clip.duration < total_dur:
+            loops_needed = int(total_dur // music_clip.duration) + 1
             music_clip = concatenate_audioclips([music_clip] * loops_needed)
-        music_clip = music_clip.subclip(0, tts_clip.duration)
+        music_clip = music_clip.subclip(0, total_dur)
 
         # Background music at 10% volume for long videos (subtle ambient)
         music_clip = music_clip.fx(afx.volumex, 0.10)
 
-        # Fade in music at start, fade out at end
-        music_clip = music_clip.audio_fadein(3.0).audio_fadeout(3.0)
+        # Music fades in over 3s at start; fades out across the EXTRA_TAIL closing window
+        # in sync with the visual fade-to-black.
+        music_clip = music_clip.audio_fadein(3.0).audio_fadeout(EXTRA_TAIL + 1.0)
 
         comp_audio = CompositeAudioClip([tts_clip.set_fps(44100), music_clip])
 
         # Set audio THEN duration — order matters for MoviePy
-        final_clip = final_clip.set_duration(max_duration)
+        final_clip = final_clip.set_duration(total_dur)
         final_clip = final_clip.set_audio(comp_audio)
         print(colored(f"    [Audio] mixed in {time.time() - t_phase:.1f}s", "green"), flush=True)
 
