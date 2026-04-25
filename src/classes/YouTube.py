@@ -1835,6 +1835,8 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         self.tts_path = None
         self.subtitles_path = None
         self._used_stock_urls = set()
+        # Shorts upload fast — no need for the long-video patient wait.
+        self._is_long_video = False
 
         # Generate the Topic (or use the user-provided one)
         if custom_topic and custom_topic.strip():
@@ -3038,6 +3040,9 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         info("  LONG VIDEO GENERATION PIPELINE")
         info("=" * 50)
 
+        # Mark this as a long video so upload_video knows to wait longer for the upload to finish.
+        self._is_long_video = True
+
         # Step 1: Generate Topic (or use the user-provided one)
         info("\n[1/7] Generating topic...")
         if custom_topic and custom_topic.strip():
@@ -3203,6 +3208,65 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         self.channel_id = channel_id
 
         return channel_id
+
+    def _wait_for_upload_complete(self, driver, max_wait_s: int) -> bool:
+        """
+        Poll YouTube Studio until the upload has finished. Long video files (100-300 MB)
+        keep transferring AFTER the Done button is clicked, and closing the browser /
+        navigating away too early kills the connection and abandons the upload.
+
+        Returns True if completion was detected; False on timeout.
+        """
+        info(f"\t=> Waiting up to {max_wait_s // 60} min for the upload to finish...")
+        deadline = time.time() + max_wait_s
+        last_pct_reported = -1
+        last_pct_seen = -1
+        no_change_polls = 0
+
+        while time.time() < deadline:
+            try:
+                body_text = driver.find_element(By.TAG_NAME, "body").text.lower()
+            except Exception:
+                body_text = ""
+
+            # Detect "Subiendo XX%" / "Uploading XX%" anywhere in the page.
+            m = re.search(r"(?:subiendo|uploading)[^\d%]{0,15}(\d{1,3})\s*%", body_text)
+            if m:
+                pct = int(m.group(1))
+                if pct != last_pct_reported:
+                    info(f"\t=> Upload progress: {pct}%")
+                    last_pct_reported = pct
+                if pct >= 99:
+                    info("\t=> Upload reached 100%. Allowing 15s for YouTube to finalize...")
+                    time.sleep(15)
+                    return True
+                # Detect a stalled upload (same % for ~5 min).
+                if pct == last_pct_seen:
+                    no_change_polls += 1
+                else:
+                    no_change_polls = 0
+                last_pct_seen = pct
+                if no_change_polls > 30:  # 30 polls × 10s = 5 min stuck
+                    warning(f"\t=> Progress frozen at {pct}% for ~5 min. Assuming complete.")
+                    return True
+            else:
+                # No "Uploading X%" indicator → likely already finished.
+                # Confirm with completion markers (English + Spanish).
+                completion_markers = (
+                    "guardado como borrador", "publicado", "subido",
+                    "procesando", "verificaciones completadas",
+                    "saved as draft", "published", "uploaded", "processing",
+                    "checks complete", "video published",
+                )
+                if any(marker in body_text for marker in completion_markers):
+                    info("\t=> Upload appears complete (no progress indicator).")
+                    time.sleep(8)
+                    return True
+
+            time.sleep(10)
+
+        warning(f"\t=> Hit {max_wait_s}s timeout — upload may still be in progress.")
+        return False
 
     def upload_video(self) -> bool:
         """
@@ -3401,22 +3465,45 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             except Exception as e:
                 warning(f"Done button failed: {e}")
 
-            # Wait for upload to process
-            if verbose:
-                info("\t=> Waiting for upload to complete...")
-            time.sleep(5)
+            is_long_video = bool(getattr(self, "_is_long_video", False))
+
+            # CRITICAL: persist the cache entry RIGHT NOW with a placeholder URL.
+            # Even if Firefox crashes / network drops mid-upload, the title, description,
+            # subject and date are saved so nothing is lost.
+            cache_entry = {
+                "title": self.metadata["title"],
+                "description": self.metadata["description"],
+                "subject": self.subject,
+                "url": "uploading...",
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "thumbnail_path": getattr(self, "thumbnail_path", "") or "",
+            }
+            try:
+                self.add_video(cache_entry)
+                if verbose:
+                    info("\t=> Cache entry saved (with placeholder URL)")
+            except Exception as e:
+                warning(f"Could not pre-save cache entry: {e}")
+
+            # Step 9.5: Wait for the file transfer to actually finish.
+            # Long videos (100-300 MB) take several minutes AFTER Done is clicked.
+            if is_long_video:
+                self._wait_for_upload_complete(driver, max_wait_s=2400)  # 40 min cap
+            else:
+                if verbose:
+                    info("\t=> Short video — waiting 8s for upload to finish...")
+                time.sleep(8)
 
             # Step 10: Get the video URL
             if verbose:
                 info("\t=> Getting video URL...")
 
-            driver.get(
-                f"https://studio.youtube.com/channel/{self.channel_id}/videos/short"
-            )
-            time.sleep(3)
-
             url = None
             try:
+                driver.get(
+                    f"https://studio.youtube.com/channel/{self.channel_id}/videos/short"
+                )
+                time.sleep(3)
                 videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
                 if videos:
                     first_video = videos[0]
@@ -3428,35 +3515,56 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     url = build_url(video_id)
             except Exception as e:
                 warning(f"Could not get video URL: {e}")
-                url = "https://studio.youtube.com"
 
-            self.uploaded_video_url = url or "unknown"
+            if url:
+                self.uploaded_video_url = url
+                success(f" => Uploaded Video: {url}")
+                # Update the placeholder cache entry with the real URL.
+                try:
+                    self._update_last_video_url(cache_entry["date"], url)
+                except Exception as e:
+                    warning(f"Could not update cache URL: {e}")
+            else:
+                self.uploaded_video_url = "https://studio.youtube.com"
+                warning(" => Could not retrieve video URL — check YouTube Studio manually. "
+                        "Cache entry has placeholder URL.")
 
-            success(f" => Uploaded Video: {self.uploaded_video_url}")
-
-            # Save to cache
-            self.add_video(
-                {
-                    "title": self.metadata["title"],
-                    "description": self.metadata["description"],
-                    "subject": self.subject,
-                    "url": self.uploaded_video_url,
-                    "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                }
-            )
-
-            driver.quit()
+            try:
+                driver.quit()
+            except Exception:
+                pass
             return True
 
         except Exception as e:
             import traceback
             error(f"Upload failed: {e}")
             traceback.print_exc()
-            try:
-                driver.quit()
-            except Exception:
-                pass
+            # DO NOT quit the driver on exception during a long video upload — the upload
+            # may still be in progress and Firefox closing would abort it.
+            if not bool(getattr(self, "_is_long_video", False)):
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+            else:
+                warning("Long video — leaving Firefox open so the upload can finish in the background. "
+                        "Close the browser manually after YouTube Studio shows the upload is done.")
             return False
+
+    def _update_last_video_url(self, date_marker: str, new_url: str) -> None:
+        """Update the URL field of the cache entry that matches `date_marker`."""
+        cache = get_youtube_cache_path()
+        with open(cache, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for account in data.get("accounts", []):
+            if account.get("id") != self._account_uuid:
+                continue
+            for video in account.get("videos", []):
+                if video.get("date") == date_marker and video.get("url") in ("uploading...", "", None):
+                    video["url"] = new_url
+                    break
+        with open(cache, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
 
     def get_videos(self) -> List[dict]:
         """
