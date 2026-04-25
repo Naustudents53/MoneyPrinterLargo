@@ -85,6 +85,7 @@ class YouTube:
         self.images = []
         self._used_stock_urls: set = set()
         self.word_timestamps = None
+        self.thumbnail_path: str = ""
 
         # Initialize the Firefox profile
         self.options: Options = Options()
@@ -1973,11 +1974,16 @@ REGLAS DE ESTILO:
         Generates metadata optimized for long-form YouTube videos.
         """
         title = self.generate_response(
-            f"Genera un título atractivo para un video de YouTube sobre este tema: {self.subject}. "
-            f"Debe ser intrigante y llamativo pero NO clickbait. Opcionalmente incluye 1-2 hashtags relevantes al final. "
-            f"Máximo 80 caracteres. Solo devuelve el título. "
-            f"NO pongas comillas alrededor del título. "
-            f"ESCRIBE EN {self.language}. TODO debe estar en {self.language}."
+            f"Genera un título para un video largo de YouTube sobre: {self.subject}.\n"
+            f"REQUISITOS DEL TÍTULO:\n"
+            f"- Máximo 70 caracteres.\n"
+            f"- Clickbait MODERADO: incluye exactamente 1 o 2 palabras clave en MAYÚSCULAS para enfatizar "
+            f"(ejemplos: SECRETO, NUNCA, JAMÁS, NADIE, OCULTO, VERDAD, IMPOSIBLE, REAL, PROHIBIDO, INCREÍBLE).\n"
+            f"- Despierta curiosidad o promete una revelación.\n"
+            f"- SIN signos de exclamación ni de interrogación.\n"
+            f"- SIN emojis, SIN comillas, SIN hashtags.\n"
+            f"- ESCRIBE EN {self.language}.\n"
+            f"Devuelve SOLO el título, sin explicación."
         )
 
         # Strip any quotes the LLM might add (regular, curly, single)
@@ -2008,6 +2014,156 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
 
         self.metadata = {"title": title, "description": description}
         return self.metadata
+
+    def generate_thumbnail(self) -> str:
+        """
+        Build a clickbait 1280x720 thumbnail for the long video:
+          1. LLM produces a dramatic visual prompt + 2-4 punchy overlay words.
+          2. Leonardo AI (fallback Pollinations) renders the background.
+          3. Pillow upscales to 1280x720, darkens the bottom for legibility,
+             and stamps the overlay text in Impact-style with thick black stroke.
+        Sets self.thumbnail_path and returns it. Returns "" if generation fails.
+        """
+        from PIL import Image, ImageDraw, ImageFont
+        import io
+
+        info("Generating thumbnail...")
+        self.thumbnail_path = ""
+
+        # Step 1: ask LLM for the visual concept + overlay words.
+        llm_raw = str(self.generate_response(
+            f"""Design a YouTube thumbnail for a video about: {self.subject}
+
+Return ONLY a JSON object with two fields:
+- "visual": short ENGLISH prompt (max 50 words) for an AI image generator. Describe a dramatic, eye-catching scene related to the topic. Include: dramatic lighting, high contrast, cinematic composition, intense atmosphere. Specify NO TEXT in the image.
+- "words": 2 to 4 SHORT punchy words in {self.language}, ALL UPPERCASE, for an overlay. Pick high-impact words like SECRETO / NUNCA / JAMÁS / VERDAD / OCULTO / NADIE / IMPOSIBLE. Examples: "EL SECRETO", "NADIE LO SABE", "JAMÁS LO CREERÁS".
+
+Return ONLY the JSON. No markdown, no explanation."""
+        )).replace("```json", "").replace("```", "").strip()
+
+        visual_prompt = ""
+        overlay_words = ""
+        try:
+            data = json.loads(llm_raw)
+            visual_prompt = str(data.get("visual", "")).strip()
+            overlay_words = str(data.get("words", "")).strip().upper()
+        except Exception:
+            match = re.search(r"\{.*\}", llm_raw, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group())
+                    visual_prompt = str(data.get("visual", "")).strip()
+                    overlay_words = str(data.get("words", "")).strip().upper()
+                except Exception:
+                    pass
+
+        if not visual_prompt:
+            visual_prompt = (
+                f"Dramatic cinematic close-up related to {self.subject}, "
+                f"intense expression, golden rim lighting, dark moody background, "
+                f"high contrast, ultra-detailed, no text"
+            )
+
+        # Step 2: render the background image (Leonardo first, Pollinations fallback).
+        bg_bytes = None
+        for name, fn in (
+            ("Leonardo AI", self._try_leonardo_landscape),
+            ("Pollinations FLUX 16:9", self._try_pollinations_landscape),
+        ):
+            try:
+                bg_bytes = fn(visual_prompt)
+                if bg_bytes and len(bg_bytes) > 5000:
+                    break
+                bg_bytes = None
+            except Exception as e:
+                if get_verbose():
+                    warning(f"Thumbnail bg via {name} failed: {str(e)[:120]}")
+                bg_bytes = None
+
+        THUMB_W, THUMB_H = 1280, 720
+
+        if bg_bytes:
+            bg = Image.open(io.BytesIO(bg_bytes)).convert("RGB").resize(
+                (THUMB_W, THUMB_H), Image.LANCZOS
+            )
+        else:
+            warning("Thumbnail providers all failed; using gradient background.")
+            bg = Image.new("RGB", (THUMB_W, THUMB_H))
+            d = ImageDraw.Draw(bg)
+            for y in range(THUMB_H):
+                t = y / THUMB_H
+                d.line(
+                    [(0, y), (THUMB_W, y)],
+                    fill=(int(20 + 80 * t), int(10 + 30 * t), int(60 + 90 * t)),
+                )
+
+        # Step 3: darken bottom 45% so overlay text reads well.
+        veil = Image.new("RGBA", (THUMB_W, THUMB_H), (0, 0, 0, 0))
+        vd = ImageDraw.Draw(veil)
+        veil_start = int(THUMB_H * 0.55)
+        for y in range(veil_start, THUMB_H):
+            alpha = int(190 * (y - veil_start) / (THUMB_H - veil_start))
+            vd.line([(0, y), (THUMB_W, y)], fill=(0, 0, 0, alpha))
+        bg = Image.alpha_composite(bg.convert("RGBA"), veil).convert("RGB")
+
+        # Step 4: stamp overlay text (Impact font preferred for clickbait look).
+        if overlay_words:
+            font_path = None
+            for cand in (
+                r"C:\Windows\Fonts\impact.ttf",
+                r"C:\Windows\Fonts\arialbd.ttf",
+                os.path.join(get_fonts_dir(), get_font()),
+            ):
+                if cand and os.path.isfile(cand):
+                    font_path = cand
+                    break
+
+            words_list = overlay_words.split()
+            if len(words_list) <= 2:
+                lines = [overlay_words]
+            else:
+                mid = (len(words_list) + 1) // 2
+                lines = [" ".join(words_list[:mid]), " ".join(words_list[mid:])]
+
+            draw = ImageDraw.Draw(bg)
+            margin = 80
+            max_w = THUMB_W - 2 * margin
+            font_size = 150
+            font = None
+            while font_size >= 60:
+                try:
+                    font = (
+                        ImageFont.truetype(font_path, font_size)
+                        if font_path else ImageFont.load_default()
+                    )
+                except Exception:
+                    font = ImageFont.load_default()
+                widest = max(
+                    draw.textbbox((0, 0), L, font=font)[2] for L in lines
+                )
+                if widest <= max_w:
+                    break
+                font_size -= 10
+
+            line_h = font_size + 10
+            total_h = line_h * len(lines)
+            y = THUMB_H - total_h - 50
+            for line in lines:
+                bbox = draw.textbbox((0, 0), line, font=font)
+                w = bbox[2] - bbox[0]
+                x = (THUMB_W - w) // 2
+                draw.text(
+                    (x, y), line, font=font,
+                    fill=(255, 222, 0),
+                    stroke_width=8, stroke_fill=(0, 0, 0),
+                )
+                y += line_h
+
+        out_path = os.path.join(ROOT_DIR, ".mp", f"thumb_{uuid4()}.png")
+        bg.save(out_path, "PNG")
+        self.thumbnail_path = out_path
+        success(f" Thumbnail: {out_path}")
+        return out_path
 
     def generate_long_prompts(self) -> List[str]:
         """
@@ -2432,7 +2588,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         info("=" * 50)
 
         # Step 1: Generate Topic
-        info("\n[1/6] Generating topic...")
+        info("\n[1/7] Generating topic...")
         self.generate_topic()
         if not self.subject or not self.subject.strip():
             error(
@@ -2444,25 +2600,33 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         success(f" Topic: {self.subject}")
 
         # Step 2: Generate long script with chapters
-        info("\n[2/6] Generating long-form script...")
+        info("\n[2/7] Generating long-form script...")
         self.generate_long_script()
 
         # Step 3: Generate metadata
-        info("\n[3/6] Generating title & description...")
+        info("\n[3/7] Generating title & description...")
         self.generate_long_metadata()
         success(f" Title: {self.metadata['title']}")
 
-        # Step 4: Generate image prompts
-        info("\n[4/6] Generating image prompts...")
+        # Step 4: Generate clickbait thumbnail (1280x720)
+        info("\n[4/7] Generating thumbnail...")
+        try:
+            self.generate_thumbnail()
+        except Exception as e:
+            warning(f"Thumbnail generation failed: {str(e)[:200]} (will upload without custom thumbnail)")
+            self.thumbnail_path = ""
+
+        # Step 5: Generate image prompts
+        info("\n[5/7] Generating image prompts...")
         self.images = []  # Reset images
         self.generate_long_prompts()
 
-        # Step 5: Generate images (landscape 1920x1080)
-        info("\n[5/6] Generating images...")
+        # Step 6: Generate images (landscape 1920x1080)
+        info("\n[6/7] Generating images...")
         self.generate_long_images(self.image_prompts)
 
-        # Step 6: Generate TTS with natural voice
-        info("\n[6/6] Generating narration audio...")
+        # Step 7: Generate TTS with natural voice
+        info("\n[7/7] Generating narration audio...")
         path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".wav")
 
         # Clean script for TTS: remove ALL non-narration content
@@ -2677,6 +2841,22 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 time.sleep(1)
             except Exception as e:
                 warning(f"Could not set kids option: {e}")
+
+            # Step 6.5: Upload custom thumbnail (long videos only — set by generate_thumbnail()).
+            thumb_path = getattr(self, "thumbnail_path", "")
+            if thumb_path and os.path.isfile(thumb_path):
+                if verbose:
+                    info(f"\t=> Uploading thumbnail: {thumb_path}")
+                try:
+                    thumb_input = wait.until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, YOUTUBE_THUMBNAIL_INPUT_CSS))
+                    )
+                    thumb_input.send_keys(os.path.abspath(thumb_path))
+                    time.sleep(3)
+                    if verbose:
+                        info("\t=> Thumbnail uploaded")
+                except Exception as e:
+                    warning(f"Could not upload thumbnail: {e} (continuing without it)")
 
             # Step 7: Click Next 3 times (Details → Video elements → Checks → Visibility)
             for step_num in range(3):

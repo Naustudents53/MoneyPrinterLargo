@@ -49,6 +49,7 @@ YOUTUBE_NOT_MADE_FOR_KIDS_NAME = "VIDEO_MADE_FOR_KIDS_NOT_MFK"
 YOUTUBE_NEXT_BUTTON_ID = "next-button"
 YOUTUBE_RADIO_BUTTON_XPATH = "//*[@id=\"radioLabel\"]"
 YOUTUBE_DONE_BUTTON_ID = "done-button"
+YOUTUBE_THUMBNAIL_INPUT_CSS = "ytcp-thumbnails-compact-editor input[type='file']"
 
 # Amazon Section (AFM)$
 AMAZON_PRODUCT_TITLE_ID = "productTitle"
