@@ -2035,7 +2035,14 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
             f"""Design a YouTube thumbnail for a video about: {self.subject}
 
 Return ONLY a JSON object with two fields:
-- "visual": short ENGLISH prompt (max 50 words) for an AI image generator. Describe a dramatic, eye-catching scene related to the topic. Include: dramatic lighting, high contrast, cinematic composition, intense atmosphere. Specify NO TEXT in the image.
+
+- "visual": ENGLISH prompt (40-70 words) for an AI image generator. CRITICAL RULES:
+  * The image MUST be visually unmistakable as the topic — name the actual SPECIFIC people, places, objects, clothing, architecture, era, or symbols from the topic. Use proper nouns when relevant (e.g. "Roman vestal virgins in white robes tending a sacred flame inside the Temple of Vesta, marble columns").
+  * Build ONE single dramatic scene, not a list of unrelated elements.
+  * Include: dramatic side lighting, high contrast, shallow depth of field, cinematic composition, photorealistic.
+  * End the prompt with: "no text, no letters, no logos, no watermark".
+  * FORBIDDEN: generic phrases like "person looking", "mysterious figure", "abstract concept", "modern man" — be SPECIFIC to the topic.
+
 - "words": 2 to 4 SHORT punchy words in {self.language}, ALL UPPERCASE, for an overlay. Pick high-impact words like SECRETO / NUNCA / JAMÁS / VERDAD / OCULTO / NADIE / IMPOSIBLE. Examples: "EL SECRETO", "NADIE LO SABE", "JAMÁS LO CREERÁS".
 
 Return ONLY the JSON. No markdown, no explanation."""
@@ -2154,8 +2161,8 @@ Return ONLY the JSON. No markdown, no explanation."""
                 x = (THUMB_W - w) // 2
                 draw.text(
                     (x, y), line, font=font,
-                    fill=(255, 222, 0),
-                    stroke_width=8, stroke_fill=(0, 0, 0),
+                    fill=(255, 255, 255),
+                    stroke_width=10, stroke_fill=(0, 0, 0),
                 )
                 y += line_h
 
@@ -2471,7 +2478,8 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         max_duration = tts_clip.duration
         req_dur = max_duration / len(self.images)
 
-        print(colored(f"[+] Combining {len(self.images)} images into long video ({max_duration:.0f}s)...", "blue"))
+        t_total = time.time()
+        print(colored(f"[+] Combining {len(self.images)} images into long video ({max_duration:.0f}s)...", "blue"), flush=True)
 
         valid_images = [p for p in self.images if os.path.exists(p)]
         if not valid_images:
@@ -2480,7 +2488,10 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         clips = []
         tot_dur = 0
+        clip_idx = 0
+        n_total = len(self.images)
 
+        t_phase = time.time()
         while tot_dur < max_duration:
             for image_path in self.images:
                 if tot_dur >= max_duration:
@@ -2491,6 +2502,8 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     break
 
                 try:
+                    clip_idx += 1
+                    print(colored(f"    [Build] Clip {clip_idx}/{n_total} ({clip_dur:.1f}s)...", "cyan"), flush=True)
                     img_clip = ImageClip(image_path).set_duration(clip_dur)
 
                     # Resize to 1920x1080
@@ -2521,12 +2534,14 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     if get_verbose():
                         warning(f"Skipping image {image_path}: {e}")
                     continue
+        print(colored(f"    [Build] {len(clips)} clips ready in {time.time() - t_phase:.1f}s", "green"), flush=True)
 
         if not clips:
             raise RuntimeError("No clips could be created from images")
 
         # Concatenate with crossfade overlap between clips
         print(colored("[+] Applying transitions...", "blue"), flush=True)
+        t_phase = time.time()
         padding = -0.8 if len(clips) > 1 else 0
         final_clip = concatenate_videoclips(clips, padding=padding, method="compose")
         final_clip = final_clip.set_fps(24)
@@ -2534,9 +2549,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         # Trim video to match TTS duration exactly
         if final_clip.duration > max_duration:
             final_clip = final_clip.subclip(0, max_duration)
+        print(colored(f"    [Transitions] done in {time.time() - t_phase:.1f}s", "green"), flush=True)
 
         # Audio: TTS + background music
         print(colored("[+] Mixing audio...", "blue"), flush=True)
+        t_phase = time.time()
         random_song = choose_random_song(getattr(self, "subject", ""))
         music_clip = AudioFileClip(random_song).set_fps(44100)
 
@@ -2557,8 +2574,10 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         # Set audio THEN duration — order matters for MoviePy
         final_clip = final_clip.set_duration(max_duration)
         final_clip = final_clip.set_audio(comp_audio)
+        print(colored(f"    [Audio] mixed in {time.time() - t_phase:.1f}s", "green"), flush=True)
 
-        print(colored("[+] Rendering long video...", "blue"), flush=True)
+        print(colored("[+] Rendering long video (ffmpeg)...", "blue"), flush=True)
+        t_phase = time.time()
         final_clip.write_videofile(
             combined_path,
             threads=threads,
@@ -2567,7 +2586,10 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             audio_codec="aac",
             preset="ultrafast",
             audio=True,
+            logger="bar",
         )
+        print(colored(f"    [Render] done in {time.time() - t_phase:.1f}s", "green"), flush=True)
+        print(colored(f"[+] Total combine_long: {time.time() - t_total:.1f}s", "blue"), flush=True)
 
         success(f'Wrote long video to "{combined_path}"')
         return combined_path
