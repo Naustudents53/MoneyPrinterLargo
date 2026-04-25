@@ -2675,7 +2675,12 @@ Return ONLY the JSON. No markdown, no explanation."""
                 )
                 y += line_h
 
-        out_path = os.path.join(ROOT_DIR, ".mp", f"thumb_{uuid4()}.png")
+        # Save to a persistent directory OUTSIDE .mp/ so rem_temp_files() doesn't wipe it.
+        # This way, even if the auto-upload to YT fails, the file is still on disk for
+        # manual recovery via YouTube Studio.
+        thumbs_dir = os.path.join(ROOT_DIR, "thumbnails")
+        os.makedirs(thumbs_dir, exist_ok=True)
+        out_path = os.path.join(thumbs_dir, f"thumb_{uuid4()}.png")
         bg.save(out_path, "PNG")
         self.thumbnail_path = out_path
         success(f" Thumbnail: {out_path}")
@@ -3308,6 +3313,46 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         return video_path
 
+    def _verify_thumbnail_uploaded(self, driver) -> bool:
+        """
+        After send_keys(thumbnail.png), confirm YouTube actually accepted it.
+        Strategy: look for an <img> inside the thumbnail editor whose src is a blob:
+        URL or a /service URL — those only appear when a custom upload was processed.
+        Returns True if a custom thumbnail preview is detected.
+        """
+        try:
+            imgs = driver.find_elements(
+                By.CSS_SELECTOR,
+                "ytcp-thumbnails-compact-editor img, "
+                "ytcp-thumbnail-uploader img, "
+                "ytcp-thumbnails-compact-editor-uploader img, "
+                "ytcp-uploads-still img"
+            )
+            for img in imgs:
+                try:
+                    src = (img.get_attribute("src") or "").lower()
+                except Exception:
+                    continue
+                # Auto-generated thumbnails from YT come from i.ytimg.com / i9.ytimg.com.
+                # A custom upload renders as a blob: URL while still in the dialog.
+                if src.startswith("blob:") or "googleusercontent.com" in src:
+                    return True
+            # Alternative signal: look for a "Replace" / "Cambiar" button which only
+            # appears once a custom thumbnail is in place.
+            for selector in (
+                "[aria-label*='Cambiar miniatura' i]",
+                "[aria-label*='Replace thumbnail' i]",
+                "[aria-label*='Edit thumbnail' i]",
+            ):
+                try:
+                    if driver.find_elements(By.CSS_SELECTOR, selector):
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return False
+
     def _find_thumbnail_input(self, driver, wait):
         """
         Locate YouTube Studio's thumbnail file input across UI variants.
@@ -3586,26 +3631,66 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
             # Step 6.5: Upload custom thumbnail (long videos only — set by generate_thumbnail()).
             thumb_path = getattr(self, "thumbnail_path", "")
+            self._thumbnail_uploaded = False
             if thumb_path and os.path.isfile(thumb_path):
-                if verbose:
-                    info(f"\t=> Uploading thumbnail: {thumb_path}")
+                abs_thumb = os.path.abspath(thumb_path)
+                info(f"\t=> Uploading thumbnail: {abs_thumb}")
+
+                # Try to scroll the thumbnail editor into view (it's below title/description).
                 try:
-                    thumb_input = self._find_thumbnail_input(driver, wait)
-                    if thumb_input is None:
-                        raise RuntimeError("no thumbnail file input found on Details page")
-                    # Make hidden inputs visible-ish so send_keys works on every YT Studio variant.
-                    driver.execute_script(
-                        "arguments[0].style.display='block';"
-                        "arguments[0].style.visibility='visible';"
-                        "arguments[0].style.opacity='1';",
-                        thumb_input,
+                    editor = driver.find_element(
+                        By.CSS_SELECTOR,
+                        "ytcp-thumbnails-compact-editor, ytcp-thumbnail-uploader, ytcp-thumbnails-compact-editor-uploader",
                     )
-                    thumb_input.send_keys(os.path.abspath(thumb_path))
-                    time.sleep(3)
-                    if verbose:
-                        info("\t=> Thumbnail uploaded")
-                except Exception as e:
-                    warning(f"Could not upload thumbnail: {str(e)[:200]} (continuing without it)")
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", editor)
+                    time.sleep(1)
+                except Exception:
+                    pass
+
+                # Try up to 3 times — YT Studio sometimes silently ignores the first send_keys
+                # if the editor is still rendering.
+                for attempt in range(1, 4):
+                    try:
+                        thumb_input = self._find_thumbnail_input(driver, wait)
+                        if thumb_input is None:
+                            raise RuntimeError("no thumbnail file input found on Details page")
+                        # Force the (usually hidden) input to be interactable.
+                        driver.execute_script(
+                            "arguments[0].style.display='block';"
+                            "arguments[0].style.visibility='visible';"
+                            "arguments[0].style.opacity='1';"
+                            "arguments[0].removeAttribute('hidden');",
+                            thumb_input,
+                        )
+                        thumb_input.send_keys(abs_thumb)
+                        time.sleep(4)  # let YT process the upload
+                        if self._verify_thumbnail_uploaded(driver):
+                            success(f"\t=> Thumbnail accepted on attempt {attempt}.")
+                            self._thumbnail_uploaded = True
+                            break
+                        warning(f"\t=> Thumbnail attempt {attempt}/3: not visible after upload, retrying.")
+                    except Exception as e:
+                        warning(f"\t=> Thumbnail attempt {attempt}/3 failed: {str(e)[:200]}")
+                    time.sleep(2)
+
+                if not self._thumbnail_uploaded:
+                    error(
+                        "Thumbnail upload could not be verified after 3 attempts. "
+                        f"The thumbnail file is preserved at:\n    {abs_thumb}\n"
+                        "Open YouTube Studio → your video → Edit → upload it manually."
+                    )
+                    # Snapshot the page so we can debug what YT Studio looked like.
+                    try:
+                        debug_path = os.path.join(
+                            ROOT_DIR, "thumbnails",
+                            f"upload_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                        )
+                        driver.save_screenshot(debug_path)
+                        info(f"\t=> Saved upload-page screenshot for debugging: {debug_path}")
+                    except Exception:
+                        pass
+            elif thumb_path:
+                warning(f"\t=> Thumbnail file not found on disk: {thumb_path} (skipping)")
 
             # Step 7: Click Next 3 times (Details → Video elements → Checks → Visibility)
             for step_num in range(3):
