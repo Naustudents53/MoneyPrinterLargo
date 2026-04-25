@@ -48,6 +48,11 @@ def get_active_model() -> str | None:
     return _selected_model
 
 
+def get_active_provider() -> str:
+    """Return the runtime LLM provider (override or configured)."""
+    return _llm_provider or get_llm_provider() or "ollama"
+
+
 _SYSTEM_PROMPT = (
     "You are a content generation assistant. You NEVER engage in conversation. "
     "You NEVER ask questions. You NEVER say 'sure', 'of course', 'here you go', "

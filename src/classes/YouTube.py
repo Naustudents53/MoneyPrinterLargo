@@ -1886,140 +1886,214 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
     def generate_long_script(self) -> str:
         """
-        Generates a structured long-form script with chapters for a 15-20 minute video
+        Generates a structured long-form script for a 15-20 minute video
         (~2700-3500 words at documentary narration speed).
 
-        Generated in TWO PASSES so the LLM doesn't get cut short:
-          Pass 1: INTRO + sections 1-5  (~1400-1700 words)
-          Pass 2: sections 6-10 + CLOSING, with the tail of pass 1 as context
-                  so it continues smoothly without repetition (~1400-1700 words)
+        Two strategies, picked by active LLM provider:
+          - Gemini Flash 2.5/3 → SINGLE call (large output window handles 3000+ words).
+            Falls back to per-section if the single call returns too short.
+          - Pollinations / Ollama / others → ONE LLM CALL PER SECTION (12 calls)
+            because free / small models cap output around 400-700 words per call.
         """
         lang = self.language
 
-        def _ask(prompt: str, target_words: int) -> str:
-            best = ""
-            for attempt in range(3):
-                if attempt > 0:
-                    warning(f"Half too short ({len(best.split())} words). Retry {attempt + 1}/3...")
-                completion = self._clean_llm_script(self.generate_response(prompt))
-                if len(completion.split()) > len(best.split()):
-                    best = completion
-                if len(best.split()) >= target_words:
-                    break
-            return best
+        # ---- FAST PATH: Gemini can produce the whole script in a single call ----
+        try:
+            from llm_provider import get_active_provider
+            active_provider = get_active_provider()
+        except Exception:
+            active_provider = ""
 
-        # ---- PASS 1: INTRO + sections 1-5 ----
-        pass1_prompt = f"""Eres un narrador experto de documentales y guionista profesional.
-Escribe la PRIMERA MITAD de un guion de narración cautivador de 15 a 20 minutos sobre el siguiente tema.
+        if active_provider == "gemini":
+            info(" [Script] Gemini detected — trying single-call fast path...")
+            try:
+                full = self._generate_long_script_single_call(lang)
+                word_count = len(full.split())
+                if word_count >= 2000:
+                    self.script = full
+                    info(f" => Generated long script: {word_count} words (~{word_count // 165} min)")
+                    return full
+                warning(f"   Single-call returned only {word_count} words; falling back to per-section.")
+            except Exception as e:
+                warning(f"   Single-call failed: {str(e)[:200]}; falling back to per-section.")
+
+        # ---- DEFAULT PATH: per-section for capped providers ----
+        return self._generate_long_script_sectional(lang)
+
+    def _generate_long_script_single_call(self, lang: str) -> str:
+        """
+        Ask the LLM for the entire 15-20 min script in one call.
+        Designed for high-output-window providers (Gemini Flash 2.5/3).
+        """
+        prompt = f"""Eres un narrador experto de documentales y guionista profesional.
+Escribe un GUION COMPLETO de narración cautivador de 15 a 20 minutos sobre el siguiente tema.
 
 Tema: {self.subject}
 
-ESTRUCTURA (usa estos marcadores exactos):
+ESTRUCTURA OBLIGATORIA (usa estos marcadores EXACTOS):
 [INTRO]
-Un gancho inicial poderoso (4-5 oraciones). Empieza con un dato impactante, una pregunta provocadora o una afirmación audaz que capture la atención inmediatamente.
+Gancho inicial poderoso (5-7 oraciones, 120-180 palabras). Empieza con un dato impactante, pregunta provocadora o afirmación audaz.
 
-[SECTION 1: <título>]
-Primer punto principal (8-12 oraciones). Profundiza en el primer aspecto fascinante del tema con detalles concretos, datos y descripciones vívidas.
+[SECTION 1: <título corto>]
+Aspecto fundacional o más fascinante del tema (10-14 oraciones, 250-350 palabras).
 
-[SECTION 2: <título>]
-Segundo punto principal (8-12 oraciones). Explora un ángulo diferente o construye sobre la sección anterior, con anécdotas o ejemplos.
+[SECTION 2: <título corto>]
+Ángulo distinto o construcción sobre la sección anterior, con anécdotas concretas (10-14 oraciones, 250-350 palabras).
 
-[SECTION 3: <título>]
-Tercer punto principal (8-12 oraciones). Revela conexiones sorprendentes o hechos poco conocidos.
+[SECTION 3: <título corto>]
+Conexiones sorprendentes o hechos poco conocidos (10-14 oraciones, 250-350 palabras).
 
-[SECTION 4: <título>]
-Cuarto punto principal (8-12 oraciones). Añade más profundidad con datos concretos y detalles narrativos.
+[SECTION 4: <título corto>]
+Profundización con datos concretos, fechas, lugares o personas reales (10-14 oraciones, 250-350 palabras).
 
-[SECTION 5: <título>]
-Quinto punto principal (8-12 oraciones). El clímax intermedio — la parte más impactante hasta ahora.
+[SECTION 5: <título corto>]
+Clímax intermedio — momento más impactante hasta aquí (10-14 oraciones, 250-350 palabras).
+
+[SECTION 6: <título corto>]
+Nuevo ángulo o consecuencia que surge de lo anterior (10-14 oraciones, 250-350 palabras).
+
+[SECTION 7: <título corto>]
+Detalles narrativos profundos, anécdotas o testimonios (10-14 oraciones, 250-350 palabras).
+
+[SECTION 8: <título corto>]
+Conexión inesperada o paralelismo con otro ámbito (10-14 oraciones, 250-350 palabras).
+
+[SECTION 9: <título corto>]
+Clímax final — la revelación o giro más fuerte (10-14 oraciones, 250-350 palabras).
+
+[SECTION 10: <título corto>]
+Consecuencias, legado o impacto del tema en la actualidad (10-14 oraciones, 250-350 palabras).
+
+[CLOSING]
+Conclusión memorable (5-7 oraciones, 120-180 palabras). Termina con una reflexión que perdure.
 
 REGLAS DE ESTILO:
 - Escribe como un narrador apasionado, NO como un libro de texto. Lenguaje vívido y sensorial.
-- Cada oración debe fluir naturalmente hacia la siguiente.
+- Cada oración fluye naturalmente hacia la siguiente.
 - Usa preguntas retóricas, comparaciones sorprendentes y ganchos emocionales.
-- Mantén las oraciones CORTAS y contundentes (máximo 20 palabras cada una).
-- ESTA PRIMERA MITAD debe tener entre 1400 y 1800 palabras.
-- ESCRIBE TODO EN {lang}. Cada palabra debe estar en {lang}. NO uses inglés.
-- NO incluyas acotaciones, etiquetas de hablante ni meta-texto.
-- NO uses formato markdown, viñetas ni listas numeradas.
-- NO incluyas URLs, enlaces, citas ni referencias.
-- NO escribas [CLOSING] ni secciones más allá de la 5 — eso va en la segunda mitad.
-- SOLO devuelve el guion con los marcadores de sección. Sin preámbulos ni notas.
+- Oraciones CORTAS (máximo 20 palabras cada una).
+- TOTAL OBLIGATORIO: entre 2700 y 3500 palabras.
+- Cada sección debe aportar material NUEVO, no repetir.
+- ESCRIBE TODO EN {lang}. NO uses inglés.
+- NO acotaciones, NO etiquetas de hablante, NO meta-texto.
+- NO markdown, NO viñetas, NO listas numeradas.
+- NO URLs, enlaces, citas ni referencias.
+- SOLO devuelve el guion completo con los 12 marcadores arriba listados. Sin preámbulo.
 """
-        pass1 = _ask(pass1_prompt, target_words=1400)
+        completion = self._clean_llm_script(self.generate_response(prompt))
+        return completion
 
-        # Use the last ~400 words of pass 1 as context so pass 2 continues smoothly.
-        tail_words = pass1.split()[-400:]
-        tail = " ".join(tail_words) if tail_words else ""
+    def _generate_long_script_sectional(self, lang: str) -> str:
+        """Per-section generation (12 calls) for providers with low output caps."""
 
-        # ---- PASS 2: sections 6-10 + CLOSING ----
-        pass2_prompt = f"""Eres un narrador experto de documentales. Estás CONTINUANDO la SEGUNDA MITAD de un guion sobre:
+        # Per-section thematic guidance — what role each section plays in the narrative arc.
+        section_themes = [
+            "Aspecto fundacional o más fascinante del tema. Establece el contexto y captura la atención.",
+            "Ángulo distinto o construcción sobre la sección anterior, con anécdotas concretas o ejemplos.",
+            "Conexiones sorprendentes o hechos poco conocidos relacionados al tema.",
+            "Profundización con datos concretos, fechas, lugares o personas reales.",
+            "Clímax intermedio — el momento más impactante hasta este punto.",
+            "Consecuencia o nuevo ángulo que surge a partir de lo anterior.",
+            "Detalles narrativos profundos, anécdotas o testimonios.",
+            "Conexión inesperada o paralelismo con otro ámbito.",
+            "Clímax final — la revelación o giro más fuerte del tema.",
+            "Consecuencias, legado o impacto del tema en la actualidad.",
+        ]
 
-Tema: {self.subject}
+        def _ask_section(prompt: str, min_words: int) -> str:
+            """Call the LLM with retries until we hit at least min_words."""
+            best = ""
+            for attempt in range(3):
+                completion = self._clean_llm_script(self.generate_response(prompt))
+                if len(completion.split()) > len(best.split()):
+                    best = completion
+                if len(best.split()) >= min_words:
+                    break
+                if attempt < 2:
+                    warning(f"   chunk short ({len(best.split())} words), retry {attempt + 2}/3")
+            return best
 
-Esto es lo último que ya se narró (NO lo repitas; continúa donde se quedó):
+        def _ensure_marker(text: str, marker: str) -> str:
+            """Prepend the section marker if the LLM forgot it (or used a wrong one)."""
+            text = text.strip()
+            if not re.match(r"^\s*\[(INTRO|SECTION|CLOSING)", text, re.IGNORECASE):
+                text = f"{marker}\n{text}"
+            return text
+
+        parts: List[str] = []
+        info(f" [Script] Building 15-20 min script section by section...")
+
+        # ---- INTRO ----
+        intro_prompt = f"""Eres un narrador experto de documentales. Escribe SOLO la INTRODUCCIÓN de un guion documental sobre: {self.subject}
+
+REGLAS:
+- 5-7 oraciones (120-180 palabras).
+- Empieza con un gancho poderoso: dato impactante, pregunta provocadora o afirmación audaz.
+- Lenguaje vívido y sensorial. Oraciones CORTAS (máximo 20 palabras).
+- ESCRIBE TODO EN {lang}. NO uses inglés.
+- NO uses markdown, viñetas, listas, URLs, ni meta-texto.
+- Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [INTRO]
+"""
+        intro = _ensure_marker(_ask_section(intro_prompt, min_words=80), "[INTRO]")
+        parts.append(intro)
+        info(f"   [Script] INTRO: {len(intro.split())} words")
+
+        # ---- SECTIONS 1-10 ----
+        for i, theme in enumerate(section_themes, start=1):
+            prior = "\n\n".join(parts)
+            tail = " ".join(prior.split()[-250:]) if prior else ""
+
+            section_prompt = f"""Eres un narrador experto de documentales. Estás escribiendo la SECCIÓN {i} de 10 de un guion sobre: {self.subject}
+
+Esto es lo último que ya se narró (NO lo repitas, continúa el flujo natural):
 \"\"\"
 {tail}
 \"\"\"
 
-Continúa con esta estructura (usa estos marcadores exactos):
-
-[SECTION 6: <título>]
-Sexto punto principal (8-12 oraciones). Construye sobre lo anterior con un nuevo ángulo o consecuencia.
-
-[SECTION 7: <título>]
-Séptimo punto principal (8-12 oraciones). Profundiza con datos concretos, anécdotas o ejemplos.
-
-[SECTION 8: <título>]
-Octavo punto principal (8-12 oraciones). Otro ángulo fascinante con conexiones inesperadas.
-
-[SECTION 9: <título>]
-Noveno punto principal (8-12 oraciones). El clímax final — la revelación más impactante del tema.
-
-[SECTION 10: <título>]
-Décimo punto principal (8-12 oraciones). Consecuencias, legado o impacto en la actualidad.
-
-[CLOSING]
-Una conclusión memorable (4-5 oraciones). Termina con una reflexión que se quede con el espectador.
-
-REGLAS DE ESTILO:
-- Continúa con el mismo tono y estilo de la primera mitad — narrador apasionado, vívido y sensorial.
-- NO repitas información ya dicha; aporta material nuevo.
-- Oraciones CORTAS (máximo 20 palabras).
-- ESTA SEGUNDA MITAD debe tener entre 1400 y 1800 palabras.
+Escribe SOLO la SECCIÓN {i}:
+- Foco temático de esta sección: {theme}
+- 10-14 oraciones (250-350 palabras).
+- Lenguaje vívido y sensorial. Oraciones CORTAS (máximo 20 palabras).
+- Aporta material NUEVO, no repitas ideas ya dichas.
 - ESCRIBE TODO EN {lang}. NO uses inglés.
-- NO acotaciones, NO markdown, NO viñetas, NO URLs.
-- SOLO devuelve el guion con los marcadores de sección. Sin preámbulos ni notas.
+- NO uses markdown, viñetas, listas, URLs, ni meta-texto.
+- Devuelve SOLO el texto de la sección, precedido EXACTAMENTE por una línea con: [SECTION {i}: <título breve descriptivo>]
 """
-        pass2 = _ask(pass2_prompt, target_words=1400)
+            section = _ensure_marker(_ask_section(section_prompt, min_words=180), f"[SECTION {i}: parte {i}]")
+            parts.append(section)
+            info(f"   [Script] SECTION {i}: {len(section.split())} words")
 
-        # Stitch the two halves.
-        full = (pass1 + "\n\n" + pass2).strip()
+        # ---- CLOSING ----
+        prior = "\n\n".join(parts)
+        tail = " ".join(prior.split()[-300:])
+        closing_prompt = f"""Eres un narrador experto de documentales. Estás escribiendo el CIERRE de un guion sobre: {self.subject}
+
+Esto es lo último que se narró:
+\"\"\"
+{tail}
+\"\"\"
+
+Escribe SOLO el CIERRE:
+- 5-7 oraciones (120-180 palabras).
+- Conclusión memorable. Termina con una reflexión que se quede con el espectador.
+- Lenguaje vívido. Oraciones CORTAS (máximo 20 palabras).
+- ESCRIBE TODO EN {lang}. NO uses inglés.
+- NO uses markdown, viñetas, listas, URLs, ni meta-texto.
+- Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [CLOSING]
+"""
+        closing = _ensure_marker(_ask_section(closing_prompt, min_words=80), "[CLOSING]")
+        parts.append(closing)
+        info(f"   [Script] CLOSING: {len(closing.split())} words")
+
+        full = "\n\n".join(parts).strip()
         word_count = len(full.split())
-
-        # Last-resort expansion if we're still way short of 15 min target.
-        if word_count < 2200:
-            warning(f"Combined script short ({word_count} words). Expanding...")
-            expand_prompt = (
-                f"Expande y desarrolla MUCHO más el siguiente guion de narración. "
-                f"Añade más detalles, datos históricos, anécdotas, descripciones vívidas y contexto en cada sección. "
-                f"El resultado debe tener al menos 2700 palabras. "
-                f"Mantén TODOS los marcadores [INTRO], [SECTION N: ...] y [CLOSING] tal cual. "
-                f"ESCRIBE TODO EN {self.language}.\n\n{full}"
-            )
-            expanded = self._clean_llm_script(self.generate_response(expand_prompt))
-            if len(expanded.split()) > word_count:
-                full = expanded
-                word_count = len(full.split())
 
         if not full or word_count < 600:
             raise RuntimeError(f"Failed to generate long script (only {word_count} words)")
 
         self.script = full
 
-        if get_verbose():
-            info(f" => Generated long script: {word_count} words (~{word_count // 165} min)")
-
+        info(f" => Generated long script: {word_count} words (~{word_count // 165} min)")
         return full
 
     def generate_long_metadata(self) -> dict:
