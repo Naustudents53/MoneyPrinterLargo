@@ -239,7 +239,7 @@ def main():
                         custom_topic = question(
                             "Enter a custom topic (or leave empty to auto-generate): "
                         ).strip()
-                        info("Starting Long Video Generation (5-10 min)...")
+                        info("Starting Long Video Generation (15-20 min)...")
                         long_path = youtube.generate_long_video(tts, custom_topic=custom_topic)
                         if not long_path:
                             warning("Long video generation aborted — nothing to upload.")

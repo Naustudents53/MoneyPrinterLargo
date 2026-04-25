@@ -1881,93 +1881,146 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         return path
 
     # ============================================================
-    #  LONG VIDEO PIPELINE (5-10 minutes, 16:9 landscape)
+    #  LONG VIDEO PIPELINE (15-20 minutes, 16:9 landscape)
     # ============================================================
 
     def generate_long_script(self) -> str:
         """
-        Generates a structured long-form script with chapters for a 7-12 minute video.
-        The script is split into: hook, 6-7 body sections, and a closing.
+        Generates a structured long-form script with chapters for a 15-20 minute video
+        (~2700-3500 words at documentary narration speed).
+
+        Generated in TWO PASSES so the LLM doesn't get cut short:
+          Pass 1: INTRO + sections 1-5  (~1400-1700 words)
+          Pass 2: sections 6-10 + CLOSING, with the tail of pass 1 as context
+                  so it continues smoothly without repetition (~1400-1700 words)
         """
         lang = self.language
-        prompt = f"""Eres un narrador experto de documentales y guionista profesional.
-Escribe un guion de narración cautivador de 8 a 12 minutos sobre el siguiente tema.
+
+        def _ask(prompt: str, target_words: int) -> str:
+            best = ""
+            for attempt in range(3):
+                if attempt > 0:
+                    warning(f"Half too short ({len(best.split())} words). Retry {attempt + 1}/3...")
+                completion = self._clean_llm_script(self.generate_response(prompt))
+                if len(completion.split()) > len(best.split()):
+                    best = completion
+                if len(best.split()) >= target_words:
+                    break
+            return best
+
+        # ---- PASS 1: INTRO + sections 1-5 ----
+        pass1_prompt = f"""Eres un narrador experto de documentales y guionista profesional.
+Escribe la PRIMERA MITAD de un guion de narración cautivador de 15 a 20 minutos sobre el siguiente tema.
 
 Tema: {self.subject}
 
 ESTRUCTURA (usa estos marcadores exactos):
 [INTRO]
-Un gancho inicial poderoso (3-4 oraciones). Empieza con un dato impactante, una pregunta provocadora o una afirmación audaz que capture la atención inmediatamente.
+Un gancho inicial poderoso (4-5 oraciones). Empieza con un dato impactante, una pregunta provocadora o una afirmación audaz que capture la atención inmediatamente.
 
 [SECTION 1: <título>]
-Primer punto principal (6-8 oraciones). Profundiza en el primer aspecto fascinante del tema.
+Primer punto principal (8-12 oraciones). Profundiza en el primer aspecto fascinante del tema con detalles concretos, datos y descripciones vívidas.
 
 [SECTION 2: <título>]
-Segundo punto principal (6-8 oraciones). Explora un ángulo diferente o construye sobre la sección anterior.
+Segundo punto principal (8-12 oraciones). Explora un ángulo diferente o construye sobre la sección anterior, con anécdotas o ejemplos.
 
 [SECTION 3: <título>]
-Tercer punto principal (6-8 oraciones). Revela conexiones sorprendentes o hechos poco conocidos.
+Tercer punto principal (8-12 oraciones). Revela conexiones sorprendentes o hechos poco conocidos.
 
 [SECTION 4: <título>]
-Cuarto punto principal (6-8 oraciones). Añade más profundidad al tema con detalles fascinantes.
+Cuarto punto principal (8-12 oraciones). Añade más profundidad con datos concretos y detalles narrativos.
 
 [SECTION 5: <título>]
-Quinto punto principal (6-8 oraciones). El clímax — la parte más impactante del tema.
-
-[SECTION 6: <título>]
-Sexto punto principal (6-8 oraciones). Consecuencias, legado, o impacto en la actualidad.
-
-[CLOSING]
-Una conclusión memorable (3-4 oraciones). Termina con una reflexión que se quede con el espectador.
+Quinto punto principal (8-12 oraciones). El clímax intermedio — la parte más impactante hasta ahora.
 
 REGLAS DE ESTILO:
-- Escribe como un narrador apasionado, NO como un libro de texto. Usa lenguaje vívido y sensorial.
-- Cada oración debe fluir naturalmente hacia la siguiente, como si se hablara en voz alta.
+- Escribe como un narrador apasionado, NO como un libro de texto. Lenguaje vívido y sensorial.
+- Cada oración debe fluir naturalmente hacia la siguiente.
 - Usa preguntas retóricas, comparaciones sorprendentes y ganchos emocionales.
 - Mantén las oraciones CORTAS y contundentes (máximo 20 palabras cada una).
-- El guion COMPLETO debe tener entre 1500 y 2200 palabras (8-12 minutos al hablar).
+- ESTA PRIMERA MITAD debe tener entre 1400 y 1800 palabras.
 - ESCRIBE TODO EN {lang}. Cada palabra debe estar en {lang}. NO uses inglés.
 - NO incluyas acotaciones, etiquetas de hablante ni meta-texto.
 - NO uses formato markdown, viñetas ni listas numeradas.
-- NO incluyas URLs, enlaces, citas ni referencias de ningún tipo.
-- SOLO devuelve el guion con los marcadores de sección como se muestra arriba. Sin preámbulos ni notas.
+- NO incluyas URLs, enlaces, citas ni referencias.
+- NO escribas [CLOSING] ni secciones más allá de la 5 — eso va en la segunda mitad.
+- SOLO devuelve el guion con los marcadores de sección. Sin preámbulos ni notas.
 """
-        # Try up to 3 times to get a long enough script
-        best = ""
-        for attempt in range(3):
-            if attempt > 0:
-                warning(f"Script too short ({len(best.split())} words). Attempt {attempt + 1}/3...")
-            completion = self.generate_response(prompt)
-            completion = self._clean_llm_script(completion)
-            if len(completion.split()) > len(best.split()):
-                best = completion
-            if len(best.split()) >= 800:
-                break
+        pass1 = _ask(pass1_prompt, target_words=1400)
 
-        # If still short, try expanding what we have
-        if len(best.split()) < 800:
-            warning(f"Expanding short script ({len(best.split())} words)...")
+        # Use the last ~400 words of pass 1 as context so pass 2 continues smoothly.
+        tail_words = pass1.split()[-400:]
+        tail = " ".join(tail_words) if tail_words else ""
+
+        # ---- PASS 2: sections 6-10 + CLOSING ----
+        pass2_prompt = f"""Eres un narrador experto de documentales. Estás CONTINUANDO la SEGUNDA MITAD de un guion sobre:
+
+Tema: {self.subject}
+
+Esto es lo último que ya se narró (NO lo repitas; continúa donde se quedó):
+\"\"\"
+{tail}
+\"\"\"
+
+Continúa con esta estructura (usa estos marcadores exactos):
+
+[SECTION 6: <título>]
+Sexto punto principal (8-12 oraciones). Construye sobre lo anterior con un nuevo ángulo o consecuencia.
+
+[SECTION 7: <título>]
+Séptimo punto principal (8-12 oraciones). Profundiza con datos concretos, anécdotas o ejemplos.
+
+[SECTION 8: <título>]
+Octavo punto principal (8-12 oraciones). Otro ángulo fascinante con conexiones inesperadas.
+
+[SECTION 9: <título>]
+Noveno punto principal (8-12 oraciones). El clímax final — la revelación más impactante del tema.
+
+[SECTION 10: <título>]
+Décimo punto principal (8-12 oraciones). Consecuencias, legado o impacto en la actualidad.
+
+[CLOSING]
+Una conclusión memorable (4-5 oraciones). Termina con una reflexión que se quede con el espectador.
+
+REGLAS DE ESTILO:
+- Continúa con el mismo tono y estilo de la primera mitad — narrador apasionado, vívido y sensorial.
+- NO repitas información ya dicha; aporta material nuevo.
+- Oraciones CORTAS (máximo 20 palabras).
+- ESTA SEGUNDA MITAD debe tener entre 1400 y 1800 palabras.
+- ESCRIBE TODO EN {lang}. NO uses inglés.
+- NO acotaciones, NO markdown, NO viñetas, NO URLs.
+- SOLO devuelve el guion con los marcadores de sección. Sin preámbulos ni notas.
+"""
+        pass2 = _ask(pass2_prompt, target_words=1400)
+
+        # Stitch the two halves.
+        full = (pass1 + "\n\n" + pass2).strip()
+        word_count = len(full.split())
+
+        # Last-resort expansion if we're still way short of 15 min target.
+        if word_count < 2200:
+            warning(f"Combined script short ({word_count} words). Expanding...")
             expand_prompt = (
                 f"Expande y desarrolla MUCHO más el siguiente guion de narración. "
-                f"Añade más detalles, datos históricos, descripciones vívidas y contexto. "
-                f"El resultado debe tener al menos 1500 palabras. "
-                f"Mantén los marcadores de sección [SECTION]. "
-                f"ESCRIBE TODO EN {self.language}.\n\n{best}"
+                f"Añade más detalles, datos históricos, anécdotas, descripciones vívidas y contexto en cada sección. "
+                f"El resultado debe tener al menos 2700 palabras. "
+                f"Mantén TODOS los marcadores [INTRO], [SECTION N: ...] y [CLOSING] tal cual. "
+                f"ESCRIBE TODO EN {self.language}.\n\n{full}"
             )
-            expanded = self.generate_response(expand_prompt)
-            expanded = self._clean_llm_script(expanded)
-            if len(expanded.split()) > len(best.split()):
-                best = expanded
+            expanded = self._clean_llm_script(self.generate_response(expand_prompt))
+            if len(expanded.split()) > word_count:
+                full = expanded
+                word_count = len(full.split())
 
-        if not best or len(best.split()) < 200:
-            raise RuntimeError(f"Failed to generate long script (only {len(best.split())} words)")
+        if not full or word_count < 600:
+            raise RuntimeError(f"Failed to generate long script (only {word_count} words)")
 
-        self.script = best
+        self.script = full
 
         if get_verbose():
-            info(f" => Generated long script: {len(best.split())} words")
+            info(f" => Generated long script: {word_count} words (~{word_count // 165} min)")
 
-        return best
+        return full
 
     def generate_long_metadata(self) -> dict:
         """
@@ -2033,8 +2086,20 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
 
         video_title = (self.metadata or {}).get("title", "") if hasattr(self, "metadata") else ""
 
+        # Build the set of allowed tokens (lowercased, accent-stripped) from title + topic.
+        # Any LLM-generated overlay word must derive from this vocabulary or it gets rejected
+        # (this is what catches hallucinations like "TÁQUILAS SE HOJAN").
+        def _norm(s: str) -> str:
+            import unicodedata
+            s = unicodedata.normalize("NFKD", s.lower())
+            return "".join(c for c in s if not unicodedata.combining(c))
+
+        title_topic_text = f"{video_title} {self.subject}".lower()
+        allowed_tokens = {
+            _norm(t) for t in re.findall(r"[A-Za-zÀ-ÿ]+", title_topic_text) if len(t) > 2
+        }
+
         # Step 1: ask LLM for the visual concept + overlay words.
-        # Overlay must be SPECIFIC to the video's topic/title — no generic catchphrases.
         llm_raw = str(self.generate_response(
             f"""Design a YouTube thumbnail for this video.
 
@@ -2044,17 +2109,18 @@ TOPIC: {self.subject}
 Return ONLY a JSON object with two fields:
 
 - "visual": ENGLISH prompt (40-70 words) for an AI image generator. CRITICAL RULES:
-  * The image MUST be visually unmistakable as the topic — name the actual SPECIFIC people, places, objects, clothing, architecture, era, or symbols from the topic. Use proper nouns when relevant (e.g. "Roman vestal virgins in white robes tending a sacred flame inside the Temple of Vesta, marble columns").
+  * The image MUST be visually unmistakable as the topic — name the actual SPECIFIC people, places, objects, clothing, architecture, era, or symbols from the topic. Use proper nouns when relevant.
   * Build ONE single dramatic scene, not a list of unrelated elements.
   * Include: dramatic side lighting, high contrast, shallow depth of field, cinematic composition, photorealistic.
   * End the prompt with: "no text, no letters, no logos, no watermark".
-  * FORBIDDEN: generic phrases like "person looking", "mysterious figure", "abstract concept", "modern man" — be SPECIFIC to the topic.
+  * FORBIDDEN: generic phrases like "person looking", "mysterious figure", "abstract concept" — be SPECIFIC.
 
-- "words": 2 to 4 SHORT punchy words in {self.language}, ALL UPPERCASE, for the thumbnail overlay. CRITICAL RULES:
-  * MUST be tied to THIS video's topic or title — name a key concept, person, place, era, or object from the topic. NOT a generic catchphrase.
-  * Treat it like a teaser headline that completes or echoes the title's hook (e.g., for "El SECRETO de Anubis": good options are "DIOS DE LA MUERTE" or "VERÁS POR QUÉ"; BAD: "NADIE LO SABE", "EL SECRETO" alone).
-  * AVOID these clichés: "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR", "INCREÍBLE", "JAMÁS LO CREERÁS". They are banned because they are overused.
-  * Prefer concrete nouns from the topic over generic adjectives.
+- "words": 2 to 4 SHORT punchy words in {self.language}, ALL UPPERCASE, for the thumbnail overlay. ABSOLUTELY CRITICAL RULES:
+  * EVERY WORD you write must already appear (literally or as a clear root form) in the VIDEO TITLE or TOPIC above. DO NOT INVENT WORDS. DO NOT USE WORDS THAT ARE NOT IN THE TITLE OR TOPIC.
+  * Pick 2-4 of the most punchy real words from the title/topic and arrange them into a punchy phrase.
+  * Make sure every word is a real, correctly-spelled word in {self.language}.
+  * Examples (assuming the title contained those words): if title is "El patrón OCULTO de la historia", good options: "EL PATRÓN OCULTO" or "PATRÓN OCULTO" or "OCULTO DE LA HISTORIA". BAD: any word not in the title.
+  * AVOID these overused clichés: "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR", "INCREÍBLE", "JAMÁS LO CREERÁS".
 
 Return ONLY the JSON. No markdown, no explanation."""
         )).replace("```json", "").replace("```", "").strip()
@@ -2075,13 +2141,32 @@ Return ONLY the JSON. No markdown, no explanation."""
                 except Exception:
                     pass
 
-        # Reject the banned clichés even if the LLM ignored the rule.
         BANNED_OVERLAYS = {
             "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR",
             "INCREÍBLE", "INCREIBLE", "JAMÁS LO CREERÁS", "JAMAS LO CREERAS",
         }
-        if overlay_words in BANNED_OVERLAYS:
-            warning(f"Thumbnail: LLM returned banned cliché '{overlay_words}', will retry.")
+
+        def _validate_overlay(candidate: str) -> bool:
+            """Reject if any word of `candidate` does not match the title/topic vocabulary."""
+            if not candidate:
+                return False
+            if candidate in BANNED_OVERLAYS:
+                return False
+            STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
+                    "que", "por", "para", "con", "en", "a", "su", "sus", "lo"}
+            words = [_norm(w) for w in re.findall(r"[A-Za-zÀ-ÿ]+", candidate)]
+            content_words = [w for w in words if w not in STOP]
+            if not content_words:
+                return False
+            # Every content word must match (substring match in either direction handles
+            # singular/plural and common conjugations like "colapsa" vs "colapsan").
+            for w in content_words:
+                if not any(w == a or w in a or a in w for a in allowed_tokens):
+                    return False
+            return True
+
+        if overlay_words and not _validate_overlay(overlay_words):
+            warning(f"Thumbnail: LLM overlay '{overlay_words}' rejected (hallucinated or banned).")
             overlay_words = ""
 
         if not visual_prompt:
@@ -2091,33 +2176,48 @@ Return ONLY the JSON. No markdown, no explanation."""
                 f"high contrast, ultra-detailed, no text"
             )
 
-        # Retry: if the LLM forgot the overlay words (or returned a banned cliché), ask anchored to the title.
-        if not overlay_words:
-            warning("Thumbnail: retrying overlay words with title-anchored prompt.")
-            retry = str(self.generate_response(
-                f"Genera 2 a 4 palabras CORTAS en {self.language}, en MAYÚSCULAS, para superponer en la miniatura "
-                f"de un video de YouTube titulado: \"{video_title or self.subject}\".\n"
-                f"REGLAS:\n"
-                f"- Deben referirse a un concepto, persona, lugar u objeto CONCRETO del tema.\n"
-                f"- PROHIBIDO usar: NADIE LO SABE, NUNCA LO SABE, TE VA A IMPACTAR, INCREÍBLE, JAMÁS LO CREERÁS.\n"
-                f"- Sin comillas, sin signos de puntuación, sin explicación.\n"
-                f"Devuelve SOLO las palabras."
-            )).strip()
-            retry = re.sub(r"[\"'“”‘’.!?¡¿]", "", retry).strip()
-            if retry and len(retry.split()) <= 5 and retry.upper() not in BANNED_OVERLAYS:
-                overlay_words = retry.upper()
-
-        # Last-resort fallback: extract the UPPERCASE keyword from the title (the moderate-clickbait
-        # title generation already puts 1-2 words in uppercase) and pair it with the topic.
+        # Deterministic fallback path (always coherent with title — never hallucinates).
         if not overlay_words and video_title:
-            caps = re.findall(r"\b[A-ZÁÉÍÓÚÜÑ]{4,}\b", video_title)
-            if caps:
-                overlay_words = " ".join(caps[:2])
-                warning(f"Thumbnail: derived overlay from title caps: {overlay_words}")
+            clean_title = re.sub(r"[¿?¡!,.:;\"'“”‘’]", "", video_title).strip()
+            tw = clean_title.split()
+            STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
+                    "que", "por", "qué", "para", "con", "en", "a", "su", "sus", "lo"}
 
-        # Absolute fallback so the thumbnail is never wordless: pull a few significant words from the topic.
+            # 1. Find UPPERCASE keyword (the title generator always puts 1-2 in caps) and
+            #    grab a small window around it.
+            caps_idx = next(
+                (i for i, w in enumerate(tw)
+                 if re.match(r"^[A-ZÁÉÍÓÚÜÑ]{4,}$", w)),
+                None,
+            )
+            if caps_idx is not None:
+                start = max(0, caps_idx - 1)
+                end = min(len(tw), caps_idx + 2)
+                chunk = tw[start:end]
+                while chunk and chunk[0].lower() in STOP:
+                    chunk = chunk[1:]
+                while chunk and chunk[-1].lower() in STOP:
+                    chunk = chunk[:-1]
+                if chunk:
+                    overlay_words = " ".join(chunk).upper()
+
+            # 2. No caps in title → take the first 2-3 meaningful words.
+            if not overlay_words:
+                meaningful = [w for w in tw if w.lower() not in STOP and len(w) > 2]
+                if meaningful:
+                    overlay_words = " ".join(meaningful[:3]).upper()
+
+            if overlay_words:
+                warning(f"Thumbnail: derived overlay from title: {overlay_words}")
+
+        # Absolute fallback so the thumbnail is never wordless.
         if not overlay_words:
-            topic_words = [w for w in re.findall(r"[A-Za-zÀ-ÿ]+", self.subject or "") if len(w) > 3][:3]
+            STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
+                    "que", "por", "qué", "para", "con", "en", "a"}
+            topic_words = [
+                w for w in re.findall(r"[A-Za-zÀ-ÿ]+", self.subject or "")
+                if w.lower() not in STOP and len(w) > 3
+            ][:3]
             overlay_words = " ".join(topic_words).upper() if topic_words else "DESCÚBRELO"
             warning(f"Thumbnail: using topic-derived overlay text: {overlay_words}")
 
@@ -2224,33 +2324,46 @@ Return ONLY the JSON. No markdown, no explanation."""
 
     def generate_long_prompts(self) -> List[str]:
         """
-        Generates 20-24 image prompts for a long video, covering each section of the script.
+        Generates ~30 image prompts for a long video, anchored to the script:
+        the script is split into N sections and each prompt MUST illustrate its
+        section literally, naming the people / places / objects from the topic.
         """
-        n_prompts = 22
+        n_prompts = 30
 
-        prompt = f"""Generate exactly {n_prompts} Image Prompts for AI Image Generation.
+        # Split the script into N sections so each prompt maps 1:1 to a chunk
+        # of narration — this is what keeps the images on-topic.
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', self.script) if s.strip()]
+        sections = []
+        if sentences:
+            per_section = max(1, len(sentences) // n_prompts)
+            for i in range(n_prompts):
+                start = i * per_section
+                end = start + per_section if i < n_prompts - 1 else len(sentences)
+                section_text = ' '.join(sentences[start:end])[:400]
+                if section_text:
+                    sections.append(section_text)
+        while len(sections) < n_prompts:
+            sections.append(self.subject)
 
-This is for a long-form documentary-style video. The images will be shown in 16:9 landscape format.
+        sections_text = "".join(
+            f'\nSECTION {i+1}: "{sec}"\n' for i, sec in enumerate(sections)
+        )
 
-Script:
-{self.script[:3000]}
+        prompt = f"""Generate exactly {n_prompts} image prompts for a long-form documentary video.
 
-RULES:
-- Generate EXACTLY {n_prompts} prompts, distributed across ALL sections of the script.
-- Each prompt must illustrate a SPECIFIC moment or concept from the script.
-- Be CONCRETE: describe exactly what appears (objects, people, setting, lighting, colors, textures, composition).
-- NEVER use abstract words like "visualization", "concept", "essence", "metaphor".
-- Each prompt MUST specify a DIFFERENT cinematic style. Rotate through these:
-  * "cinematic wide shot, dramatic lighting, film grain, 8K ultra HD, 16:9 landscape"
-  * "extreme close-up, shallow depth of field, bokeh, macro detail"
-  * "aerial establishing shot, sweeping vista, golden hour, epic scale"
-  * "dark atmospheric scene, volumetric lighting, moody shadows"
-  * "hyper-realistic CGI render, vivid colors, detailed textures, studio lighting"
-  * "documentary photography, natural light, authentic feel, photojournalistic"
-  * "space/cosmic visualization, deep field, stars, nebula, astronomical"
-  * "microscopic or scientific imagery, detailed cross-section, educational diagram style"
-- Each prompt should be 40-80 words describing the full scene.
-- Write prompts in English for best image generation quality.
+TOPIC: {self.subject}
+
+The narration is divided into {n_prompts} sections. Each image must illustrate ITS section.
+{sections_text}
+CRITICAL RULES:
+- Image N MUST illustrate SECTION N. Read the section text and describe the LITERAL scene, person, object or event it talks about.
+- Every prompt must be visually unmistakable as the TOPIC. Name the actual SPECIFIC people, places, objects, era, clothing, architecture, or symbols from the section text. Use proper nouns when relevant.
+- Be CONCRETE: describe exactly what appears (subjects, setting, lighting, colors, composition).
+- 30-60 words per prompt.
+- All images are 16:9 landscape, photorealistic, cinematic. Vary camera angles and lighting (wide shot, close-up, low angle, golden hour, candlelight, overcast, etc.) but DO NOT change the subject matter to fit a style.
+- ABSOLUTELY FORBIDDEN: cosmic / space / nebula imagery (unless the topic is astronomy), microscopic / scientific diagrams (unless the topic is biology/chemistry), futuristic holographic / sci-fi visuals (unless the topic is futurism), abstract geometric / fractal patterns, generic "concept" or "metaphor" visualizations. NEVER swap topical content for these styles.
+- ALSO FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation.
+- Write in English.
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
@@ -2274,32 +2387,28 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 except Exception:
                     pass
 
+        # Fallback: build a topic-anchored prompt per section so images stay on-topic
+        # even when the LLM fails to produce a parseable JSON array.
         if not image_prompts or len(image_prompts) < 4:
             if get_verbose():
-                warning("Failed to parse long video prompts, using fallback")
+                warning("Failed to parse long video prompts, using section-anchored fallback")
+            fallback_styles = [
+                "cinematic wide shot, dramatic side lighting, film grain",
+                "close-up detail, shallow depth of field, soft natural light",
+                "low angle hero shot, golden hour, epic scale",
+                "atmospheric scene, volumetric light, moody shadows",
+                "documentary photography, available light, candid framing",
+                "intimate medium shot, rim lighting, warm tones",
+                "establishing wide vista, overcast diffuse light, painterly",
+                "candlelit interior, warm shadows, period-accurate set",
+            ]
             image_prompts = [
-                f"{self.subject}, cinematic wide shot, dramatic lighting, 8K, landscape",
-                f"{self.subject}, extreme close-up detail, shallow depth of field, bokeh",
-                f"{self.subject}, aerial drone view, golden hour, sweeping landscape",
-                f"{self.subject}, dark moody atmosphere, volumetric fog, neon accents",
-                f"{self.subject}, hyper-realistic CGI, vivid saturated colors, studio lighting",
-                f"{self.subject}, documentary photography, natural light, raw authentic",
-                f"{self.subject}, cosmic space visualization, deep field stars, nebula",
-                f"{self.subject}, scientific microscopic imagery, detailed cross-section",
-                f"{self.subject}, cinematic panorama, film grain, dramatic sky, 8K",
-                f"{self.subject}, intimate portrait shot, rim lighting, emotional",
-                f"{self.subject}, futuristic technology visualization, holographic, blue tones",
-                f"{self.subject}, underwater or fluid dynamics, bioluminescent, ethereal",
-                f"{self.subject}, ancient historical scene, warm tones, detailed architecture",
-                f"{self.subject}, abstract geometric patterns, fractal, mathematical beauty",
-                f"{self.subject}, sunset silhouette, dramatic contrast, wide angle",
-                f"{self.subject}, time-lapse style, motion blur, dynamic energy, vivid",
-                f"{self.subject}, epic battlefield scene, smoke and dust, cinematic 8K",
-                f"{self.subject}, candlelit interior, warm shadows, intimate atmosphere",
-                f"{self.subject}, stormy dramatic sky, lightning, powerful landscape",
-                f"{self.subject}, ancient map or manuscript, sepia tones, historical detail",
-                f"{self.subject}, crowd scene, dramatic perspective, documentary realism",
-                f"{self.subject}, ruins and decay, overgrown nature, post-apocalyptic beauty",
+                (
+                    f"Scene from \"{sections[i] if i < len(sections) else self.subject}\" "
+                    f"in the context of {self.subject}, {fallback_styles[i % len(fallback_styles)]}, "
+                    f"photorealistic, 8K, 16:9 landscape"
+                )
+                for i in range(n_prompts)
             ]
 
         image_prompts = image_prompts[:n_prompts]
@@ -2646,7 +2755,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
     def generate_long_video(self, tts_instance: TTS, custom_topic: str = "") -> str:
         """
-        Full pipeline for generating a long-form YouTube video (5-10 minutes).
+        Full pipeline for generating a long-form YouTube video (15-20 minutes).
         16:9 landscape, documentary style, no subtitles.
 
         Args:
