@@ -1910,15 +1910,106 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 full = self._generate_long_script_single_call(lang)
                 word_count = len(full.split())
                 if word_count >= 2000:
+                    full = self._postprocess_long_script(full)
                     self.script = full
-                    info(f" => Generated long script: {word_count} words (~{word_count // 165} min)")
+                    self._persist_long_script(full)
+                    info(f" => Generated long script: {len(full.split())} words (~{len(full.split()) // 165} min)")
                     return full
                 warning(f"   Single-call returned only {word_count} words; falling back to per-section.")
             except Exception as e:
                 warning(f"   Single-call failed: {str(e)[:200]}; falling back to per-section.")
 
         # ---- DEFAULT PATH: per-section for capped providers ----
-        return self._generate_long_script_sectional(lang)
+        full = self._generate_long_script_sectional(lang)
+        full = self._postprocess_long_script(full)
+        self.script = full
+        self._persist_long_script(full)
+        return full
+
+    def _postprocess_long_script(self, script: str) -> str:
+        """
+        Final sanity pass on a long script:
+        - Strip any LLM preamble that survived per-call cleaning ("Por supuesto", "Claro,", etc).
+        - Cap total length to ~3700 words (≈ 22 min) to prevent 50-min runaways.
+        - Warn (not fail) if the first 200 words don't mention any topic keyword,
+          which is a strong hint the LLM went off-topic.
+        """
+        text = script.strip()
+
+        # Strip leading conversational preamble paragraphs the per-call cleaner can miss.
+        preamble_starters = (
+            r"^\s*(¡?(por supuesto|claro|desde luego|con gusto|aquí (te|te lo|tienes|está|va)|"
+            r"a continuación|sure|of course|certainly|absolutely|here(?:'s| is)|i'?ll|let me))[^\n]*\n+"
+        )
+        for _ in range(3):  # peel up to 3 preamble lines if stacked
+            new = re.sub(preamble_starters, "", text, count=1, flags=re.IGNORECASE)
+            if new == text:
+                break
+            text = new
+
+        # Hard cap so we never exceed ~22 min of narration. Cut on a sentence boundary near the cap.
+        WORD_CAP = 3700
+        words = text.split()
+        if len(words) > WORD_CAP:
+            warning(f"   Script {len(words)} words → capping to ~{WORD_CAP} words.")
+            cut_text = " ".join(words[:WORD_CAP])
+            # Try to end on a sentence boundary so the cap doesn't sound abrupt.
+            last_period = max(cut_text.rfind("."), cut_text.rfind("!"), cut_text.rfind("?"))
+            if last_period > len(cut_text) * 0.7:
+                cut_text = cut_text[: last_period + 1]
+            text = cut_text
+
+        # Topic relevance — be strict. The script MUST mention significant tokens
+        # from self.subject. If not, abort: a wrong-topic script is worse than no video.
+        def _norm(s: str) -> str:
+            import unicodedata
+            s = unicodedata.normalize("NFKD", s.lower())
+            return "".join(c for c in s if not unicodedata.combining(c))
+
+        subj_tokens = {
+            _norm(t) for t in re.findall(r"[A-Za-zÀ-ÿ]+", self.subject or "")
+            if len(t) > 4
+        }
+        if subj_tokens:
+            full_norm = _norm(text)
+            mentions = sum(1 for tok in subj_tokens if tok in full_norm)
+            head_norm = _norm(" ".join(text.split()[:300]))
+            head_mentions = sum(1 for tok in subj_tokens if tok in head_norm)
+
+            # If the topic appears NOWHERE in the entire script → off-topic, abort.
+            if mentions == 0:
+                raise RuntimeError(
+                    f"Aborting: generated script never mentions any keyword from the topic "
+                    f"({', '.join(list(subj_tokens)[:5])}). The LLM drifted entirely. "
+                    f"Re-run the generation."
+                )
+            # If the topic appears in <30% of expected places, warn loudly.
+            if mentions < max(1, len(subj_tokens) // 3):
+                warning(
+                    f"   Topic only mentioned {mentions} of {len(subj_tokens)} keywords — "
+                    f"script may be partially off-topic. Inspect before publishing."
+                )
+            # If the intro never mentions the topic, warn (intro should hook the topic).
+            if head_mentions == 0:
+                warning(
+                    f"   Script intro doesn't mention the topic. Inspect the first paragraph."
+                )
+
+        return text.strip()
+
+    def _persist_long_script(self, script: str) -> None:
+        """Save the final long script to .mp/script_<uuid>.txt for inspection / debugging."""
+        try:
+            path = os.path.join(ROOT_DIR, ".mp", f"script_{uuid4()}.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(f"# Topic: {self.subject}\n")
+                f.write(f"# Words: {len(script.split())}\n")
+                f.write(f"# Estimated duration: ~{len(script.split()) // 165} min\n")
+                f.write("# " + ("=" * 60) + "\n\n")
+                f.write(script)
+            info(f"   [Script] Saved to: {path}")
+        except Exception as e:
+            warning(f"   Could not persist script: {e}")
 
     def _generate_long_script_single_call(self, lang: str) -> str:
         """
@@ -2001,16 +2092,20 @@ REGLAS DE ESTILO:
         ]
 
         def _ask_section(prompt: str, min_words: int) -> str:
-            """Call the LLM with retries until we hit at least min_words."""
+            """Call the LLM with retries until we hit min_words AND the content is clean."""
             best = ""
-            for attempt in range(3):
+            for attempt in range(4):
                 completion = self._clean_llm_script(self.generate_response(prompt))
+                # Reject the response entirely if it looks like garbage / metadata.
+                if self._looks_like_garbage(completion):
+                    warning(f"   chunk looked like garbage / metadata, retry {attempt + 2}/4")
+                    continue
                 if len(completion.split()) > len(best.split()):
                     best = completion
                 if len(best.split()) >= min_words:
                     break
-                if attempt < 2:
-                    warning(f"   chunk short ({len(best.split())} words), retry {attempt + 2}/3")
+                if attempt < 3:
+                    warning(f"   chunk short ({len(best.split())} words), retry {attempt + 2}/4")
             return best
 
         def _ensure_marker(text: str, marker: str) -> str:
@@ -2091,9 +2186,7 @@ Escribe SOLO el CIERRE:
         if not full or word_count < 600:
             raise RuntimeError(f"Failed to generate long script (only {word_count} words)")
 
-        self.script = full
-
-        info(f" => Generated long script: {word_count} words (~{word_count // 165} min)")
+        info(f" => Sectional script built: {word_count} words (~{word_count // 165} min)")
         return full
 
     def generate_long_metadata(self) -> dict:
@@ -2189,12 +2282,17 @@ Return ONLY a JSON object with two fields:
   * End the prompt with: "no text, no letters, no logos, no watermark".
   * FORBIDDEN: generic phrases like "person looking", "mysterious figure", "abstract concept" — be SPECIFIC.
 
-- "words": 2 to 4 SHORT punchy words in {self.language}, ALL UPPERCASE, for the thumbnail overlay. ABSOLUTELY CRITICAL RULES:
-  * EVERY WORD you write must already appear (literally or as a clear root form) in the VIDEO TITLE or TOPIC above. DO NOT INVENT WORDS. DO NOT USE WORDS THAT ARE NOT IN THE TITLE OR TOPIC.
-  * Pick 2-4 of the most punchy real words from the title/topic and arrange them into a punchy phrase.
-  * Make sure every word is a real, correctly-spelled word in {self.language}.
-  * Examples (assuming the title contained those words): if title is "El patrón OCULTO de la historia", good options: "EL PATRÓN OCULTO" or "PATRÓN OCULTO" or "OCULTO DE LA HISTORIA". BAD: any word not in the title.
-  * AVOID these overused clichés: "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR", "INCREÍBLE", "JAMÁS LO CREERÁS".
+- "words": a CLICKBAIT TEASER PHRASE in {self.language}, ALL UPPERCASE, for the thumbnail overlay. ABSOLUTELY CRITICAL RULES:
+  * Length: 3 to 6 words forming a COMPLETE PUNCHY PHRASE. NEVER return a single word.
+  * It must SOUND like a YouTube clickbait teaser — provoke curiosity, hint at a revelation, or pose a question fragment. It is NOT a label.
+  * It must be CLEARLY tied to the video's title or topic — pick the most charged real words from the title/topic and arrange them.
+  * EVERY WORD must already appear (literally or as a clear root form) in the VIDEO TITLE or TOPIC above. DO NOT INVENT WORDS. Each word must be a correctly-spelled real word in {self.language}.
+  * Good examples (assuming the title contained those words):
+      Title "El patrón OCULTO de la historia" → "EL PATRÓN OCULTO DE LA HISTORIA" or "EL PATRÓN QUE OCULTARON".
+      Title "¿Por qué COLAPSAN las civilizaciones?" → "POR QUÉ COLAPSAN TODAS" or "EL FIN DE LAS CIVILIZACIONES".
+      Title "El SECRETO de Anubis" → "EL SECRETO DE ANUBIS" or "ANUBIS Y SU SECRETO".
+  * BAD examples: "SECRETO" (single word, no teaser), "NADIE LO SABE" (cliché), "INCREÍBLE" (generic).
+  * AVOID these overused clichés entirely: "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR", "INCREÍBLE", "JAMÁS LO CREERÁS".
 
 Return ONLY the JSON. No markdown, no explanation."""
         )).replace("```json", "").replace("```", "").strip()
@@ -2221,7 +2319,7 @@ Return ONLY the JSON. No markdown, no explanation."""
         }
 
         def _validate_overlay(candidate: str) -> bool:
-            """Reject if any word of `candidate` does not match the title/topic vocabulary."""
+            """Reject if too short, banned, or any content word is hallucinated."""
             if not candidate:
                 return False
             if candidate in BANNED_OVERLAYS:
@@ -2229,11 +2327,12 @@ Return ONLY the JSON. No markdown, no explanation."""
             STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
                     "que", "por", "para", "con", "en", "a", "su", "sus", "lo"}
             words = [_norm(w) for w in re.findall(r"[A-Za-zÀ-ÿ]+", candidate)]
+            # Reject one-word overlays — clickbait needs a phrase.
+            if len(words) < 3:
+                return False
             content_words = [w for w in words if w not in STOP]
             if not content_words:
                 return False
-            # Every content word must match (substring match in either direction handles
-            # singular/plural and common conjugations like "colapsa" vs "colapsan").
             for w in content_words:
                 if not any(w == a or w in a or a in w for a in allowed_tokens):
                     return False
@@ -2258,28 +2357,32 @@ Return ONLY the JSON. No markdown, no explanation."""
                     "que", "por", "qué", "para", "con", "en", "a", "su", "sus", "lo"}
 
             # 1. Find UPPERCASE keyword (the title generator always puts 1-2 in caps) and
-            #    grab a small window around it.
+            #    grab a wider window around it for a proper teaser phrase (3-5 words).
             caps_idx = next(
                 (i for i, w in enumerate(tw)
                  if re.match(r"^[A-ZÁÉÍÓÚÜÑ]{4,}$", w)),
                 None,
             )
             if caps_idx is not None:
-                start = max(0, caps_idx - 1)
-                end = min(len(tw), caps_idx + 2)
+                start = max(0, caps_idx - 2)
+                end = min(len(tw), caps_idx + 4)
                 chunk = tw[start:end]
                 while chunk and chunk[0].lower() in STOP:
                     chunk = chunk[1:]
                 while chunk and chunk[-1].lower() in STOP:
                     chunk = chunk[:-1]
-                if chunk:
+                # Cap at 5 words to keep it readable on a thumbnail.
+                if len(chunk) > 5:
+                    chunk = chunk[:5]
+                # Need at least 3 words for a real teaser phrase.
+                if len(chunk) >= 3:
                     overlay_words = " ".join(chunk).upper()
 
-            # 2. No caps in title → take the first 2-3 meaningful words.
+            # 2. No usable caps window → take the first 4-5 meaningful words from the title.
             if not overlay_words:
                 meaningful = [w for w in tw if w.lower() not in STOP and len(w) > 2]
-                if meaningful:
-                    overlay_words = " ".join(meaningful[:3]).upper()
+                if len(meaningful) >= 3:
+                    overlay_words = " ".join(meaningful[:5]).upper()
 
             if overlay_words:
                 warning(f"Thumbnail: derived overlay from title: {overlay_words}")
@@ -2291,8 +2394,8 @@ Return ONLY the JSON. No markdown, no explanation."""
             topic_words = [
                 w for w in re.findall(r"[A-Za-zÀ-ÿ]+", self.subject or "")
                 if w.lower() not in STOP and len(w) > 3
-            ][:3]
-            overlay_words = " ".join(topic_words).upper() if topic_words else "DESCÚBRELO"
+            ][:5]
+            overlay_words = " ".join(topic_words).upper() if topic_words else "DESCUBRE LA VERDAD"
             warning(f"Thumbnail: using topic-derived overlay text: {overlay_words}")
 
         # Step 2: render the background image (Leonardo first, Pollinations fallback).
@@ -2328,16 +2431,23 @@ Return ONLY the JSON. No markdown, no explanation."""
                     fill=(int(20 + 80 * t), int(10 + 30 * t), int(60 + 90 * t)),
                 )
 
-        # Step 3: darken bottom 45% so overlay text reads well.
-        veil = Image.new("RGBA", (THUMB_W, THUMB_H), (0, 0, 0, 0))
-        vd = ImageDraw.Draw(veil)
-        veil_start = int(THUMB_H * 0.55)
-        for y in range(veil_start, THUMB_H):
-            alpha = int(190 * (y - veil_start) / (THUMB_H - veil_start))
-            vd.line([(0, y), (THUMB_W, y)], fill=(0, 0, 0, alpha))
+        # Step 3: darken the bottom-LEFT corner so the overlay reads well there.
+        # Combine a vertical "bottom darker" gradient with a horizontal "left darker" one,
+        # giving a corner-vignette feel that protects the right-side image content.
+        import numpy as np
+        veil_start_y = int(THUMB_H * 0.45)
+        veil_end_x = int(THUMB_W * 0.70)
+        ys = np.arange(THUMB_H).reshape(-1, 1).astype(np.float32)
+        xs = np.arange(THUMB_W).reshape(1, -1).astype(np.float32)
+        v_factor = np.clip((ys - veil_start_y) / max(1, THUMB_H - veil_start_y), 0.0, 1.0)
+        h_factor = np.clip(1.0 - (xs / max(1, veil_end_x)), 0.0, 1.0)
+        alpha_field = (210.0 * v_factor * h_factor).astype(np.uint8)
+        veil_arr = np.zeros((THUMB_H, THUMB_W, 4), dtype=np.uint8)
+        veil_arr[..., 3] = alpha_field
+        veil = Image.fromarray(veil_arr, "RGBA")
         bg = Image.alpha_composite(bg.convert("RGBA"), veil).convert("RGB")
 
-        # Step 4: stamp overlay text (Impact font preferred for clickbait look).
+        # Step 4: stamp overlay text in the BOTTOM-LEFT, left-aligned (Impact font for clickbait look).
         if overlay_words:
             font_path = None
             for cand in (
@@ -2349,19 +2459,32 @@ Return ONLY the JSON. No markdown, no explanation."""
                     font_path = cand
                     break
 
-            words_list = overlay_words.split()
-            if len(words_list) <= 2:
-                lines = [overlay_words]
-            else:
-                mid = (len(words_list) + 1) // 2
-                lines = [" ".join(words_list[:mid]), " ".join(words_list[mid:])]
+            # Wrap the overlay so each line fits within ~55% of the width (left half + a bit).
+            margin_left = 60
+            margin_right = THUMB_W - int(THUMB_W * 0.42)  # right edge of text area
+            max_w = margin_right - margin_left
 
-            draw = ImageDraw.Draw(bg)
-            margin = 80
-            max_w = THUMB_W - 2 * margin
-            font_size = 150
+            def _wrap(text: str, fnt) -> list:
+                """Greedy word-wrap so no line exceeds max_w pixels."""
+                wrapped, current = [], []
+                tmp_draw = ImageDraw.Draw(bg)
+                for w in text.split():
+                    trial = " ".join(current + [w])
+                    if tmp_draw.textbbox((0, 0), trial, font=fnt)[2] <= max_w:
+                        current.append(w)
+                    else:
+                        if current:
+                            wrapped.append(" ".join(current))
+                        current = [w]
+                if current:
+                    wrapped.append(" ".join(current))
+                return wrapped
+
+            # Pick the largest font size where the wrapped text fits in ≤3 lines.
+            font_size = 130
             font = None
-            while font_size >= 60:
+            lines = [overlay_words]
+            while font_size >= 50:
                 try:
                     font = (
                         ImageFont.truetype(font_path, font_size)
@@ -2369,22 +2492,19 @@ Return ONLY the JSON. No markdown, no explanation."""
                     )
                 except Exception:
                     font = ImageFont.load_default()
-                widest = max(
-                    draw.textbbox((0, 0), L, font=font)[2] for L in lines
-                )
-                if widest <= max_w:
+                lines = _wrap(overlay_words, font)
+                if len(lines) <= 3:
                     break
-                font_size -= 10
+                font_size -= 8
 
-            line_h = font_size + 10
+            draw = ImageDraw.Draw(bg)
+            line_h = int(font_size * 1.05)
             total_h = line_h * len(lines)
-            y = THUMB_H - total_h - 50
+            margin_bottom = 50
+            y = THUMB_H - total_h - margin_bottom
             for line in lines:
-                bbox = draw.textbbox((0, 0), line, font=font)
-                w = bbox[2] - bbox[0]
-                x = (THUMB_W - w) // 2
                 draw.text(
-                    (x, y), line, font=font,
+                    (margin_left, y), line, font=font,
                     fill=(255, 255, 255),
                     stroke_width=10, stroke_fill=(0, 0, 0),
                 )
@@ -2643,58 +2763,127 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         self.images.append(image_path)
         return image_path
 
-    @staticmethod
-    def _clean_llm_script(text: str) -> str:
-        """Clean raw LLM response: remove JSON artifacts, API metadata, markdown."""
+    # Patterns that mean "this line is metadata / API junk / not narration".
+    # If a line matches ANY of these, it gets dropped before TTS.
+    _GARBAGE_LINE_PATTERNS = [
+        re.compile(r"https?://", re.IGNORECASE),
+        re.compile(r"\bwww\.[a-z]", re.IGNORECASE),
+        re.compile(r"\b[\w.-]+\.(?:com|org|net|io|ai|gov|edu|co|es)\b", re.IGNORECASE),
+        re.compile(r"^\s*[\{\}\[\]<>]+\s*$"),
+        re.compile(r"^\s*[#/!*=\-]{3,}\s*$"),
+        re.compile(r"^\s*```"),
+        re.compile(r"^\s*<[/!?]?[a-z][^>]*>\s*$", re.IGNORECASE),
+        re.compile(r"\b(?:guion[\s-]?bajo|barra[\s-]?baja|underscore|forward[\s-]?slash|backslash|asterisk|asterisco)\b", re.IGNORECASE),
+        re.compile(r"\b(?:generating|generando|loading|cargando)\s+(?:script|content|response|el\s+\w+)\b", re.IGNORECASE),
+        re.compile(r"\b(?:please\s+(?:try\s+again|retry|wait)|por\s+favor\s+(?:intenta|reintente|espere))\b", re.IGNORECASE),
+        re.compile(r"\b(?:api[\s_-]?(?:key|token|endpoint|response|error|call))\b", re.IGNORECASE),
+        re.compile(r"\b(?:status[\s_-]?code|error[\s_-]?code|http\s*\d{3})\b", re.IGNORECASE),
+        re.compile(r"\b(?:404|429|500|502|503)\b\s+(?:not\s+found|error|too\s+many|internal|bad\s+gateway|unavailable)", re.IGNORECASE),
+        re.compile(r"\b(?:role|content|model|message|completion|payload|tokens?|prompt)\s*[:=]\s*[\"']?[A-Za-z]"),
+        re.compile(r"\{\s*[\"']\w+[\"']\s*:"),
+        re.compile(r"^\s*\w+_\w+(?:_\w+)*\s*$"),
+        re.compile(r"^\s*[A-Z_]{4,}(?:\s+[A-Z_]{4,}){0,2}\s*$"),
+        re.compile(r"\bI\s+(?:am|will|cannot|can'?t)\s+(?:generate|provide|continue|create|write)\b", re.IGNORECASE),
+        re.compile(r"\b(?:no\s+puedo|lo\s+siento,)\s+(?:generar|continuar|crear|proveer)\b", re.IGNORECASE),
+    ]
+
+    @classmethod
+    def _filter_garbage_lines(cls, text: str) -> tuple:
+        """Drop lines that look like metadata / URLs / system messages. Returns (clean_text, dropped_count)."""
+        kept, dropped = [], 0
+        for line in text.split("\n"):
+            if line.strip() and any(p.search(line) for p in cls._GARBAGE_LINE_PATTERNS):
+                dropped += 1
+                continue
+            kept.append(line)
+        return "\n".join(kept), dropped
+
+    @classmethod
+    def _looks_like_garbage(cls, text: str) -> bool:
+        """Heuristic: is the LLM response dominated by metadata / non-narration?"""
+        if not text or len(text.split()) < 30:
+            return True
+        # If >25% of non-empty lines are garbage, the output is unusable.
+        lines = [ln for ln in text.split("\n") if ln.strip()]
+        if not lines:
+            return True
+        bad = sum(1 for ln in lines if any(p.search(ln) for p in cls._GARBAGE_LINE_PATTERNS))
+        return bad / len(lines) > 0.25
+
+    @classmethod
+    def _clean_llm_script(cls, text: str) -> str:
+        """Clean raw LLM response: strip JSON wrappers, markdown, preambles, garbage lines."""
         if not text:
             return ""
-        # Remove full JSON wrapper: {"role":"assistant","content":"..."}
-        # Match from start: optional { "role" : "..." , "content" : "  up to first real content
+        # Strip JSON wrapper: {"role":"assistant","content":"..."}
         text = re.sub(
             r'^\s*\{?\s*"?role"?\s*:\s*"?\w+"?\s*,?\s*"?content"?\s*:\s*"?',
             '', text
         )
-        # Remove trailing JSON closure: " } at the end
         text = re.sub(r'"\s*\}?\s*$', '', text)
-        # Remove code blocks
+        # Strip code blocks (and their content) and inline backticks.
         text = re.sub(r'```[\s\S]*?```', '', text)
-        # Remove asterisks and markdown
+        text = re.sub(r'`+', '', text)
+        # Strip markdown emphasis/headings.
         text = re.sub(r"\*+", "", text)
         text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-        # Remove LLM preamble like "Here's the script:" or "Aquí tienes:"
-        text = re.sub(r'^(Here\'s|Here is|Aquí (está|tienes|te presento)|A continuación)[^\n]*\n', '', text, flags=re.IGNORECASE)
-        # Remove trailing notes
-        text = re.sub(r'\n\s*(Note:|Nota:|---|\*\*\*|This script|Este guion)[^\n]*$', '', text, flags=re.IGNORECASE)
+        # Strip LLM preamble lines.
+        text = re.sub(
+            r'^\s*(Here\'s|Here is|Sure[!,.]?\s*here|Of course|Aquí (está|tienes|te presento)|'
+            r'¡?(Por supuesto|Claro|Desde luego|Con gusto)|A continuación)[^\n]*\n',
+            '', text, flags=re.IGNORECASE
+        )
+        # Strip trailing notes.
+        text = re.sub(
+            r'\n\s*(Note:|Nota:|---|\*\*\*|This script|Este guion|Espero que|I hope this)[^\n]*$',
+            '', text, flags=re.IGNORECASE
+        )
+        # Final pass: drop any line that looks like metadata / URL / API junk.
+        text, dropped = cls._filter_garbage_lines(text)
+        if dropped > 0:
+            warning(f"   [Clean] dropped {dropped} garbage line(s) from LLM output.")
         return text.strip()
 
-    @staticmethod
-    def _clean_script_for_tts(script: str) -> str:
-        """Clean LLM output so only spoken narration remains."""
+    @classmethod
+    def _clean_script_for_tts(cls, script: str) -> str:
+        """Last-line-of-defense cleaner: only spoken narration survives."""
         text = script
 
-        # Remove section markers (English and Spanish)
-        text = re.sub(r'\[(INTRO|INTRODUCCIÓN|CLOSING|CIERRE)\]', '', text)
-        text = re.sub(r'\[(SECTION|SECCIÓN)\s*\d+:[^\]]*\]', '', text)
+        # Strip section markers in any language / case.
+        text = re.sub(r'\[(INTRO|INTRODUCCIÓN|INTRODUCCION|CLOSING|CIERRE)\]', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\[(SECTION|SECCIÓN|SECCION)\s*\d+\s*:?[^\]]*\]', '', text, flags=re.IGNORECASE)
 
-        # Remove single-line JSON artifacts (NOT greedy across lines)
+        # Some LLMs write the markers WITHOUT brackets — strip those too.
+        text = re.sub(r'^\s*(INTRO|INTRODUCCIÓN|INTRODUCCION|CLOSING|CIERRE)\s*:?\s*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
+        text = re.sub(r'^\s*(SECTION|SECCIÓN|SECCION)\s*\d+\s*:[^\n]*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
+
+        # Strip JSON / code artifacts.
         text = re.sub(r'"role"\s*:\s*"[^"]*"', '', text)
         text = re.sub(r'"content"\s*:\s*"', '', text)
-        text = re.sub(r'```[^`]*```', '', text)
+        text = re.sub(r'```[\s\S]*?```', '', text)
+        text = re.sub(r'`+', '', text)
 
-        # Remove any URLs
+        # Strip URLs / bare domains so the TTS never reads one out loud.
         text = re.sub(r'https?://\S+', '', text)
-        text = re.sub(r'www\.\S+', '', text)
+        text = re.sub(r'\bwww\.\S+', '', text)
+        text = re.sub(r'\b[\w.-]+\.(?:com|org|net|io|ai|gov|edu|co|es|app|dev|tv)(?:/\S*)?', '', text, flags=re.IGNORECASE)
 
-        # Remove markdown artifacts
-        text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)  # [text](url) → text
+        # Strip markdown artifacts.
+        text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)
         text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
         text = re.sub(r'\*+', '', text)
 
-        # Remove stray JSON braces and quotes at start/end
+        # Strip stray JSON braces and quotes at start/end.
         text = re.sub(r'^\s*[\{\}]\s*', '', text)
         text = re.sub(r'\s*[\{\}]\s*$', '', text)
 
-        # Collapse whitespace
+        # Drop garbage lines (URLs, identifiers, "guion bajo ...", error messages).
+        text, _ = cls._filter_garbage_lines(text)
+
+        # Drop snake_case / kebab identifiers that survived (`user_role`, `api-key`).
+        text = re.sub(r'\b\w+(?:[_-]\w+){1,}\b', '', text)
+
+        # Collapse whitespace.
         text = re.sub(r'\n{3,}', '\n\n', text)
         text = re.sub(r' {2,}', ' ', text)
 
