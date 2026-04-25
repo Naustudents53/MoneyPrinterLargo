@@ -621,7 +621,9 @@ CRITICAL RULES:
             sections_text += f"\nSECTION {i+1}: \"{sec}\"\n"
 
         if image_mode == "photos":
-            prompt = f"""Generate exactly {n_prompts} short SEARCH QUERIES to find REAL historical/documentary photos on Wikimedia Commons and stock sites for a video about: {self.subject}
+            prompt = f"""Generate exactly {n_prompts} short SEARCH QUERIES to find REAL historical/documentary/educational images for a video about: {self.subject}
+
+These queries will be searched against Wikimedia Commons, Met Museum (artworks, sculptures, artifacts), and Library of Congress (historical photos, prints, maps). Tailor the wording for those archives.
 
 The script has been divided into {n_prompts} sections. Each query must match its section:
 {sections_text}
@@ -1095,6 +1097,126 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 continue
         raise RuntimeError("Wikimedia: failed to download any candidate")
 
+    def _try_met_museum(self, prompt: str) -> bytes:
+        """
+        Met Museum Open Access (paintings, sculptures, artifacts, prints).
+        No API key required. Best for art, statues, classical artifacts.
+        Docs: https://metmuseum.github.io/
+        """
+        import urllib.parse
+        import random
+
+        query = prompt.strip()
+        if len(query) > 60 or any(w in query.lower() for w in ("cinematic", "8k", "lighting", "photorealistic")):
+            query = self._extract_search_query(prompt)
+
+        print(colored(f"    [Met Museum] Searching: {query[:60]}...", "cyan"), flush=True)
+        headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
+
+        search_url = (
+            "https://collectionapi.metmuseum.org/public/collection/v1/search"
+            f"?q={urllib.parse.quote(query)}&hasImages=true"
+        )
+        resp = requests.get(search_url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        obj_ids = (resp.json().get("objectIDs") or [])[:30]
+        if not obj_ids:
+            raise RuntimeError("Met Museum: no results")
+
+        random.shuffle(obj_ids)
+        relevance_tokens = self._query_tokens(query, self.subject)
+
+        for obj_id in obj_ids[:8]:
+            try:
+                obj_resp = requests.get(
+                    f"https://collectionapi.metmuseum.org/public/collection/v1/objects/{obj_id}",
+                    headers=headers, timeout=20,
+                )
+                obj_resp.raise_for_status()
+                obj = obj_resp.json()
+                img_url = obj.get("primaryImage") or ""
+                if not img_url or img_url in self._used_stock_urls:
+                    continue
+                # Relevance check against the object's metadata.
+                metadata_blob = " ".join(
+                    str(obj.get(k, "")) for k in
+                    ("title", "culture", "period", "objectName", "department",
+                     "classification", "artistDisplayName", "country", "region")
+                )
+                if relevance_tokens:
+                    blob_tokens = self._query_tokens(metadata_blob)
+                    if not (relevance_tokens & blob_tokens):
+                        continue
+                img_resp = requests.get(img_url, headers=headers, timeout=60)
+                if img_resp.status_code == 200 and len(img_resp.content) > 10000:
+                    self._used_stock_urls.add(img_url)
+                    print(colored("OK", "green"))
+                    return img_resp.content
+            except Exception:
+                continue
+        raise RuntimeError("Met Museum: no usable image found")
+
+    def _try_loc(self, prompt: str) -> bytes:
+        """
+        Library of Congress photo collection (historical photos, prints, maps,
+        manuscripts, posters). No API key required.
+        Docs: https://www.loc.gov/apis/json-and-yaml/
+        """
+        import urllib.parse
+        import random
+
+        query = prompt.strip()
+        if len(query) > 60 or any(w in query.lower() for w in ("cinematic", "8k", "lighting", "photorealistic")):
+            query = self._extract_search_query(prompt)
+
+        print(colored(f"    [LoC] Searching: {query[:60]}...", "cyan"), flush=True)
+        headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
+        search_url = (
+            f"https://www.loc.gov/photos/?q={urllib.parse.quote(query)}&fo=json&c=25"
+        )
+        resp = requests.get(search_url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        results = resp.json().get("results") or []
+        if not results:
+            raise RuntimeError("LoC: no results")
+
+        relevance_tokens = self._query_tokens(query, self.subject)
+        candidates = []
+        for r in results:
+            urls = r.get("image_url") or []
+            if not urls:
+                continue
+            # Largest version is typically the last entry.
+            img_url = urls[-1]
+            if not img_url or img_url in self._used_stock_urls:
+                continue
+            title = r.get("title") or ""
+            descr = r.get("description") or ""
+            if isinstance(descr, list):
+                descr = " ".join(str(d) for d in descr)
+            subj = r.get("subject") or []
+            subj_text = " ".join(subj) if isinstance(subj, list) else str(subj)
+            if relevance_tokens:
+                blob_tokens = self._query_tokens(title, str(descr), subj_text)
+                if not (relevance_tokens & blob_tokens):
+                    continue
+            candidates.append(img_url)
+
+        if not candidates:
+            raise RuntimeError("LoC: no relevant images")
+
+        random.shuffle(candidates)
+        for img_url in candidates[:5]:
+            try:
+                img_resp = requests.get(img_url, headers=headers, timeout=60)
+                if img_resp.status_code == 200 and len(img_resp.content) > 10000:
+                    self._used_stock_urls.add(img_url)
+                    print(colored("OK", "green"))
+                    return img_resp.content
+            except Exception:
+                continue
+        raise RuntimeError("LoC: failed to download any candidate")
+
     def _try_picsum_stock(self, prompt: str) -> bytes:
         """Fallback: HD stock photo from Picsum (fast, always works)."""
         print(colored(f"    [Picsum HD] Getting image...", "yellow"), flush=True)
@@ -1184,9 +1306,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         if image_mode == "photos":
             print(colored(f"\n  [Images] Fetching {len(prompts)} real photos...", "blue"))
             providers = [
-                # Tier 1: historical / documentary (best for real events, people, places)
+                # Tier 1: curated, attribution-friendly historical/educational sources
+                # (Wikipedia-style — factual, on-topic).
                 ("Wikimedia Commons", self._try_wikimedia, "stock"),
-                # Tier 2: modern stock photos
+                ("Met Museum", self._try_met_museum, "stock"),
+                ("Library of Congress", self._try_loc, "stock"),
+                # Tier 2: modern stock (filtered by relevance) — useful for non-historical topics
                 ("Pexels", self._try_pexels, "stock"),
                 ("Pixabay", self._try_pixabay, "stock"),
                 # Tier 3: AI fallback when no real photo matches the topic
