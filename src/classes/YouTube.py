@@ -1989,11 +1989,12 @@ REGLAS DE ESTILO:
         # Strip any quotes the LLM might add (regular, curly, single)
         title = re.sub(r'^[\"\'\u201c\u201d\u2018\u2019]+|[\"\'\u201c\u201d\u2018\u2019]+$', '', title.strip()).strip()
 
+        # Always strip hashtags from long-video titles \u2014 the LLM ignores the rule sometimes.
+        title = re.sub(r"#\w+", "", title)
+        title = re.sub(r"\s{2,}", " ", title).strip(" -\u2013\u2014:|")
+
         if len(title) > 100:
-            if "#" in title:
-                title = title[:title.index("#")].strip()
-            if len(title) > 100:
-                title = title[:100]
+            title = title[:100]
 
         description = self.generate_response(
             f"""Genera una descripción de YouTube para un video largo con este guion:
@@ -2070,6 +2071,29 @@ Return ONLY the JSON. No markdown, no explanation."""
                 f"intense expression, golden rim lighting, dark moody background, "
                 f"high contrast, ultra-detailed, no text"
             )
+
+        # Retry: if the LLM forgot the overlay words, ask for them on their own.
+        if not overlay_words:
+            warning("Thumbnail: LLM returned no overlay words — retrying with a focused prompt.")
+            retry = str(self.generate_response(
+                f"Para una miniatura de YouTube sobre \"{self.subject}\", "
+                f"dame 2 a 4 palabras CORTAS, IMPACTANTES y en MAYÚSCULAS en {self.language} "
+                f"para superponer (estilo clickbait moderado, palabras como SECRETO, NUNCA, JAMÁS, "
+                f"NADIE, OCULTO, VERDAD, IMPOSIBLE, REAL, PROHIBIDO). "
+                f"Devuelve SOLO las palabras, sin comillas, sin explicación, sin signos de puntuación."
+            )).strip()
+            retry = re.sub(r"[\"'“”‘’.!?¡¿]", "", retry).strip()
+            if retry and len(retry.split()) <= 5:
+                overlay_words = retry.upper()
+
+        # Hard fallback so the thumbnail is never wordless.
+        if not overlay_words:
+            import random as _rand
+            overlay_words = _rand.choice([
+                "EL SECRETO", "NUNCA VISTO", "NADIE LO SABE",
+                "LA VERDAD", "JAMÁS REVELADO", "TE VA A IMPACTAR",
+            ])
+            warning(f"Thumbnail: using default overlay text: {overlay_words}")
 
         # Step 2: render the background image (Leonardo first, Pollinations fallback).
         bg_bytes = None
@@ -2688,6 +2712,47 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         return video_path
 
+    def _find_thumbnail_input(self, driver, wait):
+        """
+        Locate YouTube Studio's thumbnail file input across UI variants.
+
+        Strategy (most reliable first):
+          1. Find every `input[type=file]` and pick the one whose `accept` attribute
+             names an image type — that filters out the video upload input itself.
+          2. Fall back to known CSS selectors for older YT Studio versions.
+        Returns the WebElement or None.
+        """
+        # Give YT Studio a moment to finish rendering the Details panel.
+        time.sleep(2)
+
+        try:
+            file_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
+        except Exception:
+            file_inputs = []
+
+        for inp in file_inputs:
+            try:
+                accept = (inp.get_attribute("accept") or "").lower()
+            except Exception:
+                accept = ""
+            if "image" in accept and "video" not in accept:
+                return inp
+
+        # Legacy / variant-specific selectors as fallback.
+        for sel in (
+            "ytcp-thumbnails-compact-editor input[type='file']",
+            "ytcp-thumbnails-compact-editor-uploader input[type='file']",
+            "ytcp-thumbnail-uploader input[type='file']",
+            "input#file-loader[accept*='image']",
+        ):
+            try:
+                el = driver.find_element(By.CSS_SELECTOR, sel)
+                if el is not None:
+                    return el
+            except Exception:
+                continue
+        return None
+
     def _ensure_browser(self) -> None:
         """
         Ensures the Firefox browser is running and connected.
@@ -2870,15 +2935,22 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 if verbose:
                     info(f"\t=> Uploading thumbnail: {thumb_path}")
                 try:
-                    thumb_input = wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, YOUTUBE_THUMBNAIL_INPUT_CSS))
+                    thumb_input = self._find_thumbnail_input(driver, wait)
+                    if thumb_input is None:
+                        raise RuntimeError("no thumbnail file input found on Details page")
+                    # Make hidden inputs visible-ish so send_keys works on every YT Studio variant.
+                    driver.execute_script(
+                        "arguments[0].style.display='block';"
+                        "arguments[0].style.visibility='visible';"
+                        "arguments[0].style.opacity='1';",
+                        thumb_input,
                     )
                     thumb_input.send_keys(os.path.abspath(thumb_path))
                     time.sleep(3)
                     if verbose:
                         info("\t=> Thumbnail uploaded")
                 except Exception as e:
-                    warning(f"Could not upload thumbnail: {e} (continuing without it)")
+                    warning(f"Could not upload thumbnail: {str(e)[:200]} (continuing without it)")
 
             # Step 7: Click Next 3 times (Details → Video elements → Checks → Visibility)
             for step_num in range(3):
