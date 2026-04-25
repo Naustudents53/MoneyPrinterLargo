@@ -2031,9 +2031,15 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
         info("Generating thumbnail...")
         self.thumbnail_path = ""
 
+        video_title = (self.metadata or {}).get("title", "") if hasattr(self, "metadata") else ""
+
         # Step 1: ask LLM for the visual concept + overlay words.
+        # Overlay must be SPECIFIC to the video's topic/title — no generic catchphrases.
         llm_raw = str(self.generate_response(
-            f"""Design a YouTube thumbnail for a video about: {self.subject}
+            f"""Design a YouTube thumbnail for this video.
+
+VIDEO TITLE: {video_title or "(see topic)"}
+TOPIC: {self.subject}
 
 Return ONLY a JSON object with two fields:
 
@@ -2044,7 +2050,11 @@ Return ONLY a JSON object with two fields:
   * End the prompt with: "no text, no letters, no logos, no watermark".
   * FORBIDDEN: generic phrases like "person looking", "mysterious figure", "abstract concept", "modern man" — be SPECIFIC to the topic.
 
-- "words": 2 to 4 SHORT punchy words in {self.language}, ALL UPPERCASE, for an overlay. Pick high-impact words like SECRETO / NUNCA / JAMÁS / VERDAD / OCULTO / NADIE / IMPOSIBLE. Examples: "EL SECRETO", "NADIE LO SABE", "JAMÁS LO CREERÁS".
+- "words": 2 to 4 SHORT punchy words in {self.language}, ALL UPPERCASE, for the thumbnail overlay. CRITICAL RULES:
+  * MUST be tied to THIS video's topic or title — name a key concept, person, place, era, or object from the topic. NOT a generic catchphrase.
+  * Treat it like a teaser headline that completes or echoes the title's hook (e.g., for "El SECRETO de Anubis": good options are "DIOS DE LA MUERTE" or "VERÁS POR QUÉ"; BAD: "NADIE LO SABE", "EL SECRETO" alone).
+  * AVOID these clichés: "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR", "INCREÍBLE", "JAMÁS LO CREERÁS". They are banned because they are overused.
+  * Prefer concrete nouns from the topic over generic adjectives.
 
 Return ONLY the JSON. No markdown, no explanation."""
         )).replace("```json", "").replace("```", "").strip()
@@ -2065,6 +2075,15 @@ Return ONLY the JSON. No markdown, no explanation."""
                 except Exception:
                     pass
 
+        # Reject the banned clichés even if the LLM ignored the rule.
+        BANNED_OVERLAYS = {
+            "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR",
+            "INCREÍBLE", "INCREIBLE", "JAMÁS LO CREERÁS", "JAMAS LO CREERAS",
+        }
+        if overlay_words in BANNED_OVERLAYS:
+            warning(f"Thumbnail: LLM returned banned cliché '{overlay_words}', will retry.")
+            overlay_words = ""
+
         if not visual_prompt:
             visual_prompt = (
                 f"Dramatic cinematic close-up related to {self.subject}, "
@@ -2072,28 +2091,35 @@ Return ONLY the JSON. No markdown, no explanation."""
                 f"high contrast, ultra-detailed, no text"
             )
 
-        # Retry: if the LLM forgot the overlay words, ask for them on their own.
+        # Retry: if the LLM forgot the overlay words (or returned a banned cliché), ask anchored to the title.
         if not overlay_words:
-            warning("Thumbnail: LLM returned no overlay words — retrying with a focused prompt.")
+            warning("Thumbnail: retrying overlay words with title-anchored prompt.")
             retry = str(self.generate_response(
-                f"Para una miniatura de YouTube sobre \"{self.subject}\", "
-                f"dame 2 a 4 palabras CORTAS, IMPACTANTES y en MAYÚSCULAS en {self.language} "
-                f"para superponer (estilo clickbait moderado, palabras como SECRETO, NUNCA, JAMÁS, "
-                f"NADIE, OCULTO, VERDAD, IMPOSIBLE, REAL, PROHIBIDO). "
-                f"Devuelve SOLO las palabras, sin comillas, sin explicación, sin signos de puntuación."
+                f"Genera 2 a 4 palabras CORTAS en {self.language}, en MAYÚSCULAS, para superponer en la miniatura "
+                f"de un video de YouTube titulado: \"{video_title or self.subject}\".\n"
+                f"REGLAS:\n"
+                f"- Deben referirse a un concepto, persona, lugar u objeto CONCRETO del tema.\n"
+                f"- PROHIBIDO usar: NADIE LO SABE, NUNCA LO SABE, TE VA A IMPACTAR, INCREÍBLE, JAMÁS LO CREERÁS.\n"
+                f"- Sin comillas, sin signos de puntuación, sin explicación.\n"
+                f"Devuelve SOLO las palabras."
             )).strip()
             retry = re.sub(r"[\"'“”‘’.!?¡¿]", "", retry).strip()
-            if retry and len(retry.split()) <= 5:
+            if retry and len(retry.split()) <= 5 and retry.upper() not in BANNED_OVERLAYS:
                 overlay_words = retry.upper()
 
-        # Hard fallback so the thumbnail is never wordless.
+        # Last-resort fallback: extract the UPPERCASE keyword from the title (the moderate-clickbait
+        # title generation already puts 1-2 words in uppercase) and pair it with the topic.
+        if not overlay_words and video_title:
+            caps = re.findall(r"\b[A-ZÁÉÍÓÚÜÑ]{4,}\b", video_title)
+            if caps:
+                overlay_words = " ".join(caps[:2])
+                warning(f"Thumbnail: derived overlay from title caps: {overlay_words}")
+
+        # Absolute fallback so the thumbnail is never wordless: pull a few significant words from the topic.
         if not overlay_words:
-            import random as _rand
-            overlay_words = _rand.choice([
-                "EL SECRETO", "NUNCA VISTO", "NADIE LO SABE",
-                "LA VERDAD", "JAMÁS REVELADO", "TE VA A IMPACTAR",
-            ])
-            warning(f"Thumbnail: using default overlay text: {overlay_words}")
+            topic_words = [w for w in re.findall(r"[A-Za-zÀ-ÿ]+", self.subject or "") if len(w) > 3][:3]
+            overlay_words = " ".join(topic_words).upper() if topic_words else "DESCÚBRELO"
+            warning(f"Thumbnail: using topic-derived overlay text: {overlay_words}")
 
         # Step 2: render the background image (Leonardo first, Pollinations fallback).
         bg_bytes = None
