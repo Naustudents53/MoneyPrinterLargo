@@ -142,23 +142,61 @@ def compose(bg_bytes: bytes, overlay: str, out_path: str) -> str:
     return out_path
 
 
+def build_visual_prompt(topic: str) -> str:
+    """Ask the project's LLM to write an English visual prompt anchored to `topic`.
+    Falls back to a generic template if the LLM is unreachable."""
+    try:
+        # Make the project's LLM module importable when running from scripts/.
+        sys.path.insert(0, os.path.join(ROOT_DIR, "src"))
+        from llm_provider import generate_text
+        ask = (
+            f"Write a SINGLE English image-generation prompt for a YouTube thumbnail about: {topic}\n\n"
+            f"REQUIREMENTS:\n"
+            f"- 40-70 words.\n"
+            f"- Describe a SPECIFIC dramatic scene tied to the topic. Name the actual SPECIFIC people, "
+            f"places, objects, era, clothing, architecture or symbols from the topic. Use proper nouns "
+            f"when relevant. The image must be visually unmistakable as the topic.\n"
+            f"- Build ONE single dramatic scene, not a list of unrelated elements.\n"
+            f"- Include: dramatic side lighting, high contrast, shallow depth of field, "
+            f"cinematic composition, photorealistic.\n"
+            f"- End the prompt with: no text, no letters, no logos, no watermark.\n"
+            f"- Return ONLY the prompt itself. No quotes, no preamble, no explanation."
+        )
+        result = generate_text(ask).strip().strip('"\'`')
+        # Drop any leading "Here is..." / "Sure!..." preamble.
+        result = re.sub(
+            r'^\s*(Here(?:\'s| is)|Sure[!,.]?\s*here|Of course|Aquí (está|tienes))[^\n]*\n+',
+            '', result, flags=re.IGNORECASE
+        )
+        words = len(result.split())
+        if 25 < words < 130:
+            print(f"[LLM] Built visual prompt ({words} words).", flush=True)
+            return result
+        print(f"[LLM] Visual prompt rejected (got {words} words); using template fallback.",
+              file=sys.stderr)
+    except Exception as e:
+        print(f"[LLM] Visual prompt failed ({type(e).__name__}: {str(e)[:120]}); using template.",
+              file=sys.stderr)
+
+    # Template fallback — embeds the topic literally so at least it's anchored.
+    return (
+        f"Cinematic dramatic scene about: {topic}. "
+        f"Photorealistic, high contrast side lighting, atmospheric haze, intense composition, "
+        f"ultra-detailed, shallow depth of field, 8K, "
+        f"no text, no letters, no logos, no watermark"
+    )
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--topic", required=True, help="Topic of the video (drives the visual prompt).")
     ap.add_argument("--text", required=True, help="Overlay text (will be uppercased).")
-    ap.add_argument("--visual", default="", help="Optional explicit visual prompt (English).")
+    ap.add_argument("--visual", default="", help="Optional explicit visual prompt (English). "
+                                                  "If omitted, the LLM writes one from --topic.")
     ap.add_argument("--out", default="", help="Output PNG path. Defaults to project root.")
     args = ap.parse_args()
 
-    if not args.visual:
-        # Build a strong topic-anchored visual prompt.
-        args.visual = (
-            f"Massive ancient Roman ruins at dusk, crumbling colosseum and broken marble columns "
-            f"covered in moss, dramatic stormy sky with golden sunset rays piercing dark clouds, "
-            f"fallen statues, abandoned forum, empty amphitheater, sense of grandeur lost, "
-            f"atmospheric haze, cinematic wide shot, photorealistic, ultra-detailed, 8K, "
-            f"no text, no letters, no logos, no watermark"
-        )
+    visual = args.visual.strip() or build_visual_prompt(args.topic)
 
     out_path = args.out or os.path.join(
         ROOT_DIR, f"thumb_{re.sub(r'[^a-z0-9]+', '_', args.text.lower())[:40]}_{uuid4().hex[:6]}.png"
@@ -169,7 +207,7 @@ def main():
         print("ERROR: leonardo_api_key not set in config.json", file=sys.stderr)
         sys.exit(1)
 
-    bg_bytes = call_leonardo(args.visual, api_key)
+    bg_bytes = call_leonardo(visual, api_key)
     final = compose(bg_bytes, args.text, out_path)
     print(f"\nSaved thumbnail: {final}")
 
