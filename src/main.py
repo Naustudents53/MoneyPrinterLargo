@@ -236,8 +236,11 @@ def main():
                                 youtube.upload_video()
                     elif user_input == 2:
                         # Upload Long Video
+                        custom_topic = question(
+                            "Enter a custom topic (or leave empty to auto-generate): "
+                        ).strip()
                         info("Starting Long Video Generation (5-10 min)...")
-                        long_path = youtube.generate_long_video(tts)
+                        long_path = youtube.generate_long_video(tts, custom_topic=custom_topic)
                         if not long_path:
                             warning("Long video generation aborted — nothing to upload.")
                         else:

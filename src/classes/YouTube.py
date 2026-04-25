@@ -2644,13 +2644,14 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         success(f'Wrote long video to "{combined_path}"')
         return combined_path
 
-    def generate_long_video(self, tts_instance: TTS) -> str:
+    def generate_long_video(self, tts_instance: TTS, custom_topic: str = "") -> str:
         """
         Full pipeline for generating a long-form YouTube video (5-10 minutes).
         16:9 landscape, documentary style, no subtitles.
 
         Args:
             tts_instance (TTS): Instance of TTS Class.
+            custom_topic (str): Optional user-provided topic. If given, skips auto topic generation.
 
         Returns:
             path (str): Path to the generated MP4 file.
@@ -2659,9 +2660,13 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         info("  LONG VIDEO GENERATION PIPELINE")
         info("=" * 50)
 
-        # Step 1: Generate Topic
+        # Step 1: Generate Topic (or use the user-provided one)
         info("\n[1/7] Generating topic...")
-        self.generate_topic()
+        if custom_topic and custom_topic.strip():
+            self.subject = custom_topic.strip()
+            info(f" => Using custom topic: {self.subject}")
+        else:
+            self.generate_topic()
         if not self.subject or not self.subject.strip():
             error(
                 "Aborting long video: no unique topic available. "
