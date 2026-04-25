@@ -2185,6 +2185,15 @@ Consecuencias, legado o impacto del tema en la actualidad (10-14 oraciones, 250-
 [CLOSING]
 Conclusión memorable (5-7 oraciones, 120-180 palabras). Termina con una reflexión que perdure.
 
+[OUTRO]
+Despedida cálida y llamado a la acción para los últimos segundos del video, cuando aparecen las pantallas finales de YouTube (suscribirse, video recomendado). Dura 3-5 oraciones (60-100 palabras).
+DEBE incluir, redactado de forma natural y orgánica:
+1. Agradecer al espectador por haber visto el video.
+2. Pedir que dé "me gusta" si le gustó.
+3. Pedir que se SUSCRIBA al canal y active la CAMPANITA para no perderse contenido similar.
+4. Una despedida cálida ("Hasta la próxima", "Hasta pronto", "Nos vemos en el siguiente video", o equivalente).
+NO uses bullets, NO suene robótico — escríbelo como si lo dijeras hablando, con calidez.
+
 REGLAS DE ESTILO:
 - Escribe como un narrador apasionado, NO como un libro de texto. Lenguaje vívido y sensorial.
 - Cada oración fluye naturalmente hacia la siguiente.
@@ -2238,7 +2247,7 @@ REGLAS DE ESTILO:
         def _ensure_marker(text: str, marker: str) -> str:
             """Prepend the section marker if the LLM forgot it (or used a wrong one)."""
             text = text.strip()
-            if not re.match(r"^\s*\[(INTRO|SECTION|CLOSING)", text, re.IGNORECASE):
+            if not re.match(r"^\s*\[(INTRO|SECTION|CLOSING|OUTRO)", text, re.IGNORECASE):
                 text = f"{marker}\n{text}"
             return text
 
@@ -2306,6 +2315,35 @@ Escribe SOLO el CIERRE:
         closing = _ensure_marker(_ask_section(closing_prompt, min_words=80), "[CLOSING]")
         parts.append(closing)
         info(f"   [Script] CLOSING: {len(closing.split())} words")
+
+        # ---- OUTRO (CTA + farewell — coincides with YouTube's end screen overlay) ----
+        prior = "\n\n".join(parts)
+        tail = " ".join(prior.split()[-200:])
+        outro_prompt = f"""Eres un narrador experto de documentales. Estás escribiendo la DESPEDIDA FINAL de un guion sobre: {self.subject}
+
+Esto es lo último que se narró:
+\"\"\"
+{tail}
+\"\"\"
+
+Escribe SOLO la DESPEDIDA, pensada para los últimos segundos del video cuando aparecen las pantallas finales de YouTube (suscribirse, video recomendado).
+
+ESTRUCTURA OBLIGATORIA (3-5 oraciones, 60-100 palabras), redactada de forma natural y orgánica como si la dijeras hablando con calidez (NO bullets, NO suene robótico):
+1. Agradece al espectador por haber visto el video.
+2. Pídele que dé "me gusta" si le gustó.
+3. Pídele que se SUSCRIBA al canal y active la CAMPANITA para no perderse contenido similar.
+4. Despídete cálidamente ("Hasta la próxima", "Hasta pronto", "Nos vemos en el siguiente video", o equivalente).
+
+REGLAS:
+- ESCRIBE TODO EN {lang}. NO uses inglés.
+- Tono cálido, cercano, humano — como un amigo, no como una máquina.
+- Oraciones CORTAS (máximo 20 palabras).
+- NO uses markdown, viñetas, listas, URLs, hashtags ni meta-texto.
+- Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [OUTRO]
+"""
+        outro = _ensure_marker(_ask_section(outro_prompt, min_words=40), "[OUTRO]")
+        parts.append(outro)
+        info(f"   [Script] OUTRO: {len(outro.split())} words")
 
         full = "\n\n".join(parts).strip()
         word_count = len(full.split())
@@ -2977,11 +3015,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         text = script
 
         # Strip section markers in any language / case.
-        text = re.sub(r'\[(INTRO|INTRODUCCIÓN|INTRODUCCION|CLOSING|CIERRE)\]', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\[(INTRO|INTRODUCCIÓN|INTRODUCCION|CLOSING|CIERRE|OUTRO|DESPEDIDA)\]', '', text, flags=re.IGNORECASE)
         text = re.sub(r'\[(SECTION|SECCIÓN|SECCION)\s*\d+\s*:?[^\]]*\]', '', text, flags=re.IGNORECASE)
 
         # Some LLMs write the markers WITHOUT brackets — strip those too.
-        text = re.sub(r'^\s*(INTRO|INTRODUCCIÓN|INTRODUCCION|CLOSING|CIERRE)\s*:?\s*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
+        text = re.sub(r'^\s*(INTRO|INTRODUCCIÓN|INTRODUCCION|CLOSING|CIERRE|OUTRO|DESPEDIDA)\s*:?\s*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
         text = re.sub(r'^\s*(SECTION|SECCIÓN|SECCION)\s*\d+\s*:[^\n]*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
 
         # Strip JSON / code artifacts.
@@ -3644,18 +3682,43 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
             url = None
             try:
+                # Long videos live under /videos/upload_video; shorts under /videos/short.
+                # Hardcoding /videos/short for a long upload would grab the wrong row.
+                listing_tab = "upload_video" if is_long_video else "short"
                 driver.get(
-                    f"https://studio.youtube.com/channel/{self.channel_id}/videos/short"
+                    f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
                 )
                 time.sleep(3)
+
+                # Match by exact title to avoid grabbing the wrong row when a recent
+                # upload of another kind shows up at the top.
+                target_title = (self.metadata.get("title") or "").strip()
                 videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
-                if videos:
-                    first_video = videos[0]
-                    anchor_tag = first_video.find_element(By.TAG_NAME, "a")
-                    href = anchor_tag.get_attribute("href")
+
+                chosen_href = None
+                for row in videos[:15]:
+                    try:
+                        row_text = row.text.strip()
+                    except Exception:
+                        row_text = ""
+                    if target_title and target_title[:50] in row_text:
+                        try:
+                            chosen_href = row.find_element(By.TAG_NAME, "a").get_attribute("href")
+                            break
+                        except Exception:
+                            continue
+
+                if not chosen_href and videos:
+                    # Fallback: take the first row (most recent).
+                    try:
+                        chosen_href = videos[0].find_element(By.TAG_NAME, "a").get_attribute("href")
+                    except Exception:
+                        chosen_href = None
+
+                if chosen_href:
                     if verbose:
-                        info(f"\t=> Found URL: {href}")
-                    video_id = href.split("/")[-2]
+                        info(f"\t=> Found URL: {chosen_href}")
+                    video_id = chosen_href.split("/")[-2]
                     url = build_url(video_id)
             except Exception as e:
                 warning(f"Could not get video URL: {e}")
