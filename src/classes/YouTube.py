@@ -508,8 +508,6 @@ OUTPUT FORMAT (strict):
             ("Hidden secret reveal", '"Hay algo que nadie te contó sobre..."'),
             ("Counterintuitive claim", '"Todo lo que crees sobre X está mal."'),
             ("Negation cliffhanger", '"No vas a creer lo que pasó cuando..."'),
-            ("Numbered list tease", '"Hay 3 cosas sobre X que nunca te dijeron."'),
-            ("Mini historical scene", '"Año 1923. Todo cambió cuando..."'),
         ]
         hook_style, hook_example = random.choice(hook_styles)
 
