@@ -420,9 +420,7 @@ def main():
                 if account_to_delete is None:
                     error("Invalid account selected. Please try again.", "red")
                 else:
-                    confirm = question(f"Are you sure you want to delete '{account_to_delete['nickname']}'? (Yes/No): ").strip().lower()
-
-                    if confirm == "yes":
+                    if confirm(f"Are you sure you want to delete '{account_to_delete['nickname']}'?", default=False):
                         remove_account("twitter", account_to_delete["id"])
                         success("Account removed successfully!")
                     else:

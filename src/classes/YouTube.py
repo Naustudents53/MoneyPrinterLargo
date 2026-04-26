@@ -630,7 +630,15 @@ CRITICAL RULES:
         if image_mode == "photos":
             prompt = f"""Generate exactly {n_prompts} short SEARCH QUERIES to find REAL historical/documentary/educational images for a video about: {self.subject}
 
-These queries will be searched against Wikimedia Commons, Met Museum (artworks, sculptures, artifacts), and Library of Congress (historical photos, prints, maps). Tailor the wording for those archives.
+These queries will be searched against Wikipedia articles + Wikimedia Commons + Met Museum + Library of Congress. Tailor the wording for those archives.
+
+CRITICAL: use the CANONICAL ENGLISH NAME (the form Wikipedia uses for the article title) for every person, place, event, or work. Examples:
+  - WRONG: "Hipparchus the astronomer of stars"   →   RIGHT: "Hipparchus of Nicaea"
+  - WRONG: "Marco Aurelio philosophy book"        →   RIGHT: "Marcus Aurelius" or "Meditations Marcus Aurelius"
+  - WRONG: "Roman vestal virgin priestess fire"   →   RIGHT: "Vestal Virgins" or "Temple of Vesta"
+  - WRONG: "Alexander conquering Persians battle" →   RIGHT: "Battle of Gaugamela"
+  - WRONG: "ancient Egypt cat goddess statue"     →   RIGHT: "Bastet" or "Egyptian cat goddess"
+A Wikipedia article should EXIST for the subject of every query. If unsure, prefer the proper noun on its own.
 
 The script has been divided into {n_prompts} sections. Each query must match its section:
 {sections_text}
@@ -1058,11 +1066,99 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             return img_resp.content
         raise RuntimeError("Pixabay: failed to download image")
 
+    def _try_wikipedia_article(self, prompt: str) -> bytes:
+        """
+        Find the Wikipedia article whose title best matches the query and return
+        the article's MAIN image (the one in the infobox).
+
+        Why this works better than Commons file-search for historical/educational topics:
+          * Wikipedia's article search is fuzzy + redirects-aware (`Hiparco` → `Hipparchus`).
+          * The infobox image is curated to represent the topic.
+          * Tries the channel's language wiki first, then English as fallback.
+        """
+        import urllib.parse
+        import random
+
+        query = prompt.strip()
+        if len(query) > 60 or any(w in query.lower() for w in ("cinematic", "8k", "lighting", "photorealistic")):
+            query = self._extract_search_query(prompt)
+
+        # Channel-language wiki code (e.g. "es", "en") + English as fallback.
+        lang_map = {"spanish": "es", "english": "en", "portuguese": "pt", "french": "fr",
+                    "german": "de", "italian": "it"}
+        ch_lang = lang_map.get((self._language or "").lower(), "en")
+        wikis = [ch_lang, "en"] if ch_lang != "en" else ["en"]
+
+        headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
+        relevance_tokens = self._query_tokens(query, self.subject)
+
+        for wiki in wikis:
+            print(colored(f"    [Wikipedia/{wiki}] Searching: {query[:60]}...", "cyan"), flush=True)
+            try:
+                # Step 1: search articles by query.
+                search_url = (
+                    f"https://{wiki}.wikipedia.org/w/api.php"
+                    f"?action=query&format=json&list=search"
+                    f"&srsearch={urllib.parse.quote(query)}"
+                    f"&srlimit=10&srprop=size"
+                )
+                resp = requests.get(search_url, headers=headers, timeout=20)
+                resp.raise_for_status()
+                hits = resp.json().get("query", {}).get("search") or []
+                if not hits:
+                    continue
+
+                # Try the top results until we find one with a usable infobox image.
+                for hit in hits[:5]:
+                    title = hit.get("title") or ""
+                    if not title:
+                        continue
+                    # Step 2: fetch the article's main image at full resolution.
+                    img_url = self._wikipedia_main_image(wiki, title, headers)
+                    if not img_url or img_url in self._used_stock_urls:
+                        continue
+                    # Optional relevance check using the article title.
+                    if relevance_tokens:
+                        if not (relevance_tokens & self._query_tokens(title)):
+                            continue
+                    try:
+                        img_resp = requests.get(img_url, headers=headers, timeout=60)
+                        if img_resp.status_code == 200 and len(img_resp.content) > 10000:
+                            self._used_stock_urls.add(img_url)
+                            print(colored(f"OK ({title[:50]})", "green"))
+                            return img_resp.content
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+
+        raise RuntimeError("Wikipedia article: no suitable image found")
+
+    def _wikipedia_main_image(self, wiki: str, title: str, headers: dict) -> str:
+        """Get the original-resolution main image URL for a Wikipedia article."""
+        import urllib.parse
+        try:
+            url = (
+                f"https://{wiki}.wikipedia.org/w/api.php"
+                f"?action=query&format=json&prop=pageimages"
+                f"&piprop=original&titles={urllib.parse.quote(title)}"
+            )
+            r = requests.get(url, headers=headers, timeout=20)
+            r.raise_for_status()
+            pages = r.json().get("query", {}).get("pages", {}) or {}
+            for page in pages.values():
+                src = (page.get("original") or {}).get("source") or ""
+                if src:
+                    return src
+        except Exception:
+            pass
+        return ""
+
     def _try_wikimedia(self, prompt: str) -> bytes:
         """
-        Search Wikimedia Commons for public-domain photos/paintings matching the prompt.
-        Best source for historical/documentary content — portraits, architecture, artworks.
-        No API key required.
+        Search Wikimedia Commons file descriptions for matching images.
+        Tries multiple query variants so we don't fail just because the LLM's
+        query wording doesn't exactly match Commons file descriptions.
         """
         import urllib.parse
         import random
@@ -1073,52 +1169,77 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         if len(query) > 60 or any(w in query.lower() for w in ("cinematic", "8k", "lighting", "photorealistic")):
             query = self._extract_search_query(prompt)
 
-        print(colored(f"    [Wikimedia] Searching: {query[:60]}...", "cyan"), flush=True)
+        # Build a shortlist of query variants — try the original, then progressively
+        # shorter / proper-noun-only versions so we recover from over-specific queries.
+        words = query.split()
+        STOP = {"the", "a", "an", "of", "in", "on", "at", "to", "and", "or",
+                "el", "la", "los", "las", "un", "una", "y", "o", "de", "del"}
+        proper_nouns = [w for w in words if w[:1].isupper() and w.lower() not in STOP]
+        variants = []
+        seen = set()
+        for v in (query, " ".join(proper_nouns), " ".join(words[:3]), " ".join(proper_nouns[:2])):
+            v = v.strip()
+            if v and v.lower() not in seen:
+                variants.append(v)
+                seen.add(v.lower())
+
         headers = {"User-Agent": "MoneyPrinterV2/1.0 (https://github.com/; research use)"}
-        api_url = (
-            "https://commons.wikimedia.org/w/api.php"
-            "?action=query&format=json&generator=search&gsrnamespace=6"
-            f"&gsrsearch={urllib.parse.quote(query)}&gsrlimit=20"
-            "&prop=imageinfo&iiprop=url|size|mime"
-        )
-        resp = requests.get(api_url, headers=headers, timeout=30)
-        resp.raise_for_status()
-        pages = resp.json().get("query", {}).get("pages", {})
-        if not pages:
-            raise RuntimeError("Wikimedia: no results")
+        relevance_tokens = self._query_tokens(query, self.subject)
 
-        # Collect usable images: min 600px on the short edge, raster only.
-        candidates = []
-        for page in pages.values():
-            info_list = page.get("imageinfo", [])
-            if not info_list:
-                continue
-            info = info_list[0]
-            url = info.get("url", "")
-            mime = info.get("mime", "")
-            w, h = info.get("width", 0), info.get("height", 0)
-            if not url or url in self._used_stock_urls:
-                continue
-            if mime not in ("image/jpeg", "image/png", "image/webp"):
-                continue
-            if min(w, h) < 600:
-                continue
-            candidates.append(url)
-
-        if not candidates:
-            raise RuntimeError("Wikimedia: no suitable images")
-
-        random.shuffle(candidates)
-        for img_url in candidates[:5]:
+        for variant in variants:
+            print(colored(f"    [Wikimedia] Searching: {variant[:60]}...", "cyan"), flush=True)
             try:
-                img_resp = requests.get(img_url, headers=headers, timeout=60)
-                if img_resp.status_code == 200 and len(img_resp.content) > 10000:
-                    self._used_stock_urls.add(img_url)
-                    print(colored("OK", "green"))
-                    return img_resp.content
+                api_url = (
+                    "https://commons.wikimedia.org/w/api.php"
+                    "?action=query&format=json&generator=search&gsrnamespace=6"
+                    f"&gsrsearch={urllib.parse.quote(variant)}&gsrlimit=20"
+                    "&prop=imageinfo&iiprop=url|size|mime"
+                )
+                resp = requests.get(api_url, headers=headers, timeout=30)
+                resp.raise_for_status()
+                pages = resp.json().get("query", {}).get("pages", {})
+                if not pages:
+                    continue
+
+                candidates = []
+                for page in pages.values():
+                    info_list = page.get("imageinfo", [])
+                    if not info_list:
+                        continue
+                    info = info_list[0]
+                    url = info.get("url", "")
+                    mime = info.get("mime", "")
+                    w, h = info.get("width", 0), info.get("height", 0)
+                    title = page.get("title") or ""
+                    if not url or url in self._used_stock_urls:
+                        continue
+                    if mime not in ("image/jpeg", "image/png", "image/webp"):
+                        continue
+                    if min(w, h) < 600:
+                        continue
+                    # Relevance check: the file's title (e.g. "File:Hipparchus.jpg") should
+                    # share at least one significant token with the query/subject.
+                    if relevance_tokens:
+                        if not (relevance_tokens & self._query_tokens(title)):
+                            continue
+                    candidates.append(url)
+
+                if not candidates:
+                    continue
+                random.shuffle(candidates)
+                for img_url in candidates[:5]:
+                    try:
+                        img_resp = requests.get(img_url, headers=headers, timeout=60)
+                        if img_resp.status_code == 200 and len(img_resp.content) > 10000:
+                            self._used_stock_urls.add(img_url)
+                            print(colored("OK", "green"))
+                            return img_resp.content
+                    except Exception:
+                        continue
             except Exception:
                 continue
-        raise RuntimeError("Wikimedia: failed to download any candidate")
+
+        raise RuntimeError("Wikimedia: no suitable images across all query variants")
 
     def _try_met_museum(self, prompt: str) -> bytes:
         """
@@ -1330,7 +1451,9 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             print(colored(f"\n  [Images] Fetching {len(prompts)} real photos...", "blue"))
             providers = [
                 # Tier 1: curated, attribution-friendly historical/educational sources
-                # (Wikipedia-style — factual, on-topic).
+                # (Wikipedia-style — factual, on-topic). Wikipedia article first because
+                # it returns the curated infobox image (more reliable than Commons file search).
+                ("Wikipedia article", self._try_wikipedia_article, "stock"),
                 ("Wikimedia Commons", self._try_wikimedia, "stock"),
                 ("Met Museum", self._try_met_museum, "stock"),
                 ("Library of Congress", self._try_loc, "stock"),
