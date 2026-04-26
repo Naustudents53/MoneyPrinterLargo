@@ -79,3 +79,53 @@ def question(message: str, show_emoji: bool = True) -> str:
     """
     emoji = "❓" if show_emoji else ""
     return input(colored(f"{emoji} {message}", "magenta"))
+
+
+def _flush_stdin() -> None:
+    """
+    Discard any buffered stdin (e.g. stray Enter presses queued during a
+    multi-hour render). Without this, the next input() returns immediately
+    with garbage and skips the prompt entirely.
+    """
+    try:
+        # Windows: msvcrt.kbhit/getwch drains the keyboard buffer.
+        import msvcrt
+        while msvcrt.kbhit():
+            msvcrt.getwch()
+    except Exception:
+        # POSIX: termios/select-based drain.
+        try:
+            import sys, select, termios
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+            try:
+                while select.select([sys.stdin], [], [], 0)[0]:
+                    sys.stdin.read(1)
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        except Exception:
+            pass
+
+
+def confirm(message: str, default: bool = False, show_emoji: bool = True) -> bool:
+    """
+    Yes/No confirmation prompt that:
+      * Drains stdin first so buffered Enter presses don't auto-skip it.
+      * Loops until the user types something the parser understands.
+      * Accepts: yes / y / sí / si / s / true / 1   →  True
+                 no  / n / false / 0                →  False
+      * Empty input returns `default`.
+    """
+    _flush_stdin()
+    yes_words = {"yes", "y", "si", "sí", "s", "true", "1"}
+    no_words = {"no", "n", "false", "0"}
+    suffix = " (Yes/No) " if default is False else " (YES/no) "
+    while True:
+        raw = question(message + suffix, show_emoji=show_emoji).strip().lower()
+        if not raw:
+            return default
+        if raw in yes_words:
+            return True
+        if raw in no_words:
+            return False
+        print(colored("Please answer yes or no.", "yellow"))

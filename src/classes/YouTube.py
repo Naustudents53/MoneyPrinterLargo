@@ -62,6 +62,9 @@ class YouTube:
         fp_profile_path: str,
         niche: str,
         language: str,
+        image_style: str = "",
+        short_voice: str = "",
+        long_voice: str = "",
     ) -> None:
         """
         Constructor for YouTube Class.
@@ -72,6 +75,9 @@ class YouTube:
             fp_profile_path (str): Path to the firefox profile that is logged into the specificed YouTube Account.
             niche (str): The niche of the provided YouTube Channel.
             language (str): The language of the Automation.
+            image_style (str): Optional per-channel style suffix appended to AI image prompts.
+            short_voice (str): Optional Edge-TTS voice ID (or alias) for shorts narration.
+            long_voice (str): Optional Edge-TTS voice ID (or alias) for long-video narration.
 
         Returns:
             None
@@ -81,6 +87,9 @@ class YouTube:
         self._fp_profile_path: str = fp_profile_path
         self._niche: str = niche
         self._language: str = language
+        self._image_style: str = (image_style or "").strip()
+        self._short_voice: str = (short_voice or "").strip()
+        self._long_voice: str = (long_voice or "").strip()
 
         self.images = []
         self._used_stock_urls: set = set()
@@ -895,7 +904,23 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
     def _augment_for_ai_fallback(self, query: str) -> str:
         """Wrap a short photo-mode search query with cinematic styling so AI generators render a usable image."""
-        return f"{query}, cinematic photograph, photorealistic, dramatic lighting, highly detailed, 4K"
+        out = f"{query}, cinematic photograph, photorealistic, dramatic lighting, highly detailed, 4K"
+        return self._apply_channel_style(out)
+
+    def _apply_channel_style(self, prompt: str) -> str:
+        """Append the per-channel image_style suffix (if any), capped to keep providers happy."""
+        if not self._image_style:
+            return prompt
+        combined = f"{prompt.rstrip(', .')}, {self._image_style}"
+        # Hard cap to ~1000 chars so we don't blow past Leonardo / Pollinations input limits.
+        return combined[:1000]
+
+    def _resolve_voice(self, voice: str) -> str:
+        """Resolve a voice alias (e.g. 'Pablo') or raw Edge-TTS ID to its full voice ID."""
+        from .Tts import EDGE_TTS_VOICES
+        if not voice:
+            return ""
+        return EDGE_TTS_VOICES.get(voice, voice)
 
     def _topic_keywords(self) -> List[str]:
         """Key lowercase tokens from self.subject, used to anchor stock searches to the topic."""
@@ -1341,6 +1366,9 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     effective_prompt = prompt
                     if image_mode == "photos" and kind == "ai":
                         effective_prompt = self._augment_for_ai_fallback(prompt)
+                    elif kind == "ai":
+                        # AI mode: append per-channel image style suffix (if any).
+                        effective_prompt = self._apply_channel_style(prompt)
                     img_bytes = fn(effective_prompt)
                     if img_bytes and len(img_bytes) > 1000:
                         self._persist_image(img_bytes, name)
@@ -1413,7 +1441,9 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         self.script = clean_script_for_tts(self.script)
         tts_text, regnal_subs = expand_regnal_numerals_tracked(self.script)
 
-        path, word_timestamps = tts_instance.synthesize_with_timestamps(tts_text, path)
+        # Per-channel short voice override (falls back to TTS instance default if empty).
+        short_vid = self._resolve_voice(self._short_voice)
+        path, word_timestamps = tts_instance.synthesize_with_timestamps(tts_text, path, voice_id=short_vid or None)
 
         # Put the Roman numerals back in the word-level timestamps so the
         # karaoke subtitles read "I" / "XIV" while the audio says "primero" /
@@ -2842,13 +2872,16 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             print(colored(f"\n  Image {i+1}/{len(prompts)}", "blue"))
             saved = False
 
+            # Apply per-channel style suffix to AI prompts.
+            styled_prompt = self._apply_channel_style(prompt)
+
             for name, fn in [
                 ("Leonardo AI", lambda p: self._try_leonardo_landscape(p)),
                 ("Pollinations.ai FLUX", lambda p: self._try_pollinations_landscape(p)),
                 ("HuggingFace", self._try_huggingface),
             ]:
                 try:
-                    img_bytes = fn(prompt)
+                    img_bytes = fn(styled_prompt)
                     if img_bytes and len(img_bytes) > 1000:
                         self._persist_image(img_bytes, name)
                         saved = True
@@ -3291,9 +3324,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         if get_verbose():
             info(f" => TTS script preview (first 200 chars): {tts_script[:200]}")
 
-        # Use deep narrator voice for documentary-style long videos
+        # Per-channel long-video voice (or fall back to the default deep narrator).
         from .Tts import LONG_VIDEO_NARRATOR
-        tts_instance.synthesize_long(tts_script, path, voice_id=LONG_VIDEO_NARRATOR)
+        long_vid = self._resolve_voice(self._long_voice) or LONG_VIDEO_NARRATOR
+        info(f" => Using long-video voice: {long_vid}")
+        tts_instance.synthesize_long(tts_script, path, voice_id=long_vid)
         self.tts_path = path
 
         if os.path.exists(path) and os.path.getsize(path) > 1000:
@@ -3712,7 +3747,10 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     pass
 
                 # Try up to 3 times — YT Studio sometimes silently ignores the first send_keys
-                # if the editor is still rendering.
+                # if the editor is still rendering. Each attempt polls for up to 30s for the
+                # custom thumbnail preview to appear before declaring failure.
+                VERIFY_TIMEOUT_S = 30
+                VERIFY_POLL_S = 2
                 for attempt in range(1, 4):
                     try:
                         thumb_input = self._find_thumbnail_input(driver, wait)
@@ -3727,15 +3765,27 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                             thumb_input,
                         )
                         thumb_input.send_keys(abs_thumb)
-                        time.sleep(4)  # let YT process the upload
-                        if self._verify_thumbnail_uploaded(driver):
+
+                        # Poll the page for up to 30s waiting for the custom-thumbnail preview
+                        # to appear. YouTube uploads the file to its CDN, generates a preview,
+                        # and re-renders the editor — that whole round-trip can take 5-25s.
+                        info(f"\t=> Thumbnail attempt {attempt}/3: send_keys done; polling up to {VERIFY_TIMEOUT_S}s for confirmation...")
+                        deadline = time.time() + VERIFY_TIMEOUT_S
+                        accepted = False
+                        while time.time() < deadline:
+                            if self._verify_thumbnail_uploaded(driver):
+                                accepted = True
+                                break
+                            time.sleep(VERIFY_POLL_S)
+
+                        if accepted:
                             success(f"\t=> Thumbnail accepted on attempt {attempt}.")
                             self._thumbnail_uploaded = True
                             break
-                        warning(f"\t=> Thumbnail attempt {attempt}/3: not visible after upload, retrying.")
+                        warning(f"\t=> Thumbnail attempt {attempt}/3: not visible after {VERIFY_TIMEOUT_S}s, retrying.")
                     except Exception as e:
                         warning(f"\t=> Thumbnail attempt {attempt}/3 failed: {str(e)[:200]}")
-                    time.sleep(2)
+                    time.sleep(3)
 
                 if not self._thumbnail_uploaded:
                     error(

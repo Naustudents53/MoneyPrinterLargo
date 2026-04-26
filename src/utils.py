@@ -213,9 +213,17 @@ def rem_temp_files() -> None:
 
     files = os.listdir(mp_dir)
 
+    # Keep .json (cache state) AND .mp4 (rendered videos pending re-upload).
+    # MP4s are preserved so the user can pick "Re-upload last generated video"
+    # in the menu even after the menu loop has cycled.
+    KEEP_EXT = (".json", ".mp4")
     for file in files:
-        if not file.endswith(".json"):
+        if file.lower().endswith(KEEP_EXT):
+            continue
+        try:
             os.remove(os.path.join(mp_dir, file))
+        except Exception:
+            pass
 
     # Clean MoviePy temp files from project root
     for file in os.listdir(ROOT_DIR):

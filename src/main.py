@@ -1,5 +1,6 @@
 import schedule
 import subprocess
+from datetime import datetime
 
 # Fix Pillow 10+ compatibility with MoviePy (ANTIALIAS removed, now LANCZOS)
 from PIL import Image as _PILImage
@@ -73,6 +74,55 @@ def main():
     Returns:
         None"""
 
+    def _prompt_youtube_account_fields(defaults: dict | None = None) -> dict:
+        """
+        Ask the user for the fields that define a YouTube account.
+        If `defaults` is given, each prompt shows the current value and pressing Enter keeps it.
+        Returns a dict with: nickname, firefox_profile, niche, language, image_style, short_voice, long_voice.
+        """
+        from classes.Tts import EDGE_TTS_VOICES
+        defaults = defaults or {}
+
+        def _ask(label: str, key: str) -> str:
+            cur = defaults.get(key, "")
+            hint = f" [{cur}]" if cur else ""
+            val = question(f" => {label}{hint}: ").strip()
+            return val or cur
+
+        nickname = _ask("Nickname for this account", "nickname")
+        fp_profile = _ask("Path to the Firefox profile", "firefox_profile")
+        niche = _ask("Account niche", "niche")
+        language = _ask("Account language", "language")
+
+        # Per-channel image style (free text appended to AI image prompts).
+        info("\n   Image style: free-text suffix that gets appended to every AI image prompt.")
+        info("   Examples:")
+        info("     - cinematic photorealistic, dramatic lighting, classical aesthetic")
+        info("     - vibrant macro photography, vivid colors, lab aesthetic")
+        info("     - chiaroscuro lighting, contemplative, classical sculpture aesthetic")
+        info("     - dark atmospheric, low-key lighting, foggy, eerie tones")
+        info("   Leave empty for no per-channel style.")
+        image_style = _ask("Image style (optional)", "image_style")
+
+        # Voice selection — show the catalog so the user can pick by alias.
+        info("\n   Available voices (alias → Edge-TTS ID):")
+        for alias, vid in EDGE_TTS_VOICES.items():
+            print(colored(f"     {alias:<8} → {vid}", "cyan"))
+        info("   You can type either an alias (e.g. Pablo) OR a full Edge-TTS ID (e.g. es-ES-ElviraNeural).")
+        info("   Leave empty to use the global default from config.json.")
+        short_voice = _ask("Short-video voice", "short_voice")
+        long_voice = _ask("Long-video voice (default: es-ES-AlvaroNeural)", "long_voice")
+
+        return {
+            "nickname": nickname,
+            "firefox_profile": fp_profile,
+            "niche": niche,
+            "language": language,
+            "image_style": image_style,
+            "short_voice": short_voice,
+            "long_voice": long_voice,
+        }
+
     # Get user input
     # user_input = int(question("Select an option: "))
     valid_input = False
@@ -104,58 +154,37 @@ def main():
 
         if len(cached_accounts) == 0:
             warning("No accounts found in cache. Create one now?")
-            user_input = question("Yes/No: ")
-
-            if user_input.lower() == "yes":
+            if confirm("Create one now?", default=True):
                 generated_uuid = str(uuid4())
-
                 success(f" => Generated ID: {generated_uuid}")
-                nickname = question(" => Enter a nickname for this account: ")
-                fp_profile = question(" => Enter the path to the Firefox profile: ")
-                niche = question(" => Enter the account niche: ")
-                language = question(" => Enter the account language: ")
-
-                account_data = {
-                    "id": generated_uuid,
-                    "nickname": nickname,
-                    "firefox_profile": fp_profile,
-                    "niche": niche,
-                    "language": language,
-                    "videos": [],
-                }
-
+                fields = _prompt_youtube_account_fields()
+                account_data = {"id": generated_uuid, **fields, "videos": []}
                 add_account("youtube", account_data)
-
                 success("Account configured successfully!")
         else:
             table = PrettyTable()
-            table.field_names = ["ID", "UUID", "Nickname", "Niche"]
+            table.field_names = ["#", "Nickname", "Niche", "Image style", "Short voice", "Long voice"]
 
             for idx, account in enumerate(cached_accounts):
-                table.add_row([idx + 1, colored(account["id"], "cyan"), colored(account["nickname"], "blue"), colored(account["niche"], "green")])
+                table.add_row([
+                    idx + 1,
+                    colored(account.get("nickname", ""), "blue"),
+                    colored(account.get("niche", ""), "green"),
+                    colored((account.get("image_style") or "<default>")[:30], "yellow"),
+                    colored(account.get("short_voice") or "<default>", "magenta"),
+                    colored(account.get("long_voice") or "<default>", "magenta"),
+                ])
 
             print(table)
-            info("Type 'd' to delete an account, 'n' to add a new account.", False)
+            info("Type 'd' to delete, 'n' to add new, 'e' to edit an account.", False)
 
-            user_input = question("Select an account to start (or 'd'/'n'): ").strip()
+            user_input = question("Select an account to start (or 'd'/'n'/'e'): ").strip()
 
             if user_input.lower() == "n":
                 generated_uuid = str(uuid4())
                 success(f" => Generated ID: {generated_uuid}")
-                nickname = question(" => Enter a nickname for this account: ")
-                fp_profile = question(" => Enter the path to the Firefox profile: ")
-                niche = question(" => Enter the account niche: ")
-                language = question(" => Enter the account language: ")
-
-                account_data = {
-                    "id": generated_uuid,
-                    "nickname": nickname,
-                    "firefox_profile": fp_profile,
-                    "niche": niche,
-                    "language": language,
-                    "videos": [],
-                }
-
+                fields = _prompt_youtube_account_fields()
+                account_data = {"id": generated_uuid, **fields, "videos": []}
                 add_account("youtube", account_data)
                 success("Account configured successfully!")
                 return
@@ -163,7 +192,6 @@ def main():
             if user_input.lower() == "d":
                 delete_input = question("Enter account number to delete: ").strip()
                 account_to_delete = None
-
                 for idx, account in enumerate(cached_accounts):
                     if str(idx + 1) == delete_input:
                         account_to_delete = account
@@ -172,14 +200,32 @@ def main():
                 if account_to_delete is None:
                     error("Invalid account selected. Please try again.", "red")
                 else:
-                    confirm = question(f"Are you sure you want to delete '{account_to_delete['nickname']}'? (Yes/No): ").strip().lower()
-
-                    if confirm == "yes":
+                    if confirm(f"Are you sure you want to delete '{account_to_delete['nickname']}'?", default=False):
                         remove_account("youtube", account_to_delete["id"])
                         success("Account removed successfully!")
                     else:
                         warning("Account deletion canceled.", False)
+                return
 
+            if user_input.lower() == "e":
+                edit_input = question("Enter account number to edit: ").strip()
+                account_to_edit = None
+                for idx, account in enumerate(cached_accounts):
+                    if str(idx + 1) == edit_input:
+                        account_to_edit = account
+                        break
+
+                if account_to_edit is None:
+                    error("Invalid account selected. Please try again.", "red")
+                else:
+                    info(f"Editing '{account_to_edit['nickname']}' — press Enter to keep current value.")
+                    new_fields = _prompt_youtube_account_fields(defaults=account_to_edit)
+                    # Merge: keep id + videos, replace the rest.
+                    merged = {**account_to_edit, **new_fields}
+                    # Persist by removing old + re-adding.
+                    remove_account("youtube", account_to_edit["id"])
+                    add_account("youtube", merged)
+                    success(f"Account '{merged['nickname']}' updated.")
                 return
 
             selected_account = None
@@ -198,7 +244,10 @@ def main():
                     selected_account["nickname"],
                     selected_account["firefox_profile"],
                     selected_account["niche"],
-                    selected_account["language"]
+                    selected_account["language"],
+                    image_style=selected_account.get("image_style", ""),
+                    short_voice=selected_account.get("short_voice", ""),
+                    long_voice=selected_account.get("long_voice", ""),
                 )
 
                 while True:
@@ -230,10 +279,8 @@ def main():
                         )
                         if not video_path:
                             warning("Video generation aborted — nothing to upload.")
-                        else:
-                            upload_to_yt = question("Do you want to upload this video to YouTube? (Yes/No): ")
-                            if upload_to_yt.lower() == "yes":
-                                youtube.upload_video()
+                        elif confirm("Do you want to upload this video to YouTube?", default=True):
+                            youtube.upload_video()
                     elif user_input == 2:
                         # Upload Long Video
                         custom_topic = question(
@@ -243,10 +290,8 @@ def main():
                         long_path = youtube.generate_long_video(tts, custom_topic=custom_topic)
                         if not long_path:
                             warning("Long video generation aborted — nothing to upload.")
-                        else:
-                            upload_to_yt = question("Do you want to upload this video to YouTube? (Yes/No): ")
-                            if upload_to_yt.lower() == "yes":
-                                youtube.upload_video()
+                        elif confirm("Do you want to upload this video to YouTube?", default=True):
+                            youtube.upload_video()
                     elif user_input == 3:
                         # Show all Videos
                         videos = youtube.get_videos()
@@ -266,6 +311,35 @@ def main():
                         else:
                             warning(" No videos found.")
                     elif user_input == 4:
+                        # Clean up saved videos (.mp4 files in .mp/)
+                        mp_dir = os.path.join(ROOT_DIR, ".mp")
+                        mp4s = [
+                            os.path.join(mp_dir, f)
+                            for f in os.listdir(mp_dir)
+                            if f.lower().endswith(".mp4")
+                        ]
+                        if not mp4s:
+                            info(" => No saved videos to clean.")
+                        else:
+                            total_bytes = sum(os.path.getsize(p) for p in mp4s)
+                            total_mb = total_bytes / (1024 * 1024)
+                            info(f" => Found {len(mp4s)} saved video(s) using {total_mb:.1f} MB:")
+                            for p in sorted(mp4s, key=os.path.getmtime, reverse=True):
+                                size_mb = os.path.getsize(p) / (1024 * 1024)
+                                mtime = datetime.fromtimestamp(os.path.getmtime(p)).strftime("%Y-%m-%d %H:%M")
+                                print(colored(f"   - {os.path.basename(p)}  ({size_mb:.1f} MB, {mtime})", "cyan"))
+                            if confirm(f"Delete all {len(mp4s)} saved video(s)?", default=False):
+                                deleted = 0
+                                for p in mp4s:
+                                    try:
+                                        os.remove(p)
+                                        deleted += 1
+                                    except Exception as e:
+                                        warning(f"   Could not delete {os.path.basename(p)}: {e}")
+                                success(f" => Deleted {deleted}/{len(mp4s)} video(s), freed {total_mb:.1f} MB.")
+                            else:
+                                info(" => Cancelled.")
+                    elif user_input == 5:
                         # Setup CRON Job
                         info("How often do you want to upload?")
 
@@ -294,7 +368,7 @@ def main():
                             success("Set up CRON Job.")
                         else:
                             break
-                    elif user_input == 5:
+                    elif user_input == 6:
                         if get_verbose():
                             info(" => Climbing Options Ladder...", False)
                         break

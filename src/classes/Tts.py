@@ -39,14 +39,15 @@ class TTS:
                 print("[WARNING] KittenTTS not available, falling back to edge-tts")
                 self._provider = "edge_tts"
 
-    def synthesize(self, text, output_file=os.path.join(ROOT_DIR, ".mp", "audio.wav")):
+    def synthesize(self, text, output_file=os.path.join(ROOT_DIR, ".mp", "audio.wav"), voice_id=None):
         if self._provider == "edge_tts":
-            return self._synthesize_edge_tts(text, output_file)
-        return self._synthesize_kitten(text, output_file)
+            return self._synthesize_edge_tts(text, output_file, voice_id=voice_id)
+        return self._synthesize_kitten(text, output_file, voice_id=voice_id)
 
-    def _synthesize_kitten(self, text, output_file):
+    def _synthesize_kitten(self, text, output_file, voice_id=None):
         import soundfile as sf
-        audio = self._kitten_model.generate(text, voice=self._voice)
+        voice = voice_id or self._voice
+        audio = self._kitten_model.generate(text, voice=voice)
         sf.write(output_file, audio, self._kitten_sr)
         return output_file
 
@@ -97,7 +98,7 @@ class TTS:
 
         return output_file
 
-    def synthesize_with_timestamps(self, text, output_file=os.path.join(ROOT_DIR, ".mp", "audio.wav")):
+    def synthesize_with_timestamps(self, text, output_file=os.path.join(ROOT_DIR, ".mp", "audio.wav"), voice_id=None):
         """Synthesize audio AND return word-level timestamps.
 
         Returns:
@@ -105,18 +106,19 @@ class TTS:
             {"start": float_seconds, "end": float_seconds, "word": str} or None.
         """
         if self._provider == "edge_tts":
-            return self._synthesize_edge_tts_with_timestamps(text, output_file)
+            return self._synthesize_edge_tts_with_timestamps(text, output_file, voice_id=voice_id)
         # KittenTTS has no word timing — synthesize normally, return None
-        self._synthesize_kitten(text, output_file)
+        self._synthesize_kitten(text, output_file, voice_id=voice_id)
         return output_file, None
 
-    def _synthesize_edge_tts_with_timestamps(self, text, output_file):
+    def _synthesize_edge_tts_with_timestamps(self, text, output_file, voice_id=None):
         """Edge-TTS synthesis capturing word-level boundary events."""
         import edge_tts
         import subprocess
         import shutil
 
-        voice_id = EDGE_TTS_VOICES.get(self._voice, self._voice)
+        # Per-call voice override → fall back to instance voice → fall back to mapping.
+        voice_id = voice_id or EDGE_TTS_VOICES.get(self._voice, self._voice)
         mp3_path = output_file.rsplit(".", 1)[0] + ".mp3"
         word_timestamps = []
 
@@ -159,9 +161,9 @@ class TTS:
 
         return output_file, word_timestamps
 
-    def _synthesize_edge_tts(self, text, output_file):
+    def _synthesize_edge_tts(self, text, output_file, voice_id=None):
         """Edge-TTS synthesis (without word timestamps)."""
-        path, _ = self._synthesize_edge_tts_with_timestamps(text, output_file)
+        path, _ = self._synthesize_edge_tts_with_timestamps(text, output_file, voice_id=voice_id)
         return path
 
     @staticmethod
