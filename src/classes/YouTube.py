@@ -3436,14 +3436,19 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
     def _wait_for_upload_complete(self, driver, max_wait_s: int) -> bool:
         """
-        Poll YouTube Studio until the upload has finished. Long video files (100-300 MB)
-        keep transferring AFTER the Done button is clicked, and closing the browser /
-        navigating away too early kills the connection and abandons the upload.
+        Two-phase wait so we don't close Firefox before YouTube is really done.
 
-        Returns True if completion was detected; False on timeout.
+        PHASE 1 — File transfer ("Subiendo XX%" → 100%): closes when bytes are uploaded.
+        PHASE 2 — YouTube-side processing (encoding to 7 resolutions + Content ID + checks):
+                  closes when "Subiendo" / "Procesando" / "Pendiente" indicators are gone.
+
+        Returns True when both phases completed. Firefox should be safe to close after.
         """
-        info(f"\t=> Waiting up to {max_wait_s // 60} min for the upload to finish...")
+        info(f"\t=> Waiting up to {max_wait_s // 60} min for upload + YouTube processing...")
         deadline = time.time() + max_wait_s
+
+        # ---------- PHASE 1 — File transfer ----------
+        upload_done = False
         last_pct_reported = -1
         last_pct_seen = -1
         no_change_polls = 0
@@ -3454,7 +3459,6 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             except Exception:
                 body_text = ""
 
-            # Detect "Subiendo XX%" / "Uploading XX%" anywhere in the page.
             m = re.search(r"(?:subiendo|uploading)[^\d%]{0,15}(\d{1,3})\s*%", body_text)
             if m:
                 pct = int(m.group(1))
@@ -3462,35 +3466,97 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     info(f"\t=> Upload progress: {pct}%")
                     last_pct_reported = pct
                 if pct >= 99:
-                    info("\t=> Upload reached 100%. Allowing 15s for YouTube to finalize...")
-                    time.sleep(15)
-                    return True
-                # Detect a stalled upload (same % for ~5 min).
+                    info("\t=> File transfer complete (100%). Now YouTube takes over.")
+                    upload_done = True
+                    break
                 if pct == last_pct_seen:
                     no_change_polls += 1
                 else:
                     no_change_polls = 0
                 last_pct_seen = pct
-                if no_change_polls > 30:  # 30 polls × 10s = 5 min stuck
-                    warning(f"\t=> Progress frozen at {pct}% for ~5 min. Assuming complete.")
-                    return True
+                if no_change_polls > 30:  # 5 min frozen at same %
+                    warning(f"\t=> Progress frozen at {pct}% for ~5 min. Moving to processing wait.")
+                    upload_done = True
+                    break
             else:
-                # No "Uploading X%" indicator → likely already finished.
-                # Confirm with completion markers (English + Spanish).
-                completion_markers = (
-                    "guardado como borrador", "publicado", "subido",
-                    "procesando", "verificaciones completadas",
-                    "saved as draft", "published", "uploaded", "processing",
-                    "checks complete", "video published",
-                )
-                if any(marker in body_text for marker in completion_markers):
-                    info("\t=> Upload appears complete (no progress indicator).")
-                    time.sleep(8)
-                    return True
+                # No "Subiendo X%" anywhere → file likely already transferred.
+                upload_done = True
+                info("\t=> No upload progress indicator visible — assuming file already on YT servers.")
+                break
 
             time.sleep(10)
 
-        warning(f"\t=> Hit {max_wait_s}s timeout — upload may still be in progress.")
+        if not upload_done:
+            warning(f"\t=> Upload phase timed out after {max_wait_s}s.")
+            return False
+
+        # ---------- PHASE 2 — YouTube processing ----------
+        info("\t=> File on YouTube servers. Waiting for them to finish processing...")
+        info("\t   (encoding multiple resolutions + Content ID + checks; usually 10-30 min)")
+        # Refresh so we see the post-upload status, not stale dialog state.
+        try:
+            driver.refresh()
+            time.sleep(8)
+        except Exception:
+            pass
+
+        in_progress_markers = (
+            "subiendo", "uploading",
+            "procesando", "processing",
+            "pendiente", "pending",
+            "verificando", "verificaciones en curso",
+            "checking", "checks in progress",
+        )
+
+        no_change_polls = 0
+        last_status = ""
+        last_announce = 0.0
+
+        while time.time() < deadline:
+            try:
+                body_text = driver.find_element(By.TAG_NAME, "body").text.lower()
+            except Exception:
+                body_text = ""
+
+            present_markers = [m for m in in_progress_markers if m in body_text]
+
+            if not present_markers:
+                # Nothing in-progress visible → YouTube finished processing.
+                info("\t=> YouTube finished processing — safe to close Firefox.")
+                return True
+
+            # Identify what stage we're in for the progress log.
+            if any(m in present_markers for m in ("subiendo", "uploading")):
+                current_status = "still uploading"
+            elif any(m in present_markers for m in ("procesando", "processing")):
+                current_status = "processing (encoding/checks)"
+            elif any(m in present_markers for m in ("verificando", "verificaciones en curso", "checking", "checks in progress")):
+                current_status = "running checks"
+            else:
+                current_status = "pending"
+
+            now = time.time()
+            if current_status != last_status or (now - last_announce) > 120:
+                info(f"\t=> YouTube status: {current_status} — still waiting...")
+                last_status = current_status
+                last_announce = now
+
+            no_change_polls += 1
+            # Soft cap: if processing appears stuck for ~20 min on the same status,
+            # exit gracefully — YT will keep working server-side anyway.
+            if no_change_polls > 120:  # 120 × 10s = 20 min same status
+                warning(
+                    f"\t=> YouTube has been '{current_status}' for ~20 min. Exiting wait — "
+                    "processing continues server-side. Check YT Studio in a few minutes."
+                )
+                return True
+
+            time.sleep(10)
+
+        warning(
+            f"\t=> Processing phase hit {max_wait_s}s total cap — "
+            "YouTube will keep processing on their servers regardless."
+        )
         return False
 
     def upload_video(self) -> bool:
@@ -3753,7 +3819,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             # Step 9.5: Wait for the file transfer to actually finish.
             # Long videos (100-300 MB) take several minutes AFTER Done is clicked.
             if is_long_video:
-                self._wait_for_upload_complete(driver, max_wait_s=2400)  # 40 min cap
+                self._wait_for_upload_complete(driver, max_wait_s=3600)  # 60 min total cap (upload + processing)
             else:
                 if verbose:
                     info("\t=> Short video — waiting 8s for upload to finish...")
