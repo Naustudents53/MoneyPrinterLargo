@@ -3594,22 +3594,22 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
     def _wait_for_upload_complete(self, driver, max_wait_s: int) -> bool:
         """
-        Two-phase wait so we don't close Firefox before YouTube is really done.
+        Two-phase wait. For long videos this NEVER prematurely declares "done":
+          PHASE 1 — File transfer waits until %% reaches 99-100, no matter how long
+                    the upload sits at 95/96/97/98%.
+          PHASE 2 — YouTube-side processing: keeps waiting until ALL in-progress
+                    markers (subiendo / procesando / pendiente / verificando) are
+                    gone from the page. No "stuck for 20 min, give up" shortcut.
 
-        PHASE 1 — File transfer ("Subiendo XX%" → 100%): closes when bytes are uploaded.
-        PHASE 2 — YouTube-side processing (encoding to 7 resolutions + Content ID + checks):
-                  closes when "Subiendo" / "Procesando" / "Pendiente" indicators are gone.
-
-        Returns True when both phases completed. Firefox should be safe to close after.
+        Returns True only when YouTube is fully done. Returns False on hard total cap.
         """
         info(f"\t=> Waiting up to {max_wait_s // 60} min for upload + YouTube processing...")
+        info("\t   (For long videos, Firefox WILL stay open until everything finishes.)")
         deadline = time.time() + max_wait_s
 
         # ---------- PHASE 1 — File transfer ----------
         upload_done = False
         last_pct_reported = -1
-        last_pct_seen = -1
-        no_change_polls = 0
 
         while time.time() < deadline:
             try:
@@ -3627,15 +3627,8 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     info("\t=> File transfer complete (100%). Now YouTube takes over.")
                     upload_done = True
                     break
-                if pct == last_pct_seen:
-                    no_change_polls += 1
-                else:
-                    no_change_polls = 0
-                last_pct_seen = pct
-                if no_change_polls > 30:  # 5 min frozen at same %
-                    warning(f"\t=> Progress frozen at {pct}% for ~5 min. Moving to processing wait.")
-                    upload_done = True
-                    break
+                # NO frozen-at-X% shortcut: keep waiting for the % to actually reach 99/100.
+                # Slow connections sometimes sit at 97-98% for many minutes; that's fine.
             else:
                 # No "Subiendo X%" anywhere → file likely already transferred.
                 upload_done = True
@@ -3645,12 +3638,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             time.sleep(10)
 
         if not upload_done:
-            warning(f"\t=> Upload phase timed out after {max_wait_s}s.")
+            warning(f"\t=> Upload phase hit hard cap of {max_wait_s}s.")
             return False
 
         # ---------- PHASE 2 — YouTube processing ----------
-        info("\t=> File on YouTube servers. Waiting for them to finish processing...")
-        info("\t   (encoding multiple resolutions + Content ID + checks; usually 10-30 min)")
+        info("\t=> File on YouTube servers. Waiting for processing + verification to finish...")
+        info("\t   (encoding to multiple resolutions + Content ID + policy checks — can take 30+ min)")
         # Refresh so we see the post-upload status, not stale dialog state.
         try:
             driver.refresh()
@@ -3666,9 +3659,9 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             "checking", "checks in progress",
         )
 
-        no_change_polls = 0
         last_status = ""
         last_announce = 0.0
+        last_refresh = time.time()
 
         while time.time() < deadline:
             try:
@@ -3679,41 +3672,41 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             present_markers = [m for m in in_progress_markers if m in body_text]
 
             if not present_markers:
-                # Nothing in-progress visible → YouTube finished processing.
-                info("\t=> YouTube finished processing — safe to close Firefox.")
+                info("\t=> YouTube finished processing + verification.")
                 return True
 
-            # Identify what stage we're in for the progress log.
+            # Identify the current stage for the progress log.
             if any(m in present_markers for m in ("subiendo", "uploading")):
                 current_status = "still uploading"
             elif any(m in present_markers for m in ("procesando", "processing")):
                 current_status = "processing (encoding/checks)"
             elif any(m in present_markers for m in ("verificando", "verificaciones en curso", "checking", "checks in progress")):
-                current_status = "running checks"
+                current_status = "running verification checks"
             else:
                 current_status = "pending"
 
             now = time.time()
             if current_status != last_status or (now - last_announce) > 120:
-                info(f"\t=> YouTube status: {current_status} — still waiting...")
+                info(f"\t=> YouTube status: {current_status} — still waiting (Firefox stays open)...")
                 last_status = current_status
                 last_announce = now
 
-            no_change_polls += 1
-            # Soft cap: if processing appears stuck for ~20 min on the same status,
-            # exit gracefully — YT will keep working server-side anyway.
-            if no_change_polls > 120:  # 120 × 10s = 20 min same status
-                warning(
-                    f"\t=> YouTube has been '{current_status}' for ~20 min. Exiting wait — "
-                    "processing continues server-side. Check YT Studio in a few minutes."
-                )
-                return True
+            # Periodically refresh so the page state doesn't go stale and we don't
+            # falsely think "the markers disappeared" because of a JS error.
+            if now - last_refresh > 300:  # every 5 min
+                try:
+                    driver.refresh()
+                    time.sleep(5)
+                    last_refresh = time.time()
+                except Exception:
+                    pass
 
             time.sleep(10)
 
+        # Hit the absolute cap. Firefox will stay open because of the caller's logic.
         warning(
-            f"\t=> Processing phase hit {max_wait_s}s total cap — "
-            "YouTube will keep processing on their servers regardless."
+            f"\t=> Hit total wait cap of {max_wait_s // 60} min. "
+            "Firefox will stay open so YT can keep processing — close it manually when done."
         )
         return False
 
@@ -3992,7 +3985,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             # Step 9.5: Wait for the file transfer to actually finish.
             # Long videos (100-300 MB) take several minutes AFTER Done is clicked.
             if is_long_video:
-                self._wait_for_upload_complete(driver, max_wait_s=3600)  # 60 min total cap (upload + processing)
+                self._wait_for_upload_complete(driver, max_wait_s=7200)  # 120 min total cap (upload + processing + verification)
             else:
                 if verbose:
                     info("\t=> Short video — waiting 8s for upload to finish...")
@@ -4058,10 +4051,21 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 warning(" => Could not retrieve video URL — check YouTube Studio manually. "
                         "Cache entry has placeholder URL.")
 
-            try:
-                driver.quit()
-            except Exception:
-                pass
+            # CRITICAL: never auto-close Firefox for long videos. The user has explicitly
+            # asked that the browser stay open through upload + processing + verification
+            # so they can manually confirm everything before closing it.
+            if is_long_video:
+                info("=" * 60)
+                info(" Long video upload finished. Firefox is staying OPEN.")
+                info(" → Verify in YouTube Studio that the video shows as Public/Unlisted")
+                info("   (NOT 'Subiendo', 'Procesando' or 'Pendiente').")
+                info(" → When you're satisfied, close Firefox manually.")
+                info("=" * 60)
+            else:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
             return True
 
         except Exception as e:
