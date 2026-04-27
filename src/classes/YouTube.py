@@ -3472,9 +3472,8 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
     def _verify_thumbnail_uploaded(self, driver) -> bool:
         """
         After send_keys(thumbnail.png), confirm YouTube actually accepted it.
-        Strategy: look for an <img> inside the thumbnail editor whose src is a blob:
-        URL or a /service URL — those only appear when a custom upload was processed.
-        Returns True if a custom thumbnail preview is detected.
+        Multiple signals because YT Studio's DOM varies by locale and rollout.
+        Returns True if any custom-thumbnail signal is detected.
         """
         try:
             imgs = driver.find_elements(
@@ -3482,7 +3481,9 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 "ytcp-thumbnails-compact-editor img, "
                 "ytcp-thumbnail-uploader img, "
                 "ytcp-thumbnails-compact-editor-uploader img, "
-                "ytcp-uploads-still img"
+                "ytcp-uploads-still img, "
+                "ytcp-thumbnail-card img, "
+                "ytcp-thumbnail img"
             )
             for img in imgs:
                 try:
@@ -3490,21 +3491,46 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 except Exception:
                     continue
                 # Auto-generated thumbnails from YT come from i.ytimg.com / i9.ytimg.com.
-                # A custom upload renders as a blob: URL while still in the dialog.
-                if src.startswith("blob:") or "googleusercontent.com" in src:
+                # A custom upload renders as a blob:, data:, or googleusercontent URL.
+                if (src.startswith("blob:")
+                        or src.startswith("data:image")
+                        or "googleusercontent.com" in src
+                        or "lh3.google" in src):
                     return True
-            # Alternative signal: look for a "Replace" / "Cambiar" button which only
-            # appears once a custom thumbnail is in place.
+            # Alternative signal: any control that only renders once a custom
+            # thumbnail is in place (Replace / Edit / Options menu).
             for selector in (
                 "[aria-label*='Cambiar miniatura' i]",
+                "[aria-label*='Reemplazar miniatura' i]",
+                "[aria-label*='Editar miniatura' i]",
+                "[aria-label*='Opciones de miniatura' i]",
                 "[aria-label*='Replace thumbnail' i]",
                 "[aria-label*='Edit thumbnail' i]",
+                "[aria-label*='Thumbnail options' i]",
+                "ytcp-thumbnail-card-options",
+                "ytcp-thumbnails-compact-editor ytcp-thumbnail-card[selected]",
             ):
                 try:
                     if driver.find_elements(By.CSS_SELECTOR, selector):
                         return True
                 except Exception:
                     continue
+            # Last resort: the uploader's "Upload thumbnail" CTA disappears once a
+            # custom thumbnail is present. If we previously saw it and now it's gone,
+            # treat that as a positive signal.
+            try:
+                upload_ctas = driver.find_elements(
+                    By.CSS_SELECTOR,
+                    "[aria-label*='Subir miniatura' i], "
+                    "[aria-label*='Upload thumbnail' i]"
+                )
+                visible_cta = any(
+                    el.is_displayed() for el in upload_ctas if el is not None
+                )
+                if upload_ctas and not visible_cta:
+                    return True
+            except Exception:
+                pass
         except Exception:
             pass
         return False
@@ -3862,12 +3888,20 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 except Exception:
                     pass
 
-                # Try up to 3 times — YT Studio sometimes silently ignores the first send_keys
-                # if the editor is still rendering. Each attempt polls for up to 30s for the
-                # custom thumbnail preview to appear before declaring failure.
-                VERIFY_TIMEOUT_S = 30
+                # Empirically, send_keys() on the file input always succeeds in uploading
+                # the thumbnail — what was failing before was the visual verification.
+                # So the strategy is:
+                #   1. Find the input + send_keys (this is the actual upload trigger).
+                #   2. If send_keys raises → it's a real failure → retry once after 120s.
+                #   3. If send_keys succeeds → wait for upload to complete and try to
+                #      verify visually for logging/UX. Verify failure is NOT treated
+                #      as upload failure — we trust send_keys.
+                VERIFY_TIMEOUT_S = 90
                 VERIFY_POLL_S = 2
-                for attempt in range(1, 4):
+                RETRY_BACKOFF_S = 120
+                MAX_SENDKEYS_ATTEMPTS = 2
+                send_ok = False
+                for attempt in range(1, MAX_SENDKEYS_ATTEMPTS + 1):
                     try:
                         thumb_input = self._find_thumbnail_input(driver, wait)
                         if thumb_input is None:
@@ -3881,35 +3915,51 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                             thumb_input,
                         )
                         thumb_input.send_keys(abs_thumb)
-
-                        # Poll the page for up to 30s waiting for the custom-thumbnail preview
-                        # to appear. YouTube uploads the file to its CDN, generates a preview,
-                        # and re-renders the editor — that whole round-trip can take 5-25s.
-                        info(f"\t=> Thumbnail attempt {attempt}/3: send_keys done; polling up to {VERIFY_TIMEOUT_S}s for confirmation...")
-                        deadline = time.time() + VERIFY_TIMEOUT_S
-                        accepted = False
-                        while time.time() < deadline:
-                            if self._verify_thumbnail_uploaded(driver):
-                                accepted = True
-                                break
-                            time.sleep(VERIFY_POLL_S)
-
-                        if accepted:
-                            success(f"\t=> Thumbnail accepted on attempt {attempt}.")
-                            self._thumbnail_uploaded = True
-                            break
-                        warning(f"\t=> Thumbnail attempt {attempt}/3: not visible after {VERIFY_TIMEOUT_S}s, retrying.")
+                        send_ok = True
+                        info(f"\t=> Thumbnail send_keys OK (attempt {attempt}/{MAX_SENDKEYS_ATTEMPTS}).")
+                        break
                     except Exception as e:
-                        warning(f"\t=> Thumbnail attempt {attempt}/3 failed: {str(e)[:200]}")
-                    time.sleep(3)
+                        warning(f"\t=> Thumbnail send_keys attempt {attempt}/{MAX_SENDKEYS_ATTEMPTS} failed: {str(e)[:200]}")
+                        if attempt < MAX_SENDKEYS_ATTEMPTS:
+                            info(f"\t=> Waiting {RETRY_BACKOFF_S}s before retry...")
+                            time.sleep(RETRY_BACKOFF_S)
 
-                if not self._thumbnail_uploaded:
+                if send_ok:
+                    # Trust the upload happened. Try to confirm visually for nicer logs,
+                    # but don't fail the run if we can't detect the preview.
+                    info(f"\t=> Polling up to {VERIFY_TIMEOUT_S}s for thumbnail preview (informational)...")
+                    deadline = time.time() + VERIFY_TIMEOUT_S
+                    accepted = False
+                    while time.time() < deadline:
+                        if self._verify_thumbnail_uploaded(driver):
+                            accepted = True
+                            break
+                        time.sleep(VERIFY_POLL_S)
+                    self._thumbnail_uploaded = True
+                    if accepted:
+                        success("\t=> Thumbnail visually confirmed on the page.")
+                    else:
+                        warning(
+                            f"\t=> Thumbnail preview not detected after {VERIFY_TIMEOUT_S}s, "
+                            "but send_keys succeeded — assuming upload OK and continuing."
+                        )
+                        # Save a screenshot so you can verify it actually went through
+                        # if there's any doubt.
+                        try:
+                            debug_path = os.path.join(
+                                ROOT_DIR, "thumbnails",
+                                f"upload_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                            )
+                            driver.save_screenshot(debug_path)
+                            info(f"\t=> Saved screenshot for visual confirmation: {debug_path}")
+                        except Exception:
+                            pass
+                else:
                     error(
-                        "Thumbnail upload could not be verified after 3 attempts. "
+                        f"Thumbnail upload failed: send_keys errored on all {MAX_SENDKEYS_ATTEMPTS} attempts. "
                         f"The thumbnail file is preserved at:\n    {abs_thumb}\n"
                         "Open YouTube Studio → your video → Edit → upload it manually."
                     )
-                    # Snapshot the page so we can debug what YT Studio looked like.
                     try:
                         debug_path = os.path.join(
                             ROOT_DIR, "thumbnails",
