@@ -3618,6 +3618,155 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         return channel_id
 
+    def _wait_for_short_upload_complete(self, driver, max_wait_s: int) -> bool:
+        """
+        Wait for a Short to finish uploading + processing WITHOUT touching the
+        original tab (where the upload is happening in the background).
+
+        IMPORTANT: navigating the upload tab to a different URL while the file
+        transfer is still in flight CANCELS the upload (YouTube shows "Upload
+        interrupted"). So we open a SECOND tab, do the status polling there,
+        close it, and return to the original tab untouched.
+
+        Strategy:
+          1. Open a new browser tab via JS.
+          2. Switch to it and navigate to /videos/short.
+          3. Poll the row matching our title until in-progress markers disappear
+             (Subiendo / Uploading / Pendiente / Pending / Procesando / Processing /
+             Verificando / Checking / Cancelar carga).
+          4. ALWAYS close the new tab and switch back to the original tab.
+
+        Returns True when the row settles, False on hard timeout / error.
+        """
+        info(f"\t=> Waiting up to {max_wait_s // 60} min for Short upload + processing...")
+        info("\t   (polling in a SEPARATE tab so the upload tab is never disturbed)")
+
+        deadline = time.time() + max_wait_s
+        listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/short"
+        target_title = (self.metadata.get("title") or "").strip()
+        target_match = target_title[:50] if target_title else ""
+
+        in_progress_markers = (
+            "subiendo", "uploading",
+            "procesando", "processing",
+            "pendiente", "pending",
+            "verificando", "verificaciones en curso",
+            "checking", "checks in progress",
+            "cancelar carga", "cancel upload",
+        )
+
+        original_handle = driver.current_window_handle
+        status_handle = None
+        try:
+            existing = set(driver.window_handles)
+            driver.execute_script("window.open('about:blank', '_blank');")
+            time.sleep(1)
+            new_handles = [h for h in driver.window_handles if h not in existing]
+            if not new_handles:
+                warning("\t=> Could not open status-check tab; falling back to in-place wait.")
+                # Safer fallback: blind wait on the current page (don't navigate).
+                info(f"\t=> Sleeping {min(max_wait_s, 180)}s in place to let upload complete...")
+                time.sleep(min(max_wait_s, 180))
+                return True
+            status_handle = new_handles[0]
+            driver.switch_to.window(status_handle)
+
+            try:
+                driver.get(listing_url)
+                time.sleep(5)
+            except Exception as e:
+                warning(f"\t=> Could not navigate status tab to listing: {e}")
+                return False
+
+            last_status = ""
+            last_announce = 0.0
+            last_refresh = time.time()
+            stable_done_count = 0  # require 2 consecutive "no markers" reads to call it done
+
+            while time.time() < deadline:
+                row_text = ""
+                try:
+                    rows = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
+                    chosen_row = None
+                    if target_match:
+                        for r in rows[:15]:
+                            try:
+                                t = r.text.strip()
+                            except Exception:
+                                t = ""
+                            if target_match in t:
+                                chosen_row = r
+                                break
+                    if chosen_row is None and rows:
+                        chosen_row = rows[0]
+                    if chosen_row is not None:
+                        row_text = chosen_row.text.lower()
+                except Exception:
+                    row_text = ""
+
+                if row_text:
+                    present = [m for m in in_progress_markers if m in row_text]
+                    if not present:
+                        stable_done_count += 1
+                        if stable_done_count >= 2:
+                            info("\t=> Short upload + processing finished.")
+                            return True
+                        info("\t=> Short looks done; confirming with one more poll...")
+                    else:
+                        stable_done_count = 0
+                        if "subiendo" in present or "uploading" in present:
+                            current_status = "uploading"
+                        elif "procesando" in present or "processing" in present:
+                            current_status = "processing"
+                        elif ("verificando" in present or "checking" in present
+                              or "verificaciones en curso" in present
+                              or "checks in progress" in present):
+                            current_status = "running checks"
+                        else:
+                            current_status = "pending"
+                        now = time.time()
+                        if current_status != last_status or (now - last_announce) > 60:
+                            info(f"\t=> Short status: {current_status} — still waiting (upload tab untouched)...")
+                            last_status = current_status
+                            last_announce = now
+                else:
+                    stable_done_count = 0
+                    now = time.time()
+                    if (now - last_announce) > 60:
+                        info("\t=> Waiting for Short to appear in listing...")
+                        last_announce = now
+
+                now = time.time()
+                if now - last_refresh > 60:
+                    try:
+                        driver.refresh()
+                        time.sleep(5)
+                        last_refresh = time.time()
+                    except Exception:
+                        pass
+
+                time.sleep(8)
+
+            warning(
+                f"\t=> Hit total wait cap of {max_wait_s // 60} min for Short. "
+                "Firefox will stay open so YT can keep processing — close it manually when done."
+            )
+            return False
+        finally:
+            # ALWAYS clean up: close the status tab and return to the upload tab.
+            # If we don't, subsequent driver.get() calls will run on the wrong tab.
+            try:
+                if status_handle and status_handle in driver.window_handles:
+                    driver.switch_to.window(status_handle)
+                    driver.close()
+            except Exception:
+                pass
+            try:
+                if original_handle in driver.window_handles:
+                    driver.switch_to.window(original_handle)
+            except Exception:
+                pass
+
     def _wait_for_upload_complete(self, driver, max_wait_s: int) -> bool:
         """
         Two-phase wait. For long videos this NEVER prematurely declares "done":
@@ -4034,12 +4183,23 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
             # Step 9.5: Wait for the file transfer to actually finish.
             # Long videos (100-300 MB) take several minutes AFTER Done is clicked.
+            # Shorts use a DIFFERENT wait strategy: by the time Done is clicked the
+            # upload dialog is already being dismissed, so its "Subiendo X%" text is
+            # gone — we navigate to the channel's Shorts listing and poll the row
+            # there until the in-progress markers (Subiendo / Pendiente / Procesando /
+            # Cancelar carga) disappear.
             if is_long_video:
-                self._wait_for_upload_complete(driver, max_wait_s=7200)  # 120 min total cap (upload + processing + verification)
+                upload_finished = self._wait_for_upload_complete(driver, max_wait_s=7200)  # 120 min total cap
             else:
                 if verbose:
-                    info("\t=> Short video — waiting 8s for upload to finish...")
-                time.sleep(8)
+                    info("\t=> Short video — polling listing page for upload + processing...")
+                # Make sure we know our channel ID before navigating to /videos/short.
+                if not getattr(self, "channel_id", None):
+                    try:
+                        self.get_channel_id()
+                    except Exception as e:
+                        warning(f"Could not resolve channel_id before short wait: {e}")
+                upload_finished = self._wait_for_short_upload_complete(driver, max_wait_s=1800)  # 30 min total cap
 
             # Step 10: Get the video URL
             if verbose:
@@ -4104,6 +4264,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             # CRITICAL: never auto-close Firefox for long videos. The user has explicitly
             # asked that the browser stay open through upload + processing + verification
             # so they can manually confirm everything before closing it.
+            #
+            # For shorts: only close Firefox if we BOTH (a) saw the wait-for-upload
+            # finish cleanly AND (b) successfully retrieved the public URL. Otherwise
+            # leave it open so the user can confirm manually — same philosophy as long
+            # videos, just less verbose.
             if is_long_video:
                 info("=" * 60)
                 info(" Long video upload finished. Firefox is staying OPEN.")
@@ -4112,26 +4277,34 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 info(" → When you're satisfied, close Firefox manually.")
                 info("=" * 60)
             else:
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
+                short_confirmed = bool(upload_finished) and bool(url)
+                if short_confirmed:
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                else:
+                    warning("=" * 60)
+                    warning(" Short upload could NOT be fully confirmed. Firefox is staying OPEN.")
+                    if not upload_finished:
+                        warning(" → Wait-for-upload did not complete cleanly within the timeout.")
+                    if not url:
+                        warning(" → Could not retrieve the public video URL.")
+                    warning(" → Verify in YouTube Studio that the short shows as Public/Unlisted,")
+                    warning("   then close Firefox manually.")
+                    warning("=" * 60)
             return True
 
         except Exception as e:
             import traceback
             error(f"Upload failed: {e}")
             traceback.print_exc()
-            # DO NOT quit the driver on exception during a long video upload — the upload
-            # may still be in progress and Firefox closing would abort it.
-            if not bool(getattr(self, "_is_long_video", False)):
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
-            else:
-                warning("Long video — leaving Firefox open so the upload can finish in the background. "
-                        "Close the browser manually after YouTube Studio shows the upload is done.")
+            # DO NOT quit the driver on exception — the upload may still be in flight
+            # in the background and closing Firefox would abort it. Keep the browser
+            # open in BOTH long-video and short modes so the user can confirm what
+            # actually made it to YouTube before closing manually.
+            warning("Leaving Firefox open so the upload can finish in the background. "
+                    "Close the browser manually after YouTube Studio shows the upload is done.")
             return False
 
     def _update_last_video_url(self, date_marker: str, new_url: str) -> None:
