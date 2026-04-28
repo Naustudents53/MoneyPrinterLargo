@@ -3942,6 +3942,22 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             "carga interrumpida",
             "upload interrupted",
         )
+        # YT Studio "Oops, something went wrong" / "Algo salió mal" page.
+        # When this shows up, the listing tab is broken — refresh() alone
+        # often can't recover, so we re-navigate to the URL.
+        studio_error_markers = (
+            "oops, something went wrong",
+            "something went wrong",
+            "algo salió mal",
+            "algo salio mal",
+            "ha ocurrido un error",
+            "se produjo un error",
+            "intenta volver a cargar",
+            "try reloading",
+            "try again later",
+            "vuelve a intentarlo",
+        )
+        max_studio_error_retries = 5
 
         original_handle = driver.current_window_handle
         status_handle = None
@@ -3970,11 +3986,15 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             last_announce = 0.0
             last_refresh = time.time()
             stable_done_count = 0  # require 2 consecutive "no markers" reads to call it done
+            studio_error_retries = 0
+            consecutive_empty_polls = 0
 
             while time.time() < deadline:
                 row_text = ""
+                rows_found = 0
                 try:
                     rows = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
+                    rows_found = len(rows)
                     chosen_row = None
                     if target_match:
                         for r in rows[:15]:
@@ -3992,7 +4012,43 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 except Exception:
                     row_text = ""
 
+                # Detect YT Studio's generic error page (no rows + "oops" text in body).
+                # When it shows up, plain refresh() often can't rescue it — re-navigate.
+                if rows_found == 0:
+                    page_text = ""
+                    try:
+                        page_text = (driver.find_element(By.TAG_NAME, "body").text or "").lower()
+                    except Exception:
+                        page_text = ""
+                    if any(m in page_text for m in studio_error_markers):
+                        studio_error_retries += 1
+                        if studio_error_retries > max_studio_error_retries:
+                            warning(
+                                f"\t=> YT Studio listing keeps showing an error page after "
+                                f"{max_studio_error_retries} retries. Giving up on the polling "
+                                "tab — the upload tab itself is untouched and likely fine. "
+                                "Verify manually in Studio."
+                            )
+                            return False
+                        warning(
+                            f"\t=> YT Studio listing showed an error page "
+                            f"(retry {studio_error_retries}/{max_studio_error_retries}). "
+                            "Re-navigating the polling tab..."
+                        )
+                        try:
+                            driver.get(listing_url)
+                            time.sleep(8)
+                            last_refresh = time.time()
+                        except Exception as e:
+                            warning(f"\t=> Re-navigation failed: {e}")
+                        consecutive_empty_polls = 0
+                        time.sleep(poll_interval_s)
+                        continue
+
                 if row_text:
+                    studio_error_retries = 0
+                    consecutive_empty_polls = 0
+
                     if any(m in row_text for m in error_markers):
                         error(
                             f"\t=> {kind_label} upload was INTERRUPTED by YouTube. "
@@ -4026,10 +4082,35 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                             last_announce = now
                 else:
                     stable_done_count = 0
+                    consecutive_empty_polls += 1
                     now = time.time()
                     if (now - last_announce) > 60:
                         info(f"\t=> Waiting for {kind_label} to appear in listing...")
                         last_announce = now
+                    # If many polls in a row return zero rows (no error text either —
+                    # could be a slow render, ghost spinner, or a blank Studio page),
+                    # force a hard re-navigation rather than waiting for the next refresh.
+                    if consecutive_empty_polls >= 8:
+                        studio_error_retries += 1
+                        if studio_error_retries > max_studio_error_retries:
+                            warning(
+                                "\t=> Polling tab never showed any rows after multiple "
+                                "re-navigations. Giving up — verify manually in Studio."
+                            )
+                            return False
+                        warning(
+                            f"\t=> Polling tab is empty after {consecutive_empty_polls} polls "
+                            f"(retry {studio_error_retries}/{max_studio_error_retries}). Re-navigating..."
+                        )
+                        try:
+                            driver.get(listing_url)
+                            time.sleep(8)
+                            last_refresh = time.time()
+                        except Exception as e:
+                            warning(f"\t=> Re-navigation failed: {e}")
+                        consecutive_empty_polls = 0
+                        time.sleep(poll_interval_s)
+                        continue
 
                 now = time.time()
                 if now - last_refresh > refresh_interval_s:
@@ -4074,6 +4155,19 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         target_title = (self.metadata.get("title") or "").strip()
         target_match = target_title[:50] if target_title else ""
 
+        studio_error_markers = (
+            "oops, something went wrong",
+            "something went wrong",
+            "algo salió mal",
+            "algo salio mal",
+            "ha ocurrido un error",
+            "se produjo un error",
+            "intenta volver a cargar",
+            "try reloading",
+            "try again later",
+            "vuelve a intentarlo",
+        )
+
         original_handle = driver.current_window_handle
         status_handle = None
         try:
@@ -4085,10 +4179,42 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 return ""
             status_handle = new_handles[0]
             driver.switch_to.window(status_handle)
-            driver.get(listing_url)
-            time.sleep(3)
 
-            videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
+            # Retry the navigation if YT Studio greets us with the "Oops"
+            # error page or with an empty listing. Up to 5 attempts, each
+            # gives the page a few seconds to render.
+            videos = []
+            for attempt in range(1, 6):
+                try:
+                    driver.get(listing_url)
+                except Exception as e:
+                    warning(f"URL-resolve navigation failed (attempt {attempt}): {e}")
+                    time.sleep(3)
+                    continue
+                time.sleep(4 if attempt == 1 else 6)
+
+                try:
+                    videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
+                except Exception:
+                    videos = []
+
+                if videos:
+                    break
+
+                page_text = ""
+                try:
+                    page_text = (driver.find_element(By.TAG_NAME, "body").text or "").lower()
+                except Exception:
+                    page_text = ""
+                if any(m in page_text for m in studio_error_markers):
+                    warning(
+                        f"URL-resolve listing showed an error page (attempt {attempt}/5). Retrying..."
+                    )
+                    time.sleep(2)
+                    continue
+                # No rows, no error — listing might just be slow. Retry anyway.
+                time.sleep(2)
+
             chosen_href = None
             for row in videos[:15]:
                 try:
