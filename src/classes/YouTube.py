@@ -3618,31 +3618,51 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         return channel_id
 
-    def _wait_for_short_upload_complete(self, driver, max_wait_s: int) -> bool:
+    def _wait_for_listing_settled(
+        self,
+        driver,
+        listing_tab: str,
+        kind_label: str,
+        max_wait_s: int,
+        poll_interval_s: int = 8,
+        refresh_interval_s: int = 60,
+    ) -> bool:
         """
-        Wait for a Short to finish uploading + processing WITHOUT touching the
-        original tab (where the upload is happening in the background).
+        Wait for an upload (Short or long video) to finish transferring + processing,
+        WITHOUT touching the original tab where the upload runs in the background.
 
-        IMPORTANT: navigating the upload tab to a different URL while the file
-        transfer is still in flight CANCELS the upload (YouTube shows "Upload
-        interrupted"). So we open a SECOND tab, do the status polling there,
-        close it, and return to the original tab untouched.
+        IMPORTANT: navigating or refreshing the upload tab while the HTTP file
+        transfer is in flight CANCELS the upload (YouTube shows
+        "Upload interrupted" / "Subida interrumpida"). We therefore open a SECOND
+        tab, do all polling there, close it, and return to the original tab
+        untouched.
 
         Strategy:
           1. Open a new browser tab via JS.
-          2. Switch to it and navigate to /videos/short.
-          3. Poll the row matching our title until in-progress markers disappear
-             (Subiendo / Uploading / Pendiente / Pending / Procesando / Processing /
-             Verificando / Checking / Cancelar carga).
-          4. ALWAYS close the new tab and switch back to the original tab.
+          2. Switch to it and navigate to /videos/<listing_tab>.
+          3. Poll the row matching our title until ALL in-progress markers
+             disappear (Subiendo / Uploading / Pendiente / Pending / Procesando /
+             Processing / Verificando / Checking / Cancelar carga).
+          4. If we see an explicit "Subida interrumpida / Upload interrupted"
+             marker, abort early and tell the user.
+          5. ALWAYS close the new tab and switch back to the original tab.
 
-        Returns True when the row settles, False on hard timeout / error.
+        Args:
+            listing_tab: "short" for Shorts, "upload_video" for long videos.
+            kind_label: human-readable label used only in log lines.
+            max_wait_s: hard total cap.
+            poll_interval_s: time between row reads.
+            refresh_interval_s: time between status-tab refreshes.
+
+        Returns:
+            True when the row settles cleanly, False on timeout or detected
+            interruption.
         """
-        info(f"\t=> Waiting up to {max_wait_s // 60} min for Short upload + processing...")
+        info(f"\t=> Waiting up to {max_wait_s // 60} min for {kind_label} upload + processing...")
         info("\t   (polling in a SEPARATE tab so the upload tab is never disturbed)")
 
         deadline = time.time() + max_wait_s
-        listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/short"
+        listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
         target_title = (self.metadata.get("title") or "").strip()
         target_match = target_title[:50] if target_title else ""
 
@@ -3653,6 +3673,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             "verificando", "verificaciones en curso",
             "checking", "checks in progress",
             "cancelar carga", "cancel upload",
+        )
+        # Hard-fail markers: YouTube has explicitly interrupted the transfer.
+        error_markers = (
+            "subida interrumpida",
+            "carga interrumpida",
+            "upload interrupted",
         )
 
         original_handle = driver.current_window_handle
@@ -3705,13 +3731,20 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     row_text = ""
 
                 if row_text:
+                    if any(m in row_text for m in error_markers):
+                        error(
+                            f"\t=> {kind_label} upload was INTERRUPTED by YouTube. "
+                            "Open the original tab and click 'Reanudar carga / Resume upload' manually."
+                        )
+                        return False
+
                     present = [m for m in in_progress_markers if m in row_text]
                     if not present:
                         stable_done_count += 1
                         if stable_done_count >= 2:
-                            info("\t=> Short upload + processing finished.")
+                            info(f"\t=> {kind_label} upload + processing finished.")
                             return True
-                        info("\t=> Short looks done; confirming with one more poll...")
+                        info(f"\t=> {kind_label} looks done; confirming with one more poll...")
                     else:
                         stable_done_count = 0
                         if "subiendo" in present or "uploading" in present:
@@ -3726,18 +3759,18 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                             current_status = "pending"
                         now = time.time()
                         if current_status != last_status or (now - last_announce) > 60:
-                            info(f"\t=> Short status: {current_status} — still waiting (upload tab untouched)...")
+                            info(f"\t=> {kind_label} status: {current_status} — still waiting (upload tab untouched)...")
                             last_status = current_status
                             last_announce = now
                 else:
                     stable_done_count = 0
                     now = time.time()
                     if (now - last_announce) > 60:
-                        info("\t=> Waiting for Short to appear in listing...")
+                        info(f"\t=> Waiting for {kind_label} to appear in listing...")
                         last_announce = now
 
                 now = time.time()
-                if now - last_refresh > 60:
+                if now - last_refresh > refresh_interval_s:
                     try:
                         driver.refresh()
                         time.sleep(5)
@@ -3745,10 +3778,10 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     except Exception:
                         pass
 
-                time.sleep(8)
+                time.sleep(poll_interval_s)
 
             warning(
-                f"\t=> Hit total wait cap of {max_wait_s // 60} min for Short. "
+                f"\t=> Hit total wait cap of {max_wait_s // 60} min for {kind_label}. "
                 "Firefox will stay open so YT can keep processing — close it manually when done."
             )
             return False
@@ -3767,123 +3800,70 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             except Exception:
                 pass
 
-    def _wait_for_upload_complete(self, driver, max_wait_s: int) -> bool:
+    def _resolve_video_url_safe(self, driver, listing_tab: str) -> str:
         """
-        Two-phase wait. For long videos this NEVER prematurely declares "done":
-          PHASE 1 — File transfer waits until %% reaches 99-100, no matter how long
-                    the upload sits at 95/96/97/98%.
-          PHASE 2 — YouTube-side processing: keeps waiting until ALL in-progress
-                    markers (subiendo / procesando / pendiente / verificando) are
-                    gone from the page. No "stuck for 20 min, give up" shortcut.
-
-        Returns True only when YouTube is fully done. Returns False on hard total cap.
+        Resolve the public URL of the just-uploaded video using a SEPARATE tab,
+        so the original upload tab is never navigated. Same status-tab pattern
+        as `_wait_for_listing_settled`. Returns "" if it can't find a match.
         """
-        info(f"\t=> Waiting up to {max_wait_s // 60} min for upload + YouTube processing...")
-        info("\t   (For long videos, Firefox WILL stay open until everything finishes.)")
-        deadline = time.time() + max_wait_s
+        if not getattr(self, "channel_id", None):
+            return ""
+        listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+        target_title = (self.metadata.get("title") or "").strip()
+        target_match = target_title[:50] if target_title else ""
 
-        # ---------- PHASE 1 — File transfer ----------
-        upload_done = False
-        last_pct_reported = -1
-
-        while time.time() < deadline:
-            try:
-                body_text = driver.find_element(By.TAG_NAME, "body").text.lower()
-            except Exception:
-                body_text = ""
-
-            m = re.search(r"(?:subiendo|uploading)[^\d%]{0,15}(\d{1,3})\s*%", body_text)
-            if m:
-                pct = int(m.group(1))
-                if pct != last_pct_reported:
-                    info(f"\t=> Upload progress: {pct}%")
-                    last_pct_reported = pct
-                if pct >= 99:
-                    info("\t=> File transfer complete (100%). Now YouTube takes over.")
-                    upload_done = True
-                    break
-                # NO frozen-at-X% shortcut: keep waiting for the % to actually reach 99/100.
-                # Slow connections sometimes sit at 97-98% for many minutes; that's fine.
-            else:
-                # No "Subiendo X%" anywhere → file likely already transferred.
-                upload_done = True
-                info("\t=> No upload progress indicator visible — assuming file already on YT servers.")
-                break
-
-            time.sleep(10)
-
-        if not upload_done:
-            warning(f"\t=> Upload phase hit hard cap of {max_wait_s}s.")
-            return False
-
-        # ---------- PHASE 2 — YouTube processing ----------
-        info("\t=> File on YouTube servers. Waiting for processing + verification to finish...")
-        info("\t   (encoding to multiple resolutions + Content ID + policy checks — can take 30+ min)")
-        # Refresh so we see the post-upload status, not stale dialog state.
+        original_handle = driver.current_window_handle
+        status_handle = None
         try:
-            driver.refresh()
-            time.sleep(8)
-        except Exception:
-            pass
+            existing = set(driver.window_handles)
+            driver.execute_script("window.open('about:blank', '_blank');")
+            time.sleep(1)
+            new_handles = [h for h in driver.window_handles if h not in existing]
+            if not new_handles:
+                return ""
+            status_handle = new_handles[0]
+            driver.switch_to.window(status_handle)
+            driver.get(listing_url)
+            time.sleep(3)
 
-        in_progress_markers = (
-            "subiendo", "uploading",
-            "procesando", "processing",
-            "pendiente", "pending",
-            "verificando", "verificaciones en curso",
-            "checking", "checks in progress",
-        )
-
-        last_status = ""
-        last_announce = 0.0
-        last_refresh = time.time()
-
-        while time.time() < deadline:
-            try:
-                body_text = driver.find_element(By.TAG_NAME, "body").text.lower()
-            except Exception:
-                body_text = ""
-
-            present_markers = [m for m in in_progress_markers if m in body_text]
-
-            if not present_markers:
-                info("\t=> YouTube finished processing + verification.")
-                return True
-
-            # Identify the current stage for the progress log.
-            if any(m in present_markers for m in ("subiendo", "uploading")):
-                current_status = "still uploading"
-            elif any(m in present_markers for m in ("procesando", "processing")):
-                current_status = "processing (encoding/checks)"
-            elif any(m in present_markers for m in ("verificando", "verificaciones en curso", "checking", "checks in progress")):
-                current_status = "running verification checks"
-            else:
-                current_status = "pending"
-
-            now = time.time()
-            if current_status != last_status or (now - last_announce) > 120:
-                info(f"\t=> YouTube status: {current_status} — still waiting (Firefox stays open)...")
-                last_status = current_status
-                last_announce = now
-
-            # Periodically refresh so the page state doesn't go stale and we don't
-            # falsely think "the markers disappeared" because of a JS error.
-            if now - last_refresh > 300:  # every 5 min
+            videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
+            chosen_href = None
+            for row in videos[:15]:
                 try:
-                    driver.refresh()
-                    time.sleep(5)
-                    last_refresh = time.time()
+                    row_text = row.text.strip()
                 except Exception:
-                    pass
+                    row_text = ""
+                if target_match and target_match in row_text:
+                    try:
+                        chosen_href = row.find_element(By.TAG_NAME, "a").get_attribute("href")
+                        break
+                    except Exception:
+                        continue
+            if not chosen_href and videos:
+                try:
+                    chosen_href = videos[0].find_element(By.TAG_NAME, "a").get_attribute("href")
+                except Exception:
+                    chosen_href = None
 
-            time.sleep(10)
-
-        # Hit the absolute cap. Firefox will stay open because of the caller's logic.
-        warning(
-            f"\t=> Hit total wait cap of {max_wait_s // 60} min. "
-            "Firefox will stay open so YT can keep processing — close it manually when done."
-        )
-        return False
+            if chosen_href:
+                video_id = chosen_href.split("/")[-2]
+                return build_url(video_id)
+            return ""
+        except Exception as e:
+            warning(f"Could not resolve URL via status tab: {e}")
+            return ""
+        finally:
+            try:
+                if status_handle and status_handle in driver.window_handles:
+                    driver.switch_to.window(status_handle)
+                    driver.close()
+            except Exception:
+                pass
+            try:
+                if original_handle in driver.window_handles:
+                    driver.switch_to.window(original_handle)
+            except Exception:
+                pass
 
     def upload_video(self) -> bool:
         """
@@ -4182,71 +4162,90 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 warning(f"Could not pre-save cache entry: {e}")
 
             # Step 9.5: Wait for the file transfer to actually finish.
-            # Long videos (100-300 MB) take several minutes AFTER Done is clicked.
-            # Shorts use a DIFFERENT wait strategy: by the time Done is clicked the
-            # upload dialog is already being dismissed, so its "Subiendo X%" text is
-            # gone — we navigate to the channel's Shorts listing and poll the row
-            # there until the in-progress markers (Subiendo / Pendiente / Procesando /
-            # Cancelar carga) disappear.
+            # Both long videos and Shorts now use the SAME strategy: poll the
+            # channel listing in a SEPARATE tab so the upload tab is never
+            # navigated/refreshed (which would cancel the upload). The only
+            # differences are the listing URL and the timeouts.
+            if not getattr(self, "channel_id", None):
+                try:
+                    self.get_channel_id()
+                except Exception as e:
+                    warning(f"Could not resolve channel_id before upload wait: {e}")
+
             if is_long_video:
-                upload_finished = self._wait_for_upload_complete(driver, max_wait_s=7200)  # 120 min total cap
+                if verbose:
+                    info("\t=> Long video — polling listing page in a separate tab...")
+                upload_finished = self._wait_for_listing_settled(
+                    driver,
+                    listing_tab="upload_video",
+                    kind_label="long video",
+                    max_wait_s=10800,        # 3h total cap (HD 30+ min videos can take a while to encode)
+                    poll_interval_s=15,
+                    refresh_interval_s=120,  # refresh status tab every 2 min
+                )
             else:
                 if verbose:
-                    info("\t=> Short video — polling listing page for upload + processing...")
-                # Make sure we know our channel ID before navigating to /videos/short.
-                if not getattr(self, "channel_id", None):
-                    try:
-                        self.get_channel_id()
-                    except Exception as e:
-                        warning(f"Could not resolve channel_id before short wait: {e}")
-                upload_finished = self._wait_for_short_upload_complete(driver, max_wait_s=1800)  # 30 min total cap
+                    info("\t=> Short video — polling listing page in a separate tab...")
+                upload_finished = self._wait_for_listing_settled(
+                    driver,
+                    listing_tab="short",
+                    kind_label="Short",
+                    max_wait_s=1800,         # 30 min total cap
+                    poll_interval_s=8,
+                    refresh_interval_s=60,
+                )
 
-            # Step 10: Get the video URL
+            # Step 10: Get the video URL.
+            # For long videos we ALWAYS resolve via a separate tab — even when
+            # the wait succeeded, navigating the original tab is risky if any
+            # background processing is still in flight, and the user has asked
+            # that the upload tab never be touched programmatically.
             if verbose:
                 info("\t=> Getting video URL...")
 
+            listing_tab = "upload_video" if is_long_video else "short"
             url = None
-            try:
-                # Long videos live under /videos/upload_video; shorts under /videos/short.
-                # Hardcoding /videos/short for a long upload would grab the wrong row.
-                listing_tab = "upload_video" if is_long_video else "short"
-                driver.get(
-                    f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
-                )
-                time.sleep(3)
 
-                # Match by exact title to avoid grabbing the wrong row when a recent
-                # upload of another kind shows up at the top.
-                target_title = (self.metadata.get("title") or "").strip()
-                videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
+            if is_long_video:
+                url = self._resolve_video_url_safe(driver, listing_tab) or None
+            else:
+                # Shorts: original behavior (navigate the same tab — Firefox is
+                # about to be closed anyway when the short upload is confirmed).
+                try:
+                    driver.get(
+                        f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+                    )
+                    time.sleep(3)
 
-                chosen_href = None
-                for row in videos[:15]:
-                    try:
-                        row_text = row.text.strip()
-                    except Exception:
-                        row_text = ""
-                    if target_title and target_title[:50] in row_text:
+                    target_title = (self.metadata.get("title") or "").strip()
+                    videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
+
+                    chosen_href = None
+                    for row in videos[:15]:
                         try:
-                            chosen_href = row.find_element(By.TAG_NAME, "a").get_attribute("href")
-                            break
+                            row_text = row.text.strip()
                         except Exception:
-                            continue
+                            row_text = ""
+                        if target_title and target_title[:50] in row_text:
+                            try:
+                                chosen_href = row.find_element(By.TAG_NAME, "a").get_attribute("href")
+                                break
+                            except Exception:
+                                continue
 
-                if not chosen_href and videos:
-                    # Fallback: take the first row (most recent).
-                    try:
-                        chosen_href = videos[0].find_element(By.TAG_NAME, "a").get_attribute("href")
-                    except Exception:
-                        chosen_href = None
+                    if not chosen_href and videos:
+                        try:
+                            chosen_href = videos[0].find_element(By.TAG_NAME, "a").get_attribute("href")
+                        except Exception:
+                            chosen_href = None
 
-                if chosen_href:
-                    if verbose:
-                        info(f"\t=> Found URL: {chosen_href}")
-                    video_id = chosen_href.split("/")[-2]
-                    url = build_url(video_id)
-            except Exception as e:
-                warning(f"Could not get video URL: {e}")
+                    if chosen_href:
+                        if verbose:
+                            info(f"\t=> Found URL: {chosen_href}")
+                        video_id = chosen_href.split("/")[-2]
+                        url = build_url(video_id)
+                except Exception as e:
+                    warning(f"Could not get video URL: {e}")
 
             if url:
                 self.uploaded_video_url = url
