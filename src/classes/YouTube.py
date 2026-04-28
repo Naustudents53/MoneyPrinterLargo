@@ -70,6 +70,183 @@ HOOK_PROFILES: dict = {
 }
 
 
+# Civilization-specific art-style presets for AI image prompts. When the
+# video subject matches keywords from one of these civilizations, the
+# corresponding `style` suffix replaces the channel's `image_style` so the
+# generated images mimic that civilization's traditional art (instead of
+# generic AI photorealism). Keyword matching is accent-insensitive and
+# case-insensitive. Edit freely — the mapping is consulted by
+# `_detect_civilization_style` and applied in `_apply_channel_style`.
+CIVILIZATION_ART_STYLES: dict = {
+    "roman": {
+        "keywords": [
+            "roma", "romano", "romana", "romanos", "rome", "roman",
+            "cesar", "augusto", "neron", "caligula", "trajano", "adriano",
+            "constantino", "imperio romano", "republica romana",
+            "pompeya", "pompeii", "coliseo", "colosseum", "vestal",
+            "legion romana", "gladiador", "centurion",
+        ],
+        "style": "Roman fresco style, Pompeii mural aesthetic, classical Mediterranean palette, hand-painted illustration, non-photorealistic, period-accurate museum artwork",
+    },
+    "greek": {
+        "keywords": [
+            "grecia", "griego", "griega", "griegos", "greece", "greek",
+            "atenas", "athens", "esparta", "sparta",
+            "alejandro magno", "alexander the great",
+            "platon", "plato", "aristoteles", "aristotle", "socrates",
+            "homero", "homer", "iliada", "iliad", "odisea", "odyssey",
+            "olimpo", "olympus", "partenon", "parthenon",
+            "helenico", "hellenic", "minoico", "micenico", "mycenaean",
+        ],
+        "style": "ancient Greek red-figure pottery aesthetic, classical marble sculpture, hand-painted illustration, ochre and black palette, period-accurate non-photorealistic art",
+    },
+    "chinese": {
+        "keywords": [
+            "china", "chino", "chinos", "chinese",
+            "qin shi huang", "shi huang",
+            "dinastia han", "dinastia tang", "dinastia song",
+            "dinastia ming", "dinastia qing",
+            "confucio", "confucius", "lao tse", "laozi",
+            "muralla china", "great wall",
+            "ciudad prohibida", "forbidden city",
+            "guerreros de terracota", "terracotta army",
+        ],
+        "style": "Chinese ink wash painting, Song dynasty scroll aesthetic, traditional brushwork, soft mist palette, period-accurate non-photorealistic illustration",
+    },
+    "japanese": {
+        "keywords": [
+            "japon", "japan", "japones", "japonesa", "japanese",
+            "samurai", "shogun", "ronin", "ninja",
+            "kioto", "kyoto", "tokio", "tokyo",
+            "periodo edo", "edo period", "meiji", "kamikaze",
+            "bushido", "geisha", "yamato",
+        ],
+        "style": "Japanese ukiyo-e woodblock print, Edo period aesthetic, Hokusai/Hiroshige style, flat color planes, bold outlines, period-accurate non-photorealistic illustration",
+    },
+    "indian": {
+        "keywords": [
+            "india", "indio", "indios", "indian", "hindu", "hinduismo",
+            "buda", "buddha", "ashoka", "mauryan", "maurya",
+            "mughal", "mogol", "rajput",
+            "ganges", "varanasi", "delhi", "taj mahal",
+        ],
+        "style": "Mughal miniature painting, Rajput manuscript illumination, intricate ornamental detail, vivid jewel tones, gold leaf accents, period-accurate non-photorealistic illustration",
+    },
+    "mayan": {
+        "keywords": [
+            "maya", "mayas", "mayan",
+            "tikal", "chichen", "palenque", "yucatan",
+            "kukulkan", "popol vuh", "bonampak", "copan",
+        ],
+        "style": "Mayan codex style, pre-Columbian Mesoamerican glyphs, Bonampak mural palette, flat figures with bold outlines, period-accurate non-photorealistic illustration",
+    },
+    "inca": {
+        "keywords": [
+            "inca", "incas", "incaico", "incaica",
+            "machu picchu", "cuzco", "cusco",
+            "atahualpa", "manco capac",
+            "imperio incaico", "imperio inca", "andino", "andean", "quechua",
+        ],
+        "style": "Andean textile pattern aesthetic, Inca and Moche pottery art, geometric stepped motifs, earth-tone palette, period-accurate non-photorealistic illustration",
+    },
+    "egyptian": {
+        "keywords": [
+            "egipto", "egipcio", "egipcia", "egipcios", "egypt", "egyptian",
+            "faraon", "pharaoh", "tutankamon", "tutankhamun",
+            "cleopatra", "ramses", "ramesses", "nefertiti",
+            "nilo", "nile",
+            "piramide", "piramides", "pyramid", "pyramids",
+            "esfinge", "sphinx",
+            "horus", "anubis", "osiris", "isis", "luxor", "tebas", "thebes",
+        ],
+        "style": "ancient Egyptian tomb painting, hieroglyphic mural style, profile-view figures, flat ochre/red/gold palette, period-accurate non-photorealistic illustration",
+    },
+    "renaissance": {
+        "keywords": [
+            "renacimiento", "renaissance",
+            "leonardo da vinci", "miguel angel", "michelangelo",
+            "rafael sanzio", "raphael", "botticelli",
+            "florencia", "florence", "medici", "savonarola", "vasari", "donatello",
+            "humanismo", "humanism",
+        ],
+        "style": "Italian Renaissance fresco aesthetic, Botticelli/Da Vinci painting style, soft sfumato, classical composition, period-accurate non-photorealistic painted illustration",
+    },
+    "viking": {
+        "keywords": [
+            "vikingo", "vikinga", "vikingos", "viking", "vikings",
+            "ragnar", "odin", "thor", "valhalla",
+            "nordico", "norse", "runa", "runas", "drakkar",
+        ],
+        "style": "Norse manuscript illumination, runestone carving aesthetic, intricate knotwork, cold muted palette, period-accurate non-photorealistic illustration",
+    },
+    "aztec": {
+        "keywords": [
+            "azteca", "aztecas", "aztec",
+            "tenochtitlan", "moctezuma", "montezuma",
+            "mexica", "huitzilopochtli", "quetzalcoatl",
+            "codice azteca", "codice borgia",
+        ],
+        "style": "Aztec codex style, Codex Borgia palette, Mexica pictogram aesthetic, flat figures with bold black outlines, period-accurate non-photorealistic illustration",
+    },
+    "persian": {
+        "keywords": [
+            "persia", "persa", "persas", "persian",
+            "ciro el grande", "cyrus the great", "dario", "darius",
+            "jerjes", "xerxes",
+            "aquemenida", "achaemenid", "sasanida", "sassanid",
+            "zoroastro", "zoroaster", "persepolis",
+        ],
+        "style": "Persian miniature painting, Safavid manuscript illumination, intricate ornamental borders, jewel tones, period-accurate non-photorealistic illustration",
+    },
+    "mesopotamian": {
+        "keywords": [
+            "mesopotamia", "mesopotamico",
+            "sumerio", "sumeria", "sumerian",
+            "babilonia", "babylon", "babilonico",
+            "asirio", "asiria", "assyrian",
+            "hammurabi", "gilgamesh",
+            "uruk", "ninive", "nineveh",
+            "ziggurat", "cuneiforme", "cuneiform",
+        ],
+        "style": "Mesopotamian relief carving aesthetic, Assyrian palace bas-relief style, cuneiform inscription motifs, ochre stone palette, period-accurate non-photorealistic illustration",
+    },
+    "ottoman": {
+        "keywords": [
+            "otomano", "otomana", "otomanos", "ottoman",
+            "imperio otomano", "ottoman empire",
+            "suleiman", "suleyman", "soliman el magnifico",
+            "mehmed ii", "topkapi",
+            "sultan otomano",
+        ],
+        "style": "Ottoman miniature painting, Iznik tile pattern aesthetic, ornate calligraphic borders, jewel tones, period-accurate non-photorealistic illustration",
+    },
+    "byzantine": {
+        "keywords": [
+            "bizantino", "bizantina", "bizantinos", "byzantine",
+            "imperio bizantino", "byzantine empire",
+            "justiniano", "justinian", "teodora bizantina",
+            "santa sofia", "hagia sophia",
+            "constantinopla", "constantinople",
+            "iconoclasia", "iconoclasm",
+        ],
+        "style": "Byzantine icon painting, gold-leaf mosaic aesthetic, flat hieratic figures, deep ultramarine and gold palette, period-accurate non-photorealistic illustration",
+    },
+    "medieval": {
+        "keywords": [
+            "medieval", "edad media", "middle ages",
+            "feudalismo", "feudal",
+            "caballero medieval", "knight templar",
+            "cruzada", "cruzadas", "crusade", "crusades",
+            "templario", "templarios", "templar",
+            "carlomagno", "charlemagne",
+            "ricardo corazon de leon", "saladino", "saladin",
+            "peste negra", "black death",
+        ],
+        "style": "medieval illuminated manuscript style, Book of Hours aesthetic, gold-leaf flat figures, ornate gothic borders, period-accurate non-photorealistic illustration",
+    },
+}
+
+
 class YouTube:
     """
     Class for YouTube Automation.
@@ -950,12 +1127,57 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         return self._apply_channel_style(out)
 
     def _apply_channel_style(self, prompt: str) -> str:
-        """Append the per-channel image_style suffix (if any), capped to keep providers happy."""
-        if not self._image_style:
+        """
+        Append a style suffix to AI image prompts. Civilization-specific style
+        (detected from self.subject) takes precedence; falls back to the
+        per-channel `image_style`. Returns the original prompt if neither
+        applies. Output is capped to ~1000 chars to fit provider limits.
+        """
+        suffix = self._detect_civilization_style() or self._image_style
+        if not suffix:
             return prompt
-        combined = f"{prompt.rstrip(', .')}, {self._image_style}"
-        # Hard cap to ~1000 chars so we don't blow past Leonardo / Pollinations input limits.
+        combined = f"{prompt.rstrip(', .')}, {suffix}"
         return combined[:1000]
+
+    def _detect_civilization_style(self) -> str:
+        """
+        Inspect self.subject and return the matching civilization style
+        suffix from CIVILIZATION_ART_STYLES, or "" if none matches.
+        Matching is accent- and case-insensitive; the highest keyword-hit
+        count wins. Result is cached per subject so we don't rescan on
+        every prompt.
+        """
+        import unicodedata
+
+        subject = (getattr(self, "subject", "") or "").strip()
+        if not subject:
+            return ""
+
+        if getattr(self, "_civ_style_subject", None) == subject:
+            return getattr(self, "_civ_style_cached", "") or ""
+
+        def _norm(s: str) -> str:
+            s = s.lower()
+            return "".join(
+                c for c in unicodedata.normalize("NFD", s)
+                if unicodedata.category(c) != "Mn"
+            )
+
+        norm_subject = _norm(subject)
+        best_civ = ""
+        best_score = 0
+        for civ, data in CIVILIZATION_ART_STYLES.items():
+            score = sum(1 for kw in data["keywords"] if _norm(kw) in norm_subject)
+            if score > best_score:
+                best_score = score
+                best_civ = civ
+
+        style = CIVILIZATION_ART_STYLES[best_civ]["style"] if best_civ else ""
+        self._civ_style_subject = subject
+        self._civ_style_cached = style
+        if style and get_verbose():
+            info(f" => Detected civilization style: {best_civ}")
+        return style
 
     def _resolve_voice(self, voice: str) -> str:
         """Resolve a voice alias (e.g. 'Pablo') or raw Edge-TTS ID to its full voice ID."""
