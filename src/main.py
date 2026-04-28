@@ -248,6 +248,8 @@ def main():
                     image_style=selected_account.get("image_style", ""),
                     short_voice=selected_account.get("short_voice", ""),
                     long_voice=selected_account.get("long_voice", ""),
+                    hook_profile=selected_account.get("hook_profile", ""),
+                    voice_drama=selected_account.get("voice_drama", False),
                 )
 
                 while True:

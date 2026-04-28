@@ -82,7 +82,12 @@ def main():
                     acc["nickname"],
                     acc["firefox_profile"],
                     acc["niche"],
-                    acc["language"]
+                    acc["language"],
+                    image_style=acc.get("image_style", ""),
+                    short_voice=acc.get("short_voice", ""),
+                    long_voice=acc.get("long_voice", ""),
+                    hook_profile=acc.get("hook_profile", ""),
+                    voice_drama=acc.get("voice_drama", False),
                 )
                 video_path = youtube.generate_video(tts)
                 if not video_path:

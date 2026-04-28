@@ -40,6 +40,36 @@ _PHOTO_STOPWORDS = {
 }
 
 
+# Per-channel hook style presets used by `generate_script`. Each entry is
+# (style_name, hook_example). One style is picked at random per script so
+# every short doesn't open the same way. Configure on the account JSON via
+# `hook_profile` — falls back to "educational" if missing or unknown.
+HOOK_PROFILES: dict = {
+    "educational": [
+        ("Classic curiosity question", '"¿Sabías que...?"'),
+        ("Invitation to imagine a scene", '"Imagínate esto:" o "Imagina que..."'),
+        ("Direct shocking statistic (no question)", '"El 90% de la gente no sabe que..."'),
+        ("Hidden secret reveal", '"Hay algo que nadie te contó sobre..."'),
+        ("Counterintuitive claim", '"Todo lo que crees sobre X está mal."'),
+        ("Negation cliffhanger", '"No vas a creer lo que pasó cuando..."'),
+    ],
+    # Animated storytelling: epic, horror, mystery, adventure. Hooks designed
+    # to be addictive and pull the viewer into the scene immediately.
+    "storytelling": [
+        ("Dark mystery opener", '"Lo que voy a contarte nadie quiso creerlo." o "Esta historia jamás debió salir a la luz."'),
+        ("In medias res scene-set", '"Eran las 3:00 AM cuando la puerta se abrió sola." o "Aquella noche, el silencio era distinto."'),
+        ("Time-warp opener", '"Era 1987, y todo cambió esa noche." o "Pasaron veinte años antes de que apareciera el cuerpo."'),
+        ("Sole-survivor cliffhanger", '"De los doce que entraron, solo uno regresó. Y este es su relato."'),
+        ("Disturbing discovery", '"Lo que encontraron debajo no debía existir." o "Cuando abrieron la caja, ya era tarde."'),
+        ("Visceral horror imperative", '"No mires atrás. Eso fue lo último que escuchó antes de..." o "Nunca debió haber bajado a ese sótano."'),
+        ("Lost-civilization epic", '"Un imperio entero desapareció en una sola noche, y nadie sabe por qué."'),
+        ("Adventure quest twist", '"Buscaban un tesoro perdido. Lo que hallaron fue mucho peor."'),
+        ("Forbidden tale", '"Esta historia se contaba en susurros, y los que la conocían solían desaparecer."'),
+        ("Last words testimony", '"Las últimas palabras que escribió antes de desaparecer fueron estas..."'),
+    ],
+}
+
+
 class YouTube:
     """
     Class for YouTube Automation.
@@ -65,6 +95,8 @@ class YouTube:
         image_style: str = "",
         short_voice: str = "",
         long_voice: str = "",
+        hook_profile: str = "",
+        voice_drama: bool = False,
     ) -> None:
         """
         Constructor for YouTube Class.
@@ -78,6 +110,7 @@ class YouTube:
             image_style (str): Optional per-channel style suffix appended to AI image prompts.
             short_voice (str): Optional Edge-TTS voice ID (or alias) for shorts narration.
             long_voice (str): Optional Edge-TTS voice ID (or alias) for long-video narration.
+            hook_profile (str): Optional hook profile name (see HOOK_PROFILES). Falls back to "educational".
 
         Returns:
             None
@@ -90,6 +123,8 @@ class YouTube:
         self._image_style: str = (image_style or "").strip()
         self._short_voice: str = (short_voice or "").strip()
         self._long_voice: str = (long_voice or "").strip()
+        self._hook_profile: str = (hook_profile or "").strip().lower()
+        self._voice_drama: bool = bool(voice_drama)
 
         self.images = []
         self._used_stock_urls: set = set()
@@ -509,19 +544,18 @@ OUTPUT FORMAT (strict):
         sentence_length = get_script_sentence_length()
 
         # Rotate hook style per run so every short doesn't open the same way.
-        # Spanish examples (content language) — the LLM adapts to self.language.
-        hook_styles = [
-            ("Classic curiosity question", '"¿Sabías que...?"'),
-            ("Invitation to imagine a scene", '"Imagínate esto:" o "Imagina que..."'),
-            ("Direct shocking statistic (no question)", '"El 90% de la gente no sabe que..."'),
-            ("Hidden secret reveal", '"Hay algo que nadie te contó sobre..."'),
-            ("Counterintuitive claim", '"Todo lo que crees sobre X está mal."'),
-            ("Negation cliffhanger", '"No vas a creer lo que pasó cuando..."'),
-        ]
+        # The preset is picked from HOOK_PROFILES by self._hook_profile (set per
+        # channel on the account JSON). Falls back to "educational" if the
+        # configured profile is missing or unknown.
+        profile_name = self._hook_profile or "educational"
+        hook_styles = HOOK_PROFILES.get(profile_name) or HOOK_PROFILES["educational"]
+        if profile_name not in HOOK_PROFILES and self._hook_profile:
+            warning(f"Unknown hook_profile '{self._hook_profile}', falling back to 'educational'.")
+            profile_name = "educational"
         hook_style, hook_example = random.choice(hook_styles)
 
         if get_verbose():
-            info(f" => Hook style for this script: {hook_style}")
+            info(f" => Hook profile: {profile_name} | style: {hook_style}")
 
         prompt = f"""Write a narration script for a short video in EXACTLY {sentence_length} sentences.
 
@@ -1566,7 +1600,13 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         # Per-channel short voice override (falls back to TTS instance default if empty).
         short_vid = self._resolve_voice(self._short_voice)
-        path, word_timestamps = tts_instance.synthesize_with_timestamps(tts_text, path, voice_id=short_vid or None)
+        # Optional dramatic modulation for narrator-style channels (mystery/horror/storytelling).
+        # Lighter than the long-form documentary preset (-8% / -15Hz) so shorts still feel punchy.
+        rate = "-5%" if self._voice_drama else ""
+        pitch = "-8Hz" if self._voice_drama else ""
+        path, word_timestamps = tts_instance.synthesize_with_timestamps(
+            tts_text, path, voice_id=short_vid or None, rate=rate, pitch=pitch,
+        )
 
         # Put the Roman numerals back in the word-level timestamps so the
         # karaoke subtitles read "I" / "XIV" while the audio says "primero" /

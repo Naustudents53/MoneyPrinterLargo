@@ -98,20 +98,24 @@ class TTS:
 
         return output_file
 
-    def synthesize_with_timestamps(self, text, output_file=os.path.join(ROOT_DIR, ".mp", "audio.wav"), voice_id=None):
+    def synthesize_with_timestamps(self, text, output_file=os.path.join(ROOT_DIR, ".mp", "audio.wav"), voice_id=None, rate: str = "", pitch: str = ""):
         """Synthesize audio AND return word-level timestamps.
+
+        Args:
+            rate: Edge-TTS rate string (e.g. "-5%"). Empty → no modulation.
+            pitch: Edge-TTS pitch string (e.g. "-8Hz"). Empty → no modulation.
 
         Returns:
             (output_file, word_timestamps) where word_timestamps is a list of
             {"start": float_seconds, "end": float_seconds, "word": str} or None.
         """
         if self._provider == "edge_tts":
-            return self._synthesize_edge_tts_with_timestamps(text, output_file, voice_id=voice_id)
+            return self._synthesize_edge_tts_with_timestamps(text, output_file, voice_id=voice_id, rate=rate, pitch=pitch)
         # KittenTTS has no word timing — synthesize normally, return None
         self._synthesize_kitten(text, output_file, voice_id=voice_id)
         return output_file, None
 
-    def _synthesize_edge_tts_with_timestamps(self, text, output_file, voice_id=None):
+    def _synthesize_edge_tts_with_timestamps(self, text, output_file, voice_id=None, rate: str = "", pitch: str = ""):
         """Edge-TTS synthesis capturing word-level boundary events."""
         import edge_tts
         import subprocess
@@ -123,7 +127,12 @@ class TTS:
         word_timestamps = []
 
         async def _generate():
-            communicate = edge_tts.Communicate(text, voice_id, boundary="WordBoundary")
+            kwargs = {"boundary": "WordBoundary"}
+            if rate:
+                kwargs["rate"] = rate
+            if pitch:
+                kwargs["pitch"] = pitch
+            communicate = edge_tts.Communicate(text, voice_id, **kwargs)
             audio_chunks = []
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
