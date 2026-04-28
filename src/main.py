@@ -51,6 +51,13 @@ from classes.Outreach import Outreach
 from classes.AFM import AffiliateMarketing
 from llm_provider import list_models, select_model, get_active_model, set_llm_provider
 
+
+def _trunc(s, n: int) -> str:
+    """Truncate string to at most n chars, adding an ellipsis if cut. Plain text only — apply BEFORE coloring."""
+    s = "" if s is None else str(s)
+    return s if len(s) <= n else s[: max(1, n - 1)] + "…"
+
+
 def main():
     """Main entry point for the application, providing a menu-driven interface
     to manage YouTube, Twitter bots, Affiliate Marketing, and Outreach tasks.
@@ -164,15 +171,28 @@ def main():
         else:
             table = PrettyTable()
             table.field_names = ["#", "Nickname", "Niche", "Image style", "Short voice", "Long voice"]
+            # Left-align text columns so truncation reads cleanly.
+            for col in ("Nickname", "Niche", "Image style", "Short voice", "Long voice"):
+                table.align[col] = "l"
+
+            # Per-column character caps. Tuned so the whole table fits in ~120 cols
+            # (VS Code's default integrated terminal). Truncate with ellipsis BEFORE
+            # coloring — termcolor wraps strings in ANSI escapes which break len().
+            CAPS = {"nickname": 18, "niche": 26, "image_style": 18, "voice": 20}
 
             for idx, account in enumerate(cached_accounts):
+                nickname = _trunc(account.get("nickname", ""), CAPS["nickname"])
+                niche = _trunc(account.get("niche", ""), CAPS["niche"])
+                image_style = _trunc(account.get("image_style") or "<default>", CAPS["image_style"])
+                short_v = _trunc(account.get("short_voice") or "<default>", CAPS["voice"])
+                long_v = _trunc(account.get("long_voice") or "<default>", CAPS["voice"])
                 table.add_row([
                     idx + 1,
-                    colored(account.get("nickname", ""), "blue"),
-                    colored(account.get("niche", ""), "green"),
-                    colored((account.get("image_style") or "<default>")[:30], "yellow"),
-                    colored(account.get("short_voice") or "<default>", "magenta"),
-                    colored(account.get("long_voice") or "<default>", "magenta"),
+                    colored(nickname, "blue"),
+                    colored(niche, "green"),
+                    colored(image_style, "yellow"),
+                    colored(short_v, "magenta"),
+                    colored(long_v, "magenta"),
                 ])
 
             print(table)
