@@ -2590,19 +2590,25 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             active_provider = ""
 
         if active_provider == "gemini":
-            info(" [Script] Gemini detected — trying single-call fast path...")
-            try:
-                full = self._generate_long_script_single_call(lang)
-                word_count = len(full.split())
-                if word_count >= 2000:
-                    full = self._postprocess_long_script(full)
-                    self.script = full
-                    self._persist_long_script(full)
-                    info(f" => Generated long script: {len(full.split())} words (~{len(full.split()) // 165} min)")
-                    return full
-                warning(f"   Single-call returned only {word_count} words; falling back to per-section.")
-            except Exception as e:
-                warning(f"   Single-call failed: {str(e)[:200]}; falling back to per-section.")
+            SINGLE_CALL_ATTEMPTS = 3
+            info(f" [Script] Gemini detected — trying single-call fast path (up to {SINGLE_CALL_ATTEMPTS} attempts)...")
+            best_short = ""  # remember the longest under-2000-word draft in case all attempts come up short
+            for attempt in range(1, SINGLE_CALL_ATTEMPTS + 1):
+                try:
+                    full = self._generate_long_script_single_call(lang)
+                    word_count = len(full.split())
+                    if word_count >= 2000:
+                        full = self._postprocess_long_script(full)
+                        self.script = full
+                        self._persist_long_script(full)
+                        info(f" => Generated long script: {len(full.split())} words (~{len(full.split()) // 165} min) (single-call attempt {attempt})")
+                        return full
+                    warning(f"   Single-call attempt {attempt}/{SINGLE_CALL_ATTEMPTS} returned only {word_count} words.")
+                    if word_count > len(best_short.split()):
+                        best_short = full
+                except Exception as e:
+                    warning(f"   Single-call attempt {attempt}/{SINGLE_CALL_ATTEMPTS} failed: {str(e)[:200]}")
+            warning("   All single-call attempts came up short or failed; falling back to per-section.")
 
         # ---- DEFAULT PATH: per-section for capped providers ----
         full = self._generate_long_script_sectional(lang)
