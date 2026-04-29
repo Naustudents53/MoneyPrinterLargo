@@ -1,4 +1,5 @@
 import requests
+from contextlib import contextmanager
 
 from config import get_ollama_base_url, get_llm_provider, get_pollinations_text_model, get_nanobanana2_api_key, get_gemini_model, get_gemini_models
 
@@ -7,6 +8,10 @@ _llm_provider: str | None = None
 _disabled_providers: set = set()
 _last_used_provider: str | None = None
 _disabled_gemini_models: set = set()
+# Ollama "thinking" budget for the current call. Set via `force_provider` —
+# the long-video pipeline pins it to "high" so DeepSeek V4 Pro Cloud reasons
+# at full depth. None means: don't pass the kwarg at all.
+_ollama_think: str | bool | None = None
 
 
 def _ollama_client():
@@ -51,6 +56,29 @@ def get_active_model() -> str | None:
 def get_active_provider() -> str:
     """Return the runtime LLM provider (override or configured)."""
     return _llm_provider or get_llm_provider() or "ollama"
+
+
+@contextmanager
+def force_provider(provider: str, model: str | None = None, think: str | bool | None = None):
+    """
+    Temporarily override the active LLM provider (and optionally model + Ollama
+    thinking budget) for a specific block of work. Restores prior values on
+    exit, even on error. Used by the long-video pipeline to pin generation to
+    a specific Ollama Cloud model without affecting Shorts or the user's config.
+    """
+    global _llm_provider, _selected_model, _ollama_think
+    prev_provider, prev_model, prev_think = _llm_provider, _selected_model, _ollama_think
+    _llm_provider = provider
+    if model is not None:
+        _selected_model = model
+    if think is not None:
+        _ollama_think = think
+    try:
+        yield
+    finally:
+        _llm_provider = prev_provider
+        _selected_model = prev_model
+        _ollama_think = prev_think
 
 
 _SYSTEM_PROMPT = (
@@ -185,13 +213,22 @@ def _generate_text_ollama(prompt: str, model: str = None) -> str:
     if not model:
         raise RuntimeError("No Ollama model configured")
 
-    response = _ollama_client().chat(
-        model=model,
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-    )
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+    client = _ollama_client()
+
+    # Pass `think` only when the long-video pipeline (or another caller) asked
+    # for it. Older ollama-python SDKs reject the kwarg with TypeError — fall
+    # back transparently so the call still succeeds without thinking.
+    if _ollama_think is not None:
+        try:
+            response = client.chat(model=model, messages=messages, think=_ollama_think)
+        except TypeError:
+            response = client.chat(model=model, messages=messages)
+    else:
+        response = client.chat(model=model, messages=messages)
 
     return response["message"]["content"].strip()
 

@@ -2196,6 +2196,20 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             for i, w in enumerate(words)
         ]
 
+    def _append_music_attribution(self, line: str) -> None:
+        """
+        Append a music attribution line to the video description, idempotent.
+        Called from combine()/combine_long() when a track requiring credit is
+        picked. Safe to call multiple times — duplicates are skipped.
+        """
+        meta = getattr(self, "metadata", None)
+        if not isinstance(meta, dict):
+            return
+        desc = meta.get("description", "") or ""
+        if line in desc:
+            return
+        meta["description"] = (desc.rstrip() + "\n\n" + line).lstrip()
+
     def combine(self) -> str:
         """
         Combines everything into the final video.
@@ -2302,6 +2316,8 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         if final_clip.duration > max_duration:
             final_clip = final_clip.subclip(0, max_duration)
         random_song = choose_random_song(getattr(self, "subject", ""))
+        if is_soundimage_track(random_song):
+            self._append_music_attribution(MATYAS_ATTRIBUTION)
 
         subtitles = None
         try:
@@ -2351,6 +2367,18 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         return combined_image_path
 
     def generate_video(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai") -> str:
+        """
+        Public entry point for the Shorts pipeline. Pins the LLM to the same
+        cloud thinking model used by long videos (DeepSeek V4 Pro on Ollama
+        Cloud by default, `think=high`), then delegates to the inner pipeline.
+        """
+        from llm_provider import force_provider
+        long_model = get_long_video_llm_model()
+        info(f"\n  Short LLM: ollama/{long_model} (think=high)")
+        with force_provider("ollama", long_model, think="high"):
+            return self._generate_video_inner(tts_instance, custom_topic, image_mode)
+
+    def _generate_video_inner(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai") -> str:
         """
         Generates a YouTube Short based on the provided niche and language.
 
@@ -3584,6 +3612,8 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         print(colored("[+] Mixing audio...", "blue"), flush=True)
         t_phase = time.time()
         random_song = choose_random_song(getattr(self, "subject", ""))
+        if is_soundimage_track(random_song):
+            self._append_music_attribution(MATYAS_ATTRIBUTION)
         music_clip = AudioFileClip(random_song).set_fps(44100)
 
         # Total audio runs slightly past the narration so the closing fade has music under it.
@@ -3628,6 +3658,19 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         return combined_path
 
     def generate_long_video(self, tts_instance: TTS, custom_topic: str = "") -> str:
+        """
+        Public entry point for the long-video pipeline. Pins the LLM to the
+        long-video model (DeepSeek V4 Pro on Ollama Cloud by default) at max
+        thinking depth, then delegates to `_generate_long_video_inner`.
+        Shorts and other features keep using the configured default provider.
+        """
+        from llm_provider import force_provider
+        long_model = get_long_video_llm_model()
+        info(f"\n  Long-video LLM: ollama/{long_model} (think=high)")
+        with force_provider("ollama", long_model, think="high"):
+            return self._generate_long_video_inner(tts_instance, custom_topic)
+
+    def _generate_long_video_inner(self, tts_instance: TTS, custom_topic: str = "") -> str:
         """
         Full pipeline for generating a long-form YouTube video (15-20 minutes).
         16:9 landscape, documentary style, no subtitles.

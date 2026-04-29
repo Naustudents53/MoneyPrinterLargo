@@ -89,6 +89,14 @@ def get_ollama_model() -> str:
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         return json.load(file).get("ollama_model", "")
 
+def get_long_video_llm_model() -> str:
+    """
+    Ollama model used exclusively by the long-video pipeline.
+    Defaults to DeepSeek V4 Pro on Ollama Cloud (`ollama signin` required).
+    """
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return json.load(file).get("long_video_llm_model", "deepseek-v4-pro:cloud")
+
 def get_twitter_language() -> str:
     """
     Gets the Twitter language from the config file.

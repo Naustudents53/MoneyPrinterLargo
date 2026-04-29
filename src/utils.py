@@ -306,42 +306,251 @@ def fetch_songs() -> None:
         error(f"Error occurred while fetching songs: {str(e)}")
 
 
-# Per-song theme tags. Add new entries here when dropping new files into Songs/.
-# Songs not listed are still selectable but score 0 against any subject.
+# Per-song theme tags for sci-fi / cosmos / futurism content. Each track is
+# scored against the video subject by counting keyword hits. To add a new
+# track: drop the file into Songs/ and add a key here with mood-specific
+# keywords. Songs not listed still get picked when no track scores above 0.
 SONG_KEYWORDS = {
-    "ambient_melody.mp3": [
-        # Babylon — orquestal antigua, civilizaciones
-        "civilización", "civilizacion", "civilizaciones",
-        "imperio", "imperios", "antiguo", "antigua", "antigüedad", "antiguedad",
-        "egipto", "egipcio", "faraón", "faraon",
-        "mesopotamia", "babilonia", "babilonio", "sumeria", "sumerio",
-        "persia", "persa", "fenicia", "fenicio", "asiria", "asirio",
-        "maya", "azteca", "inca", "china antigua",
-        "civilization", "ancient", "empire", "babylon", "egypt", "pharaoh",
+    "infinity_cosmos.mp3": [
+        # Vasto, contemplativo — escala del universo, cosmología
+        "universo", "cosmos", "cosmico", "cósmico", "cosmica", "cósmica",
+        "infinito", "infinita", "infinitud", "eterno", "eterna",
+        "galaxia", "galaxias", "via lactea", "vía láctea",
+        "big bang", "expansion", "expansión", "origen del universo",
+        "cosmologia", "cosmología", "astronomia", "astronomía",
+        "universe", "cosmic", "infinity", "galaxy", "cosmos",
     ],
-    "ascending_the_vale.mp3": [
-        # Orquestal ascendente, épica/heroica
-        "guerra", "guerras", "batalla", "batallas", "conquista", "conquistas",
-        "héroe", "heroe", "heroica", "heroico",
-        "victoria", "auge", "ascenso", "caída", "caida",
-        "alejandro", "césar", "cesar", "napoleón", "napoleon",
-        "espartano", "espartana", "legión", "legion", "general", "ejército", "ejercito",
-        "revolución", "revolucion", "independencia",
-        "war", "battle", "rise", "fall", "epic", "conquest", "hero", "heroic",
+    "vastness_space.mp3": [
+        # Ambient profundo, escala/inmensidad — espacio profundo, filosofía cósmica
+        "espacio profundo", "deep space", "vacio", "vacío",
+        "inmensidad", "vastedad", "soledad cosmica", "soledad cósmica",
+        "nebulosa", "nebulosas", "supernova", "supernovas",
+        "agujero negro", "agujeros negros", "black hole",
+        "horizonte de eventos", "singularidad",
+        "vastness", "void", "deep space", "nebula",
     ],
-    "atlantean_twilight.mp3": [
-        # Ambient misterioso/contemplativo, filosofía/misterio
-        "filosofía", "filosofia", "filósofo", "filosofo", "filósofa", "filosofa",
-        "filosóficos", "filosoficos", "filosófica", "filosofica",
-        "estoicismo", "estoico", "epicureísmo", "epicureismo",
-        "platón", "platon", "aristóteles", "aristoteles",
-        "sócrates", "socrates", "nietzsche", "kant", "descartes",
-        "ética", "etica", "moral", "sabiduría", "sabiduria",
-        "misterio", "misterios", "leyenda", "leyendas", "mito", "mitos",
-        "atlántida", "atlantida", "perdido", "perdida", "olvidado", "olvidada",
-        "philosophy", "philosopher", "wisdom", "myth", "lost", "mystery",
+    "light_years_space.mp3": [
+        # Contemplativo, exploración — distancias, estrellas, exoplanetas
+        "estrella", "estrellas", "star", "stars",
+        "exoplaneta", "exoplanetas", "exoplanet",
+        "anos luz", "años luz", "light year", "light years",
+        "constelacion", "constelación", "constelaciones",
+        "sistema solar", "kepler", "proxima centauri", "alpha centauri",
+        "viaje interestelar", "interestelar", "interstellar",
+        "exploracion espacial", "exploración espacial",
+        "sol", "luna", "mercurio", "venus", "marte", "jupiter", "júpiter",
+        "saturno", "urano", "neptuno", "pluton", "plutón",
+    ],
+    "red_lights_adhafera.mp3": [
+        # Misterioso, alarmante — alienigenas, señales, fenomenos extraños
+        "alienigena", "alienígena", "alienigenas", "alienígenas", "alien", "aliens",
+        "extraterrestre", "extraterrestres", "ovni", "ovnis", "ufo",
+        "señal", "señales", "signal", "fast radio burst", "frb",
+        "wow signal", "seti", "contacto", "primer contacto",
+        "fenómeno", "fenomeno", "anomalia", "anomalía", "anomalias", "anomalías",
+        "misterio cosmico", "misterio cósmico", "misterio espacial",
+        "encrucijada", "perdido en el espacio",
+        "mystery", "anomaly", "alien", "extraterrestrial", "signal",
+    ],
+    "scifi_game.mp3": [
+        # Energético, acción — combate, naves, accion sci-fi
+        "nave", "naves", "spaceship", "starship",
+        "combate", "batalla espacial", "guerra espacial",
+        "imperio galactico", "imperio galáctico", "federacion", "federación",
+        "rebelión", "rebelion", "rebellion",
+        "laser", "láser", "blaster", "fotones",
+        "piloto", "flota", "armada", "war", "battle", "fleet",
+        "mission", "mision", "misión", "expedicion", "expedición",
+    ],
+    "transcending_science.mp3": [
+        # Triunfal, esperanzador — tecnología, descubrimiento, breakthrough
+        "tecnologia", "tecnología", "technology",
+        "ciencia", "cientifico", "científico", "cientifica", "científica",
+        "descubrimiento", "descubrimientos", "discovery",
+        "innovacion", "innovación", "innovation",
+        "futuro", "futurismo", "future", "futurism",
+        "inteligencia artificial", "ia", "ai", "artificial intelligence",
+        "robot", "robots", "robotica", "robótica", "androide",
+        "biotecnologia", "biotecnología", "genetica", "genética",
+        "computacion cuantica", "computación cuántica", "quantum",
+        "nanotecnologia", "nanotecnología", "fusion", "fusión",
+        "avance", "progreso", "breakthrough",
+    ],
+    "trouble_on_mercury.mp3": [
+        # Tenso, aventura — colonias, problemas en misiones, planetas
+        "marte", "mars", "mercurio", "mercury",
+        "venus", "luna", "moon", "colonia", "colonias", "colony",
+        "terraformacion", "terraformación", "terraforming",
+        "rover", "perseverance", "curiosity",
+        "astronauta", "astronautas", "astronaut", "cosmonauta",
+        "estacion espacial", "estación espacial", "iss",
+        "mision espacial", "misión espacial",
+        "elon musk", "spacex", "nasa", "esa",
+        "supervivencia", "perdido", "varado",
+        "expedicion", "expedición",
+    ],
+    "feedback_dreams.mp3": [
+        # Surreal, onírico — consciencia, dimensiones, paradojas, sueños
+        "tiempo", "viaje en el tiempo", "time travel",
+        "paradoja", "paradojas", "paradox",
+        "dimension", "dimensión", "dimensiones", "multiverso", "multiverse",
+        "realidad", "realidades", "simulacion", "simulación", "simulation",
+        "consciencia", "conciencia", "consciousness",
+        "sueño", "sueños", "dream", "dreams", "lucido", "lúcido",
+        "mente", "cerebro", "mind",
+        "dejavu", "déjà vu", "memoria",
+        "filosofia", "filosofía", "metafisica", "metafísica",
+        "cuantica", "cuántica", "quantum", "schrodinger", "schrödinger",
+        "teoria de cuerdas", "teoría de cuerdas",
+    ],
+    "cold_moon.mp3": [
+        # Sombrío, aislado — lunas, mundos congelados, soledad cósmica
+        "luna", "lunas", "moon", "moons",
+        "europa", "titán", "titan", "encelado", "enceladus", "io", "ganimedes",
+        "frio", "frío", "congelado", "congelada", "hielo", "ice", "frozen",
+        "desolado", "desolada", "abandonado", "abandonada",
+        "soledad", "aislamiento", "isolation",
+        "perdido en el espacio", "naufragio espacial",
+        "criogenia", "criogenico", "criogénico", "hibernacion", "hibernación",
+    ],
+    "blazing_stars.mp3": [
+        # Energético, brillante — fenómenos estelares intensos
+        "supernova", "supernovas", "supernova explosion",
+        "explosion estelar", "explosión estelar", "estrella moribunda",
+        "nacimiento estelar", "formacion estelar", "formación estelar",
+        "quasar", "quasares", "pulsar", "pulsares", "magnetar",
+        "rayos gamma", "gamma ray burst",
+        "energia oscura", "energía oscura", "dark energy",
+        "fusion nuclear", "fusión nuclear", "nucleo solar", "núcleo solar",
+        "tormenta solar", "llamarada solar",
+    ],
+    "the_darkness_below.mp3": [
+        # Horror cósmico, pavor — abismo, lo desconocido, agujeros negros
+        "agujero negro", "agujeros negros", "black hole", "black holes",
+        "horizonte de eventos", "event horizon", "singularidad", "singularity",
+        "materia oscura", "dark matter", "antimateria", "antimatter",
+        "abismo", "abyss", "vacio cosmico", "vacío cósmico",
+        "horror", "horror cosmico", "horror cósmico", "lovecraft", "lovecraftiano",
+        "dread", "terror", "tenebroso", "siniestro",
+        "lo desconocido", "the unknown", "fin del universo", "end of universe",
+        "muerte termica", "muerte térmica", "heat death",
+    ],
+    "world_of_automatons.mp3": [
+        # Mecánico, frío tech — IA, robots, automatización
+        "robot", "robots", "androide", "androides", "android", "androids",
+        "automatas", "autómatas", "automaton", "automatons",
+        "inteligencia artificial", "artificial intelligence", "ai", "ia",
+        "machine learning", "aprendizaje automatico", "aprendizaje automático",
+        "consciencia artificial", "consciencia artificial",
+        "uprising", "rebelion robot", "rebelión robot", "skynet",
+        "singularidad tecnologica", "singularidad tecnológica",
+        "cyborg", "cíborg", "transhumanismo", "posthumano", "poshumano",
+        "automation", "automatizacion", "automatización",
+    ],
+    "dark_techno_city.mp3": [
+        # Cyberpunk denso, urbano dark — ciudades distópicas, neon, hacking
+        "cyberpunk", "ciberpunk", "dystopia", "distopia", "distopía", "distopico", "distópico",
+        "neon", "neón", "neo tokyo", "neo-tokyo", "blade runner",
+        "megaciudad", "megalopolis", "megalópolis", "megacity",
+        "vigilancia", "surveillance", "panopticon", "panóptico",
+        "corporacion", "corporación", "corporaciones", "corporate dystopia",
+        "implante", "implantes", "implant", "augmentacion", "augmentación",
+        "matrix", "ghost in the shell", "akira",
+    ],
+    "information_shutdown.mp3": [
+        # Tenso, digital — hacking, ciberataques, datos
+        "hacking", "hacker", "hackers", "ciberataque", "cyberattack",
+        "ciberguerra", "cyber warfare",
+        "datos", "data breach", "filtracion", "filtración",
+        "internet", "red", "darknet", "dark web", "deep web",
+        "malware", "virus informatico", "virus informático", "ransomware",
+        "criptografia", "criptografía", "cryptography", "encriptacion", "encriptación",
+        "blockchain", "criptomoneda", "criptomonedas", "bitcoin",
+        "deep fake", "deepfake", "manipulacion", "manipulación",
+    ],
+    "theyre_here.mp3": [
+        # Suspense alien, llegada — UFO, contacto, invasión
+        "invasion", "invasión", "invasion alienigena", "invasión alienígena",
+        "llegada", "arrival", "primer contacto", "first contact",
+        "ovni avistamiento", "avistamiento", "abduccion", "abducción",
+        "area 51", "área 51", "roswell",
+        "cuerpo extraño", "circulos de cosechas", "círculos de cosechas", "crop circle",
+        "men in black", "hombres de negro",
+        "anunnaki", "antiguos astronautas", "ancient aliens",
+        "they live", "predator", "alien", "depredador",
+    ],
+    "urban_jungle_2061.mp3": [
+        # Futurismo urbano — ciudades del futuro, distopía suave
+        "futuro", "future", "siglo xxii", "año 2050", "año 2100",
+        "ciudad del futuro", "city of the future",
+        "vehiculos voladores", "vehículos voladores", "coches voladores", "flying cars",
+        "smart city", "ciudad inteligente",
+        "rascacielos", "skyscraper", "vertical city",
+        "transporte hyperloop", "hyperloop", "maglev",
+        "realidad virtual", "vr", "virtual reality",
+        "metaverso", "metaverse",
+        "exoesqueleto", "exoskeleton",
+    ],
+    "creature_from_the_dark_lagoon.mp3": [
+        # Horror biológico — criaturas alienígenas, vida extraña
+        "criatura", "criaturas", "creature", "creatures", "monstruo", "monstruos",
+        "vida extraterrestre", "alien life", "exobiologia", "exobiología",
+        "astrobiologia", "astrobiología", "biosfera",
+        "parasito", "parásito", "parasite", "xenomorfo",
+        "mutacion", "mutación", "mutante",
+        "extinción", "extincion", "extinction", "evolucion", "evolución",
+        "dinosaurio", "dinosaurios", "dinosaur",
+        "leviatan", "leviatán", "kraken",
+        "jurassic", "jurásico", "alien creature",
+    ],
+    "factory_on_mercury.mp3": [
+        # Industrial sci-fi — minería espacial, colonias industriales
+        "mineria", "minería", "mining", "asteroide", "asteroides", "asterodide",
+        "cinturon de asteroides", "cinturón de asteroides", "asteroid belt",
+        "fabrica espacial", "fábrica espacial", "factory", "industrial",
+        "recurso", "recursos", "helio 3", "helio-3", "tritio",
+        "colonia industrial", "explotacion", "explotación",
+        "robot industrial", "automatizacion industrial", "automatización industrial",
+        "estacion minera", "estación minera",
+        "proyecto manhattan", "ingenieria", "ingeniería", "megaestructura",
     ],
 }
+
+# Tracks attributable to Eric Matyas (soundimage.org). The license is "free
+# for commercial use with credit" — every video using one of these MUST credit
+# the artist in its YouTube description. Listed explicitly (not derived from
+# SONG_KEYWORDS.keys()) so users can drop a non-Matyas track into Songs/ and
+# add it to SONG_KEYWORDS without falsely attributing it.
+SOUNDIMAGE_TRACKS = frozenset({
+    "blazing_stars.mp3",
+    "cold_moon.mp3",
+    "creature_from_the_dark_lagoon.mp3",
+    "dark_techno_city.mp3",
+    "factory_on_mercury.mp3",
+    "feedback_dreams.mp3",
+    "infinity_cosmos.mp3",
+    "information_shutdown.mp3",
+    "light_years_space.mp3",
+    "red_lights_adhafera.mp3",
+    "scifi_game.mp3",
+    "the_darkness_below.mp3",
+    "theyre_here.mp3",
+    "transcending_science.mp3",
+    "trouble_on_mercury.mp3",
+    "urban_jungle_2061.mp3",
+    "vastness_space.mp3",
+    "world_of_automatons.mp3",
+})
+
+MATYAS_ATTRIBUTION = "Music by Eric Matyas — www.soundimage.org"
+
+
+def is_soundimage_track(path_or_name: str) -> bool:
+    """True when `path_or_name` (full path or basename) belongs to Eric Matyas."""
+    if not path_or_name:
+        return False
+    return os.path.basename(path_or_name) in SOUNDIMAGE_TRACKS
+
 
 # How many of the most recently used songs to avoid when picking the next one.
 RECENT_SONG_HISTORY_LEN = 2
