@@ -1,6 +1,12 @@
-# MoneyPrinter V2
+# MoneyPrinterLargo
 
-> ♥︎ **Sponsor**: The Best AI Chat App: [shiori.ai](https://www.shiori.ai)
+> Derivative of [FujiwaraChoki/MoneyPrinterV2](https://github.com/FujiwaraChoki/MoneyPrinterV2)
+> via [andrepichardo/MoneyPrinterV2](https://github.com/andrepichardo/MoneyPrinterV2),
+> distributed under AGPLv3. This repository adds long-form (15-20 min) video
+> generation with a sci-fi/cosmos focus, a DeepSeek V4 Pro Cloud LLM pipeline
+> (Ollama Cloud), and automatic music attribution for soundimage.org tracks.
+
+> ♥︎ **Original sponsor**: The Best AI Chat App: [shiori.ai](https://www.shiori.ai)
 
 ---
 
