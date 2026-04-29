@@ -613,25 +613,88 @@ class YouTube:
             return False, ""
 
         # ---- 4. Build forbidden block (topics + banned entities) ----
+        # IMPORTANT: this block is purely a duplicate-avoidance hint for the LLM.
+        # It must NOT push the model out of the niche. With heavy channel history
+        # (e.g. 100+ videos) the older wording ("FORBIDDEN entities ... Generate a
+        # COMPLETELY DIFFERENT and ORIGINAL idea") read like "abandon the niche",
+        # because every entity listed *was* a niche entity. We now (a) cap counts
+        # tighter, (b) phrase the avoidance as "still WITHIN the niche", and
+        # (c) re-anchor the niche AFTER the avoidance list so the model holds it
+        # in working memory while picking a new angle. The cache-side dedupe
+        # guard (`_is_duplicate`) is unchanged and still catches collisions.
         forbidden_block = ""
         if past_topics:
-            shown = past_clean[-60:]
+            shown = past_clean[-25:]
             all_ents: set = set()
-            for ents in past_entities[-60:]:
+            for ents in past_entities[-25:]:
                 all_ents.update(ents)
-            entity_list = sorted(e for e in all_ents if len(e) >= 4)[:80]
+            entity_list = sorted(e for e in all_ents if len(e) >= 4)[:40]
             forbidden_block = (
-                "\n\nIMPORTANT: Do NOT repeat, rephrase, or pick a similar angle "
-                "to ANY of these previously made videos:\n"
+                "\n\nALREADY COVERED in this niche (pick a DIFFERENT angle, but stay WITHIN the niche):\n"
                 + "\n".join(f"- {t}" for t in shown)
             )
             if entity_list:
                 forbidden_block += (
-                    "\n\nFORBIDDEN keywords/entities (already covered — your topic must NOT "
-                    "involve ANY of these people, places, events, or concepts):\n"
+                    "\n\nSpecific subjects already covered — avoid these particular ones, "
+                    "but DO NOT leave the niche to avoid them (the niche is huge — pick a different "
+                    "person/place/event/concept from the SAME niche):\n"
                     + ", ".join(entity_list)
                 )
-            forbidden_block += "\n\nGenerate a COMPLETELY DIFFERENT and ORIGINAL idea."
+            forbidden_block += (
+                f"\n\nGenerate a fresh angle WITHIN the niche \"{self.niche}\". "
+                f"The new topic must still unmistakably belong to this niche — "
+                f"only the specific subject should differ from the list above."
+            )
+
+        # ---- 4b. Niche validator (second LLM pass that double-checks the candidate) ----
+        def _topic_in_niche(candidate: str) -> bool:
+            """
+            Ask the LLM whether the candidate topic clearly belongs to the channel's
+            niche. Returns False if the verdict is anything other than an unambiguous
+            FITS, so off-niche or ambiguous topics get rejected and regenerated.
+
+            IMPORTANT: the response MUST be at least ~10 chars long. llm_provider's
+            garbage filter (`_is_garbage_response`) treats any reply shorter than 10
+            chars as conversational and DISABLES the provider for the whole session.
+            We require a short structured line ("VERDICT: FITS — <reason>") that
+            clears that bar.
+            """
+            try:
+                verdict = self.generate_response(
+                    f"""You are a strict content classifier. Decide if this video topic clearly and unmistakably belongs to the channel's niche.
+
+CHANNEL NICHE: {self.niche}
+
+CANDIDATE TOPIC: {candidate}
+
+Rules for your verdict:
+- Answer FITS only if the topic is undeniably part of the niche — a viewer would immediately recognize it as belonging to that niche.
+- Answer OFFNICHE if the topic is fictional, made-up, abstract, metaphorical, or drifts toward storytelling/fiction when the niche is factual/educational.
+- Answer OFFNICHE if the topic is a generic life lesson or philosophical musing not tied to the niche's actual subject matter.
+- Answer OFFNICHE if the topic could fit dozens of different niches — niches require specificity.
+- When in doubt, answer OFFNICHE.
+
+OUTPUT FORMAT (strict, exactly one line):
+VERDICT: <FITS or OFFNICHE> — <short reason in 5-15 words>
+
+Example outputs:
+VERDICT: FITS — clearly a real historical curiosity about ancient Egypt
+VERDICT: OFFNICHE — fictional storytelling, not a real subject in the niche
+
+Return ONLY that single line. No other text."""
+                )
+            except Exception:
+                # If the validator call fails, don't block the pipeline — accept the candidate.
+                return True
+            verdict_up = (verdict or "").strip().upper()
+            # Look for the verdict token anywhere in the response (handles wrappers like
+            # "**VERDICT: FITS — ...**" or stray quotes around the line).
+            if "OFFNICHE" in verdict_up or "OFF-NICHE" in verdict_up or "OFF NICHE" in verdict_up:
+                return False
+            if "FITS" in verdict_up:
+                return True
+            # Unparseable response → accept (the cache-side dedupe still guards the run).
+            return True
 
         # ---- 5. Generate with retries ----
         rejected: List[str] = []
@@ -652,14 +715,17 @@ class YouTube:
 
 YOUR NICHE (you MUST stay strictly within this niche): {self.niche}
 
-CRITICAL RULE: The topic MUST be directly and obviously related to the niche above. Do NOT generate topics about unrelated subjects like history, politics, celebrities, cinema, or any field outside the niche. If the niche is about the universe and the mind, the topic must be about the universe and the mind — NOT about historical figures, civilizations, or unrelated events.
+CRITICAL RULE: The topic MUST be directly and unmistakably part of the niche above. Anything that does not clearly belong to that niche is FORBIDDEN — including fictional stories, made-up characters, abstract metaphors, generic life lessons, philosophical musings disconnected from the niche, or any unrelated field. ONLY generate topics whose subject matter a viewer would immediately recognize as belonging to "{self.niche}".
 
-The topic must be ONE concrete story, event, mystery, or fact — NOT a broad category.
+The topic must be ONE concrete story, event, mystery, fact, person, place, or phenomenon — NOT a broad category, NOT a fictional scenario.
 
 BAD example: "Curiosidades del antiguo Egipto" (too broad, leads to random facts)
-GOOD example: "La maldición de la tumba de Tutankamón: ¿qué les pasó a los arqueólogos?" (one specific story)
-GOOD example: "¿Por qué los romanos usaban orina para lavar la ropa?" (one specific curiosity)
-GOOD example: "El día que un asteroide exterminó al 75% de la vida en la Tierra" (one specific event)
+BAD example: "El hombre que camina hacia atrás" (fictional story, not a real subject)
+GOOD example: "La maldición de la tumba de Tutankamón: ¿qué les pasó a los arqueólogos?" (one specific real story)
+GOOD example: "¿Por qué los romanos usaban orina para lavar la ropa?" (one specific real curiosity)
+GOOD example: "El día que un asteroide exterminó al 75% de la vida en la Tierra" (one specific real event)
+
+SELF-CHECK BEFORE ANSWERING: Re-read the niche "{self.niche}". If your topic is not unmistakably part of THAT niche, discard it and pick a different one.
 
 OUTPUT FORMAT (strict):
 - Return ONLY the topic as one plain sentence.
@@ -668,7 +734,7 @@ OUTPUT FORMAT (strict):
 - NO surrounding quotes.
 - WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.{forbidden_block}{extra_reject}
 
-(Creativity seed: {creativity_seed} — use this to inspire a unique, unexpected angle.)"""
+(Creativity seed: {creativity_seed} — use this to inspire a fresh angle WITHIN the niche. "Fresh" means a different specific subject from the same niche, NOT a different field.)"""
             )
 
             candidate = _strip_markdown(raw_candidate or "")
@@ -689,6 +755,15 @@ OUTPUT FORMAT (strict):
                     f"Topic collides with past video (attempt {attempt + 1}/{max_attempts}).\n"
                     f"   candidate: {candidate[:100]}\n"
                     f"   past     : {matched[:100]}"
+                )
+                rejected.append(candidate)
+                continue
+
+            if not _topic_in_niche(candidate):
+                warning(
+                    f"Topic off-niche (attempt {attempt + 1}/{max_attempts}).\n"
+                    f"   candidate: {candidate[:100]}\n"
+                    f"   niche    : {self.niche[:100]}"
                 )
                 rejected.append(candidate)
                 continue
@@ -1069,6 +1144,65 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             print(colored("OK", "green"))
             return img_resp.content
         raise RuntimeError("Ideogram: failed to download image")
+
+    def _call_nanobanana2(self, prompt: str, aspect_ratio: str) -> bytes:
+        """
+        Call Google's Nano Banana 2 (Gemini image API) with the given prompt and
+        aspect ratio. Returns raw image bytes (PNG/JPEG). Used by both the
+        portrait (9:16) and landscape (16:9) wrappers below.
+        """
+        from config import (
+            get_nanobanana2_api_key,
+            get_nanobanana2_api_base_url,
+            get_nanobanana2_model,
+        )
+        api_key = get_nanobanana2_api_key()
+        if not api_key:
+            raise RuntimeError("Nano Banana 2 API key not configured (nanobanana2_api_key)")
+
+        base_url = (get_nanobanana2_api_base_url() or "").rstrip("/")
+        model = get_nanobanana2_model() or "gemini-3.1-flash-image-preview"
+        url = f"{base_url}/models/{model}:generateContent?key={api_key}"
+
+        print(colored(f"    [Nano Banana 2 {aspect_ratio}] Generating...", "cyan"), flush=True)
+        payload = {
+            "contents": [{"parts": [{"text": prompt[:1900]}]}],
+            "generationConfig": {
+                "responseModalities": ["IMAGE"],
+                "imageConfig": {"aspectRatio": aspect_ratio},
+            },
+        }
+        resp = requests.post(
+            url,
+            headers={"Content-Type": "application/json"},
+            json=payload,
+            timeout=120,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Nano Banana 2: HTTP {resp.status_code} — {resp.text[:200]}")
+
+        data = resp.json()
+        candidates = data.get("candidates") or []
+        for cand in candidates:
+            for part in (cand.get("content") or {}).get("parts") or []:
+                inline = part.get("inlineData") or part.get("inline_data") or {}
+                b64 = inline.get("data")
+                if b64:
+                    img_bytes = base64.b64decode(b64)
+                    if len(img_bytes) > 5000:
+                        print(colored("OK", "green"))
+                        return img_bytes
+        raise RuntimeError(f"Nano Banana 2: no image in response — {str(data)[:200]}")
+
+    def _try_nanobanana2(self, prompt: str) -> bytes:
+        """Nano Banana 2 in the configured aspect ratio (defaults to 9:16 for Shorts)."""
+        from config import get_nanobanana2_aspect_ratio
+        ratio = get_nanobanana2_aspect_ratio() or "9:16"
+        return self._call_nanobanana2(prompt, ratio)
+
+    def _try_nanobanana2_landscape(self, prompt: str) -> bytes:
+        """Nano Banana 2 in 16:9 for long-form videos."""
+        return self._call_nanobanana2(prompt, "16:9")
 
     def _try_leonardo(self, prompt: str) -> bytes:
         """Try Leonardo AI API (excellent quality, $5 free credit)."""
@@ -1725,6 +1859,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 ("Pexels", self._try_pexels, "stock"),
                 ("Pixabay", self._try_pixabay, "stock"),
                 # Tier 3: AI fallback when no real photo matches the topic
+                ("Nano Banana 2", self._try_nanobanana2, "ai"),
                 ("Leonardo AI", self._try_leonardo, "ai"),
                 ("Pollinations FLUX", self._try_pollinations, "ai"),
                 ("Pollinations turbo", self._try_pollinations_turbo, "ai"),
@@ -1732,14 +1867,16 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         else:
             print(colored(f"\n  [Images] Generating {len(prompts)} images...", "blue"))
             providers = [
-                # Tier 1: High-quality AI generator
+                # Tier 1: Nano Banana 2 (Gemini 3 image preview) — primary AI generator
+                ("Nano Banana 2", self._try_nanobanana2, "ai"),
+                # Tier 2: High-quality AI generator
                 ("Leonardo AI", self._try_leonardo, "ai"),
-                # Tier 2: Free unlimited AI generators (no daily limits)
+                # Tier 3: Free unlimited AI generators (no daily limits)
                 ("Pollinations FLUX", self._try_pollinations, "ai"),
                 ("Pollinations turbo", self._try_pollinations_turbo, "ai"),
                 ("Pollinations flux-realism", self._try_pollinations_realism, "ai"),
                 ("HuggingFace", self._try_huggingface, "ai"),
-                # Tier 3: Stock photos (reliable, always available)
+                # Tier 4: Stock photos (reliable, always available)
                 ("Pexels", self._try_pexels, "stock"),
                 ("Pixabay", self._try_pixabay, "stock"),
             ]
@@ -2984,9 +3121,10 @@ Return ONLY the JSON. No markdown, no explanation."""
             overlay_words = " ".join(topic_words).upper() if topic_words else "DESCUBRE LA VERDAD"
             warning(f"Thumbnail: using topic-derived overlay text: {overlay_words}")
 
-        # Step 2: render the background image (Leonardo first, Pollinations fallback).
+        # Step 2: render the background image (Nano Banana 2 first, then Leonardo, then Pollinations).
         bg_bytes = None
         for name, fn in (
+            ("Nano Banana 2 16:9", self._try_nanobanana2_landscape),
             ("Leonardo AI", self._try_leonardo_landscape),
             ("Pollinations FLUX 16:9", self._try_pollinations_landscape),
         ):
@@ -3270,6 +3408,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             styled_prompt = self._apply_channel_style(prompt)
 
             for name, fn in [
+                ("Nano Banana 2 16:9", lambda p: self._try_nanobanana2_landscape(p)),
                 ("Leonardo AI", lambda p: self._try_leonardo_landscape(p)),
                 ("Pollinations.ai FLUX", lambda p: self._try_pollinations_landscape(p)),
                 ("HuggingFace", self._try_huggingface),
