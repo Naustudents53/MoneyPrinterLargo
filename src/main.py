@@ -308,6 +308,30 @@ def main():
                         custom_topic = question(
                             "Enter a custom topic (or leave empty to auto-generate): "
                         ).strip()
+
+                        # Series picker — only shown if (a) at least one series is
+                        # configured and (b) the user typed a topic that doesn't
+                        # already carry a [series_id] prefix. The prefix style still
+                        # works for power users who don't want the menu.
+                        series_list = get_series()
+                        if (
+                            series_list
+                            and custom_topic
+                            and not custom_topic.lstrip().startswith("[")
+                        ):
+                            print(colored("\nApply to a series? (Enter for none)", "cyan"))
+                            print(colored("  0. (None)", "cyan"))
+                            for i, s in enumerate(series_list, 1):
+                                label = s.get("name") or s.get("id", "")
+                                print(colored(f"  {i}. {label}", "cyan"))
+                            sel = question("Series: ").strip()
+                            if sel.isdigit():
+                                idx = int(sel) - 1
+                                if 0 <= idx < len(series_list):
+                                    chosen = series_list[idx]
+                                    custom_topic = f"[{chosen['id']}] {custom_topic}"
+                                    info(f" => Using series: {chosen.get('name') or chosen['id']}")
+
                         info("Starting Long Video Generation (15-20 min)...")
                         long_path = youtube.generate_long_video(tts, custom_topic=custom_topic)
                         if not long_path:

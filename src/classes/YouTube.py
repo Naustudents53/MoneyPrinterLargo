@@ -307,6 +307,7 @@ class YouTube:
         self._used_stock_urls: set = set()
         self.word_timestamps = None
         self.thumbnail_path: str = ""
+        self.active_series: dict = None
 
         # Initialize the Firefox profile
         self.options: Options = Options()
@@ -825,6 +826,8 @@ CRITICAL RULES:
 - EXACTLY {sentence_length} sentences. Short and punchy (under 20 words each).
 - NO markdown, NO formatting, NO titles, NO bullet points.
 - NO "welcome", NO "voiceover", NO meta-references.
+- ABSOLUTELY NO stage directions of any kind. Never write "(image of ...)", "(imagen de ...)", "[B-roll: ...]", "(plano cerrado)", "(music)", "(música suave)", "(emoji)", "(transition)", "(voice over)" or anything similar. Only text a narrator would speak ALOUD.
+- NUMBERS: spell numbers out as words, not digits. Examples (in {self.language}): "mil cuatrocientos cincuenta y tres" not "1453"; "four thousand five hundred" not "4,500".
 - ONLY return the raw script text. Nothing else.
 - WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.
 """
@@ -1962,8 +1965,15 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         # so Edge-TTS pauses naturally. The script we display keeps Roman
         # numerals intact ("Cosimo I"); only the text fed to TTS expands them
         # ("Cosimo primero") so pronunciation is correct.
+        # Strip leaked stage directions ("(imagen de ...)") before any other
+        # cleaning so TTS never reads them out loud.
+        self.script = strip_stage_directions(self.script)
         self.script = clean_script_for_tts(self.script)
         tts_text, regnal_subs = expand_regnal_numerals_tracked(self.script)
+        # Expand digit numbers to Spanish words. Applied to tts_text only so
+        # the original self.script (used for subtitle alignment) keeps its
+        # short tokens, while what the TTS reads has natural Spanish numbers.
+        tts_text = expand_spanish_numbers(tts_text)
 
         # Per-channel short voice override (falls back to TTS instance default if empty).
         short_vid = self._resolve_voice(self._short_voice)
@@ -2766,9 +2776,20 @@ REGLAS DE ESTILO:
 - TOTAL OBLIGATORIO: entre 2700 y 3500 palabras.
 - Cada sección debe aportar material NUEVO, no repetir.
 - ESCRIBE TODO EN {lang}. NO uses inglés.
-- NO acotaciones, NO etiquetas de hablante, NO meta-texto.
 - NO markdown, NO viñetas, NO listas numeradas.
 - NO URLs, enlaces, citas ni referencias.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones de cualquier tipo. Solo texto que un narrador diría EN VOZ ALTA. NUNCA escribas:
+    * "(imagen de ...)", "(imágenes de ...)", "[plano cerrado de ...]", "(escena ...)", "(secuencia ...)"
+    * "(B-roll: ...)", "(B/O ...)", "(voz en off)", "(narrador:)"
+    * "(música suave)", "(sonido de ...)", "(efectos)", "(silencio)"
+    * "(emoji ...)", "(emoticono ...)", "(símbolo ...)"
+    * "(transición)", "(fundido)", "(zoom)", "(corte)", "(cierre)"
+  Si crees que necesitas describir una imagen o un sonido, NO LO HAGAS — el video ya tiene imágenes y música. Solo narra.
+- NÚMEROS: escribe TODOS los números con palabras, no con dígitos. Ejemplos:
+    * "hace cuatro mil quinientos años" (no "hace 4.500 años")
+    * "el año mil cuatrocientos cincuenta y tres" (no "1453")
+    * "el siglo dieciséis" (no "el siglo XVI" ni "el siglo 16")
+    * "tres coma uno cuatro" (no "3,14")
 - SOLO devuelve el guion completo con los 12 marcadores arriba listados. Sin preámbulo.
 """
         completion = self._clean_llm_script(self.generate_response(prompt))
@@ -2827,6 +2848,8 @@ REGLAS:
 - Lenguaje vívido y sensorial. Oraciones CORTAS (máximo 20 palabras).
 - ESCRIBE TODO EN {lang}. NO uses inglés.
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
+- NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [INTRO]
 """
         intro = _ensure_marker(_ask_section(intro_prompt, min_words=80), "[INTRO]")
@@ -2852,6 +2875,8 @@ Escribe SOLO la SECCIÓN {i}:
 - Aporta material NUEVO, no repitas ideas ya dichas.
 - ESCRIBE TODO EN {lang}. NO uses inglés.
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
+- NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
 - Devuelve SOLO el texto de la sección, precedido EXACTAMENTE por una línea con: [SECTION {i}: <título breve descriptivo>]
 """
             section = _ensure_marker(_ask_section(section_prompt, min_words=180), f"[SECTION {i}: parte {i}]")
@@ -2874,6 +2899,8 @@ Escribe SOLO el CIERRE:
 - Lenguaje vívido. Oraciones CORTAS (máximo 20 palabras).
 - ESCRIBE TODO EN {lang}. NO uses inglés.
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
+- NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453").
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [CLOSING]
 """
         closing = _ensure_marker(_ask_section(closing_prompt, min_words=80), "[CLOSING]")
@@ -2903,6 +2930,7 @@ REGLAS:
 - Tono cálido, cercano, humano — como un amigo, no como una máquina.
 - Oraciones CORTAS (máximo 20 palabras).
 - NO uses markdown, viñetas, listas, URLs, hashtags ni meta-texto.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [OUTRO]
 """
         outro = _ensure_marker(_ask_section(outro_prompt, min_words=40), "[OUTRO]")
@@ -2922,18 +2950,60 @@ REGLAS:
         """
         Generates metadata optimized for long-form YouTube videos.
         """
-        title = self.generate_response(
-            f"Genera un título para un video largo de YouTube sobre: {self.subject}.\n"
-            f"REQUISITOS DEL TÍTULO:\n"
-            f"- Máximo 70 caracteres.\n"
-            f"- Clickbait MODERADO: incluye exactamente 1 o 2 palabras clave en MAYÚSCULAS para enfatizar "
-            f"(ejemplos: SECRETO, NUNCA, JAMÁS, NADIE, OCULTO, VERDAD, IMPOSIBLE, REAL, PROHIBIDO, INCREÍBLE).\n"
-            f"- Despierta curiosidad o promete una revelación.\n"
-            f"- SIN signos de exclamación ni de interrogación.\n"
-            f"- SIN emojis, SIN comillas, SIN hashtags.\n"
-            f"- ESCRIBE EN {self.language}.\n"
-            f"Devuelve SOLO el título, sin explicación."
-        )
+        series = getattr(self, "active_series", None)
+        title_template = (series or {}).get("title_template", "").strip()
+
+        if title_template:
+            # Series mode: ask the LLM only for the placeholder values, then format
+            # the template ourselves. This guarantees every video in the series
+            # ends up with the same title shape.
+            placeholders = re.findall(r"\{(\w+)\}", title_template)
+            if placeholders:
+                fields_desc = ", ".join(f'"{p}"' for p in placeholders)
+                raw = self.generate_response(
+                    f"Vas a producir los datos para el título de un video de la serie "
+                    f"\"{series.get('id', '')}\".\n"
+                    f"TEMA DEL VIDEO: {self.subject}\n\n"
+                    f"Devuelve SOLO un objeto JSON con estos campos exactos: {fields_desc}.\n"
+                    f"Cada valor debe ir en {self.language}, en MAYÚSCULAS, sin comillas, "
+                    f"sin tildes invertidas, conciso (1-4 palabras por campo), y derivado "
+                    f"directamente del tema. Ejemplo de formato: {{\"rol\": \"SAMURÁI\", "
+                    f"\"lugar\": \"EL JAPÓN FEUDAL\"}}.\n"
+                    f"NO devuelvas markdown, NO devuelvas explicación, SOLO el JSON."
+                )
+                raw = str(raw).replace("```json", "").replace("```", "").strip()
+                values = {}
+                try:
+                    values = json.loads(raw)
+                except Exception:
+                    m = re.search(r"\{.*\}", raw, re.DOTALL)
+                    if m:
+                        try:
+                            values = json.loads(m.group())
+                        except Exception:
+                            values = {}
+                # Default each missing placeholder to the subject in upper-case so
+                # we never crash on a malformed LLM response.
+                fallback = re.sub(r"\s+", " ", self.subject).strip().upper()
+                filled = {p: str(values.get(p, fallback)).strip().upper() or fallback
+                          for p in placeholders}
+                title = title_template.format(**filled)
+            else:
+                # Template has no placeholders → use it verbatim.
+                title = title_template
+        else:
+            title = self.generate_response(
+                f"Genera un título para un video largo de YouTube sobre: {self.subject}.\n"
+                f"REQUISITOS DEL TÍTULO:\n"
+                f"- Máximo 70 caracteres.\n"
+                f"- Clickbait MODERADO: incluye exactamente 1 o 2 palabras clave en MAYÚSCULAS para enfatizar "
+                f"(ejemplos: SECRETO, NUNCA, JAMÁS, NADIE, OCULTO, VERDAD, IMPOSIBLE, REAL, PROHIBIDO, INCREÍBLE).\n"
+                f"- Despierta curiosidad o promete una revelación.\n"
+                f"- SIN signos de exclamación ni de interrogación.\n"
+                f"- SIN emojis, SIN comillas, SIN hashtags.\n"
+                f"- ESCRIBE EN {self.language}.\n"
+                f"Devuelve SOLO el título, sin explicación."
+            )
 
         # Strip any quotes the LLM might add (regular, curly, single)
         title = re.sub(r'^[\"\'\u201c\u201d\u2018\u2019]+|[\"\'\u201c\u201d\u2018\u2019]+$', '', title.strip()).strip()
@@ -2982,6 +3052,11 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
 
         video_title = (self.metadata or {}).get("title", "") if hasattr(self, "metadata") else ""
 
+        # Series mode: overlay text is pinned, so we skip the entire LLM-overlay
+        # path and only ask the LLM for a visual prompt for the background image.
+        series = getattr(self, "active_series", None)
+        series_overlay = (series or {}).get("thumbnail_overlay", "").strip()
+
         # Build the set of allowed tokens (lowercased, accent-stripped) from title + topic.
         # Any LLM-generated overlay word must derive from this vocabulary or it gets rejected
         # (this is what catches hallucinations like "TÁQUILAS SE HOJAN").
@@ -2995,9 +3070,35 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
             _norm(t) for t in re.findall(r"[A-Za-zÀ-ÿ]+", title_topic_text) if len(t) > 2
         }
 
+        visual_prompt = ""
+        overlay_words = ""
+
+        if series_overlay:
+            overlay_words = series_overlay.upper()
+            # Ask the LLM for a visual prompt only (no overlay words) — keeps the
+            # series identity stable while letting the background still match the topic.
+            visual_prompt = str(self.generate_response(
+                f"Write a SINGLE English image-generation prompt for a YouTube thumbnail "
+                f"about: {self.subject}.\n"
+                f"REQUIREMENTS:\n"
+                f"- 40-70 words.\n"
+                f"- Describe a SPECIFIC dramatic scene tied to the topic. Name actual people, "
+                f"places, objects, era, clothing, architecture or symbols. Use proper nouns "
+                f"when relevant.\n"
+                f"- ONE single dramatic scene, not a list of unrelated elements.\n"
+                f"- Include: dramatic side lighting, high contrast, shallow depth of field, "
+                f"cinematic composition, photorealistic.\n"
+                f"- End with: no text, no letters, no logos, no watermark.\n"
+                f"- Return ONLY the prompt itself. No quotes, no preamble, no explanation."
+            )).strip().strip('"\'`')
+            info(f"Thumbnail: using series overlay '{overlay_words}'")
+
         # Step 1: ask LLM for the visual concept + overlay words.
-        llm_raw = str(self.generate_response(
-            f"""Design a YouTube thumbnail for this video.
+        # Skipped entirely in series mode — overlay is pinned and visual was
+        # built above without the JSON ceremony.
+        if not series_overlay:
+            llm_raw = str(self.generate_response(
+                f"""Design a YouTube thumbnail for this video.
 
 VIDEO TITLE: {video_title or "(see topic)"}
 TOPIC: {self.subject}
@@ -3024,52 +3125,50 @@ Return ONLY a JSON object with two fields:
   * AVOID these overused clichés entirely: "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR", "INCREÍBLE", "JAMÁS LO CREERÁS".
 
 Return ONLY the JSON. No markdown, no explanation."""
-        )).replace("```json", "").replace("```", "").strip()
+            )).replace("```json", "").replace("```", "").strip()
 
-        visual_prompt = ""
-        overlay_words = ""
-        try:
-            data = json.loads(llm_raw)
-            visual_prompt = str(data.get("visual", "")).strip()
-            overlay_words = str(data.get("words", "")).strip().upper()
-        except Exception:
-            match = re.search(r"\{.*\}", llm_raw, re.DOTALL)
-            if match:
-                try:
-                    data = json.loads(match.group())
-                    visual_prompt = str(data.get("visual", "")).strip()
-                    overlay_words = str(data.get("words", "")).strip().upper()
-                except Exception:
-                    pass
+            try:
+                data = json.loads(llm_raw)
+                visual_prompt = str(data.get("visual", "")).strip()
+                overlay_words = str(data.get("words", "")).strip().upper()
+            except Exception:
+                match = re.search(r"\{.*\}", llm_raw, re.DOTALL)
+                if match:
+                    try:
+                        data = json.loads(match.group())
+                        visual_prompt = str(data.get("visual", "")).strip()
+                        overlay_words = str(data.get("words", "")).strip().upper()
+                    except Exception:
+                        pass
 
-        BANNED_OVERLAYS = {
-            "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR",
-            "INCREÍBLE", "INCREIBLE", "JAMÁS LO CREERÁS", "JAMAS LO CREERAS",
-        }
+            BANNED_OVERLAYS = {
+                "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR",
+                "INCREÍBLE", "INCREIBLE", "JAMÁS LO CREERÁS", "JAMAS LO CREERAS",
+            }
 
-        def _validate_overlay(candidate: str) -> bool:
-            """Reject if too short, banned, or any content word is hallucinated."""
-            if not candidate:
-                return False
-            if candidate in BANNED_OVERLAYS:
-                return False
-            STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
-                    "que", "por", "para", "con", "en", "a", "su", "sus", "lo"}
-            words = [_norm(w) for w in re.findall(r"[A-Za-zÀ-ÿ]+", candidate)]
-            # Reject one-word overlays — clickbait needs a phrase.
-            if len(words) < 3:
-                return False
-            content_words = [w for w in words if w not in STOP]
-            if not content_words:
-                return False
-            for w in content_words:
-                if not any(w == a or w in a or a in w for a in allowed_tokens):
+            def _validate_overlay(candidate: str) -> bool:
+                """Reject if too short, banned, or any content word is hallucinated."""
+                if not candidate:
                     return False
-            return True
+                if candidate in BANNED_OVERLAYS:
+                    return False
+                STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
+                        "que", "por", "para", "con", "en", "a", "su", "sus", "lo"}
+                words = [_norm(w) for w in re.findall(r"[A-Za-zÀ-ÿ]+", candidate)]
+                # Reject one-word overlays — clickbait needs a phrase.
+                if len(words) < 3:
+                    return False
+                content_words = [w for w in words if w not in STOP]
+                if not content_words:
+                    return False
+                for w in content_words:
+                    if not any(w == a or w in a or a in w for a in allowed_tokens):
+                        return False
+                return True
 
-        if overlay_words and not _validate_overlay(overlay_words):
-            warning(f"Thumbnail: LLM overlay '{overlay_words}' rejected (hallucinated or banned).")
-            overlay_words = ""
+            if overlay_words and not _validate_overlay(overlay_words):
+                warning(f"Thumbnail: LLM overlay '{overlay_words}' rejected (hallucinated or banned).")
+                overlay_words = ""
 
         if not visual_prompt:
             visual_prompt = (
@@ -3128,6 +3227,13 @@ Return ONLY the JSON. No markdown, no explanation."""
             warning(f"Thumbnail: using topic-derived overlay text: {overlay_words}")
 
         # Step 2: render the background image (Nano Banana 2 first, then Leonardo, then Pollinations).
+        # Apply the same per-channel / civilization-detected art style that
+        # generate_long_images uses, so the thumbnail matches the video's look
+        # (ukiyo-e woodblock for feudal Japan, Renaissance painting for Florence, etc.).
+        styled_visual_prompt = self._apply_channel_style(visual_prompt)
+        if get_verbose() and styled_visual_prompt != visual_prompt:
+            info(" => Thumbnail: applied channel art style")
+
         bg_bytes = None
         for name, fn in (
             ("Nano Banana 2 16:9", self._try_nanobanana2_landscape),
@@ -3135,7 +3241,7 @@ Return ONLY the JSON. No markdown, no explanation."""
             ("Pollinations FLUX 16:9", self._try_pollinations_landscape),
         ):
             try:
-                bg_bytes = fn(visual_prompt)
+                bg_bytes = fn(styled_visual_prompt)
                 if bg_bytes and len(bg_bytes) > 5000:
                     break
                 bg_bytes = None
@@ -3180,11 +3286,22 @@ Return ONLY the JSON. No markdown, no explanation."""
         # Step 4: stamp overlay text in the BOTTOM-LEFT, left-aligned (Impact font for clickbait look).
         if overlay_words:
             font_path = None
-            for cand in (
+            series_font = (series or {}).get("thumbnail_font", "").strip()
+            font_candidates = []
+            if series_font:
+                # Series-specific font wins. Accept either an absolute path, a
+                # bare filename in C:\Windows\Fonts, or a name in fonts/.
+                if os.path.isabs(series_font):
+                    font_candidates.append(series_font)
+                else:
+                    font_candidates.append(os.path.join(r"C:\Windows\Fonts", series_font))
+                    font_candidates.append(os.path.join(get_fonts_dir(), series_font))
+            font_candidates.extend([
                 r"C:\Windows\Fonts\impact.ttf",
                 r"C:\Windows\Fonts\arialbd.ttf",
                 os.path.join(get_fonts_dir(), get_font()),
-            ):
+            ])
+            for cand in font_candidates:
                 if cand and os.path.isfile(cand):
                     font_path = cand
                     break
@@ -3589,6 +3706,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         """Last-line-of-defense cleaner: only spoken narration survives."""
         text = script
 
+        # Strip stage-direction artifacts the LLM leaks ("(imagen de ...)",
+        # "[B-roll: ...]", "Música: ...") BEFORE the section-marker pass so
+        # nothing falls through.
+        text = strip_stage_directions(text)
+
         # Strip section markers in any language / case.
         text = re.sub(r'\[(INTRO|INTRODUCCIÓN|INTRODUCCION|CLOSING|CIERRE|OUTRO|DESPEDIDA)\]', '', text, flags=re.IGNORECASE)
         text = re.sub(r'\[(SECTION|SECCIÓN|SECCION)\s*\d+\s*:?[^\]]*\]', '', text, flags=re.IGNORECASE)
@@ -3814,6 +3936,15 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             )
             self.video_path = ""
             return ""
+
+        # Series detection: if subject starts with "[series_id] ...", strip the
+        # prefix and remember which series this video belongs to. generate_long_metadata
+        # and generate_thumbnail use the series template/overlay instead of asking
+        # the LLM to invent a title or overlay text.
+        self.active_series, self.subject = resolve_series(self.subject)
+        if self.active_series:
+            info(f" => Series: {self.active_series.get('id', '')}")
+
         success(f" Topic: {self.subject}")
 
         # Step 2: Generate long script with chapters
@@ -3859,6 +3990,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         # Expand regnal numerals ("Luis XIV" -> "Luis catorce") for correct TTS pronunciation
         tts_script = expand_regnal_numerals(tts_script)
+
+        # Expand digit numbers to Spanish words ("4.500" -> "cuatro mil quinientos",
+        # "1453" -> "mil cuatrocientos cincuenta y tres") so the TTS doesn't read
+        # them digit-by-digit ("4 punto 5 0 0").
+        tts_script = expand_spanish_numbers(tts_script)
 
         if get_verbose():
             info(f" => TTS script preview (first 200 chars): {tts_script[:200]}")

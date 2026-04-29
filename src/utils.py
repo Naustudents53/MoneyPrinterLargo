@@ -147,6 +147,128 @@ def expand_spoken_symbols(text: str) -> str:
     return text
 
 
+# Stage-direction keywords. If a parenthetical or bracket block STARTS with one
+# of these, it's the LLM leaking video direction into the narration and gets
+# stripped before TTS. Examples this catches:
+#   "(imagen de un samurái)" → ""
+#   "[B-roll: sol iluminando filo de espada]" → ""
+#   "(plano cerrado del rostro)" → ""
+#   "(música suave de fondo)" → ""
+_STAGE_KEYWORDS = (
+    r"im[aá]gen(?:es)?|"
+    r"escena|escenario|plano|plano\s+(?:cerrado|abierto|general|medio)|"
+    r"secuencia|toma|encuadre|corte|"
+    r"transici[oó]n|fundido|disuelve|fade|cut|"
+    r"zoom|paneo|paneando|paneo\s+lento|"
+    r"emoji|emoticono|emoticonos|s[ií]mbolo\s+de|"
+    r"b[\s./_-]?roll|b[\s./_-]?o\b|voz\s+en\s+off|narrador|locutor|"
+    r"m[uú]sica|sonido|sonidos|efecto|efectos|sfx|fx|ruido|ambiente|"
+    r"subt[ií]tulo|caption|insertar|insert|nota\s+del\s+editor|"
+    r"intro\s*:|outro\s*:|cierre\s*:|"
+    r"foto\s+de|fotograf[ií]a\s+de|video\s+de|clip\s+de"
+)
+_STAGE_PAREN_RE = re.compile(rf"\(\s*(?:{_STAGE_KEYWORDS})[^)]*\)", re.IGNORECASE)
+_STAGE_BRACKET_RE = re.compile(rf"\[\s*(?:{_STAGE_KEYWORDS})[^\]]*\]", re.IGNORECASE)
+_STAGE_LINE_RE = re.compile(
+    rf"^\s*(?:{_STAGE_KEYWORDS})\s*[:\-—–][^\n]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_stage_directions(text: str) -> str:
+    """
+    Remove video-direction artifacts that the LLM sometimes leaks into the
+    narration. Must run BEFORE the TTS reads the script aloud, otherwise the
+    voice ends up saying things like "imagen de cara de emoticono sonriente"
+    or "B O imagen de sol iluminando filo de espada".
+
+    Strips:
+      - "(imagen de ...)" / "(plano ...)" / "(música ...)" / "(emoji ...)"
+      - "[B-roll: ...]" / "[plano cerrado ...]"
+      - Whole lines that start with "Imagen:" / "Plano:" / "Música:" etc.
+
+    Conservative: only fires when the parenthetical/bracket BEGINS with a
+    known stage-direction keyword, so legitimate parentheticals
+    ("(siglo XV)", "(Florencia, 1469)") survive.
+    """
+    if not text:
+        return text
+    text = _STAGE_PAREN_RE.sub("", text)
+    text = _STAGE_BRACKET_RE.sub("", text)
+    text = _STAGE_LINE_RE.sub("", text)
+    # Collapse whitespace artifacts left by the strips.
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r" +([.,;:!?])", r"\1", text)  # space-then-punct cleanup
+    return text.strip()
+
+
+def expand_spanish_numbers(text: str) -> str:
+    """
+    Convert digit strings to Spanish words so the TTS reads them as numbers
+    instead of digit-by-digit. Must run BEFORE the TTS step, AFTER
+    expand_regnal_numerals (so "Luis XIV" is already "Luis catorce" and we
+    don't accidentally re-touch it).
+
+    Handles:
+      - Thousand separators (Spanish style):  "4.500" → "cuatro mil quinientos"
+      - Decimals:                              "4,5"   → "cuatro coma cinco"
+                                               "3.14"  → "tres punto uno cuatro"
+      - Bare integers:                         "1453"  → "mil cuatrocientos cincuenta y tres"
+
+    Distinguishing thousand-separator dots from decimal dots: a dot followed
+    by exactly 3 digits is treated as a thousands separator (Spanish
+    convention "1.000.000"). A dot followed by 1-2 digits is a decimal.
+    """
+    if not text:
+        return text
+    try:
+        from num2words import num2words
+    except Exception:
+        # Library not available — leave the digits alone rather than crash.
+        return text
+
+    def _to_words(n: int) -> str:
+        try:
+            return num2words(n, lang="es")
+        except Exception:
+            return str(n)
+
+    # 1. Thousand-separator integers: 1.000, 4.500, 1.234.567, 4,500
+    #    Pattern: 1-3 digits, then one or more groups of (dot or comma)+(exactly 3 digits).
+    def _thousand_repl(m: re.Match) -> str:
+        digits = re.sub(r"[.,]", "", m.group(0))
+        try:
+            return _to_words(int(digits))
+        except ValueError:
+            return m.group(0)
+    text = re.sub(r"\b\d{1,3}(?:[.,]\d{3})+\b", _thousand_repl, text)
+
+    # 2. Decimals: 4,5 / 3.14 / 0,75
+    def _decimal_repl(m: re.Match) -> str:
+        whole, sep, frac = m.group(1), m.group(2), m.group(3)
+        try:
+            whole_w = _to_words(int(whole))
+        except ValueError:
+            return m.group(0)
+        spoken_sep = "coma" if sep == "," else "punto"
+        # Read each fractional digit one by one (standard Spanish convention
+        # for decimals: "tres coma uno cuatro").
+        digits_w = " ".join(_to_words(int(d)) for d in frac)
+        return f"{whole_w} {spoken_sep} {digits_w}"
+    text = re.sub(r"\b(\d+)([.,])(\d{1,2})\b", _decimal_repl, text)
+
+    # 3. Plain integers (anything that survived steps 1-2).
+    def _int_repl(m: re.Match) -> str:
+        try:
+            return _to_words(int(m.group(0)))
+        except ValueError:
+            return m.group(0)
+    text = re.sub(r"\b\d+\b", _int_repl, text)
+
+    return text
+
+
 def clean_script_for_tts(text: str) -> str:
     """
     Sanitize script text for TTS and subtitles while PRESERVING punctuation

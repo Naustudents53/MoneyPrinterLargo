@@ -41,5 +41,14 @@
   "tts_voice": "Jasper",
   "font": "bold_font.ttf",
   "imagemagick_path": "Path to magick.exe or on linux/macOS just /usr/bin/convert",
-  "script_sentence_length": 8
+  "script_sentence_length": 8,
+  "series": [
+    {
+      "id": "un_dia_en_la_historia",
+      "name": "Un día en la historia",
+      "title_template": "UN DÍA COMO {rol} EN {lugar} | UN DÍA EN LA HISTORIA",
+      "thumbnail_overlay": "UN DÍA EN LA HISTORIA",
+      "thumbnail_font": "impact.ttf"
+    }
+  ]
 }
