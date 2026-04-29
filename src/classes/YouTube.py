@@ -870,12 +870,12 @@ The script has been divided into {n_prompts} sections. Each image MUST match its
 {sections_text}
 INSTRUCTIONS:
 - Image 1 MUST illustrate SECTION 1, Image 2 MUST illustrate SECTION 2, etc.
-- Describe the LITERAL content of each section as a visual scene.
-- Example: if a section says "The ancient Egyptians built massive pyramids", write: "Massive Egyptian pyramids under construction, thousands of workers pulling limestone blocks, desert sand, blue sky, cranes made of wood, cinematic wide angle"
+- Describe the LITERAL content of each section as a visual scene: who/what is in it, what they are doing, the setting, period-accurate clothing/architecture/objects, atmosphere and colors.
+- Example: if a section says "The ancient Egyptians built massive pyramids", write: "Massive Egyptian pyramids mid-construction, thousands of workers pulling limestone blocks across desert sand under a vast blue sky, wooden cranes and ramps, an overseer with a staff watching from a stone platform"
 - Be SPECIFIC: name real things (animals, buildings, objects, places, people).
-- Include: camera angle, lighting, colors, environment details.
+- DO NOT specify camera angles, lenses, or any photography/film terminology. The channel will impose its own visual style at render time, so describe the SCENE CONTENT only.
 - Write in English. Each prompt: 30-60 words.
-- FORBIDDEN: visualization, concept, essence, metaphor, abstract, symbolic, interpretation.
+- FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
@@ -909,12 +909,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             fallback_prompts = [self.subject] * n_prompts
         else:
             fallback_prompts = [
-                f"{self.subject}, realistic photograph, wide angle, natural lighting, highly detailed, 8K",
-                f"{self.subject}, close-up detail shot, soft natural light, vivid colors, photorealistic",
-                f"{self.subject}, panoramic landscape view, golden hour, cinematic composition, detailed",
-                f"{self.subject}, historical illustration style, warm earth tones, detailed environment",
-                f"{self.subject}, overhead aerial perspective, dramatic clouds, vast scale, ultra detailed",
-                f"{self.subject}, documentary photograph, authentic setting, natural atmosphere, 4K quality",
+                f"{self.subject}, full scene with the central subject visible, period-accurate setting and clothing, vivid mood",
+                f"{self.subject}, detail of the central object or person, period-accurate textures and materials",
+                f"{self.subject}, panoramic view of the environment, period-accurate landscape and architecture",
+                f"{self.subject}, illustrated historical scene with period-accurate clothing and architecture",
+                f"{self.subject}, group composition showing several figures interacting in period-accurate context",
+                f"{self.subject}, atmospheric scene with depth and storytelling, period-accurate mood and palette",
             ]
 
         if not image_prompts or not isinstance(image_prompts, list):
@@ -1122,21 +1122,29 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         raise RuntimeError("Leonardo: timeout waiting for generation")
 
     def _augment_for_ai_fallback(self, query: str) -> str:
-        """Wrap a short photo-mode search query with cinematic styling so AI generators render a usable image."""
-        out = f"{query}, cinematic photograph, photorealistic, dramatic lighting, highly detailed, 4K"
+        """Wrap a short photo-mode search query so AI generators render a usable image. If the channel
+        imposes its own visual style (civilization-detected or `image_style`), defer to it instead of
+        forcing a photographic wrapper that would clash with drawn/illustrated styles."""
+        if self._detect_civilization_style() or self._image_style:
+            out = f"{query}, full scene with key subjects visible, period-accurate setting, vivid mood"
+        else:
+            out = f"{query}, cinematic photograph, photorealistic, dramatic lighting, highly detailed, 4K"
         return self._apply_channel_style(out)
 
     def _apply_channel_style(self, prompt: str) -> str:
         """
-        Append a style suffix to AI image prompts. Civilization-specific style
-        (detected from self.subject) takes precedence; falls back to the
-        per-channel `image_style`. Returns the original prompt if neither
-        applies. Output is capped to ~1000 chars to fit provider limits.
+        Wrap an AI image prompt with the channel's visual style. Civilization-specific
+        style (detected from self.subject) takes precedence; falls back to the
+        per-channel `image_style`. The style is placed BOTH at the start and end
+        of the prompt — diffusion models weight earlier tokens more, so a trailing
+        suffix alone gets overpowered by photographic terms inside the scene
+        description. Returns the original prompt if neither applies. Output is
+        capped to ~1000 chars to fit provider limits.
         """
-        suffix = self._detect_civilization_style() or self._image_style
-        if not suffix:
+        style = self._detect_civilization_style() or self._image_style
+        if not style:
             return prompt
-        combined = f"{prompt.rstrip(', .')}, {suffix}"
+        combined = f"{style}. Scene: {prompt.rstrip(', .')}. Render strictly in this style: {style}"
         return combined[:1000]
 
     def _detect_civilization_style(self) -> str:
@@ -3135,11 +3143,12 @@ The narration is divided into {n_prompts} sections. Each image must illustrate I
 CRITICAL RULES:
 - Image N MUST illustrate SECTION N. Read the section text and describe the LITERAL scene, person, object or event it talks about.
 - Every prompt must be visually unmistakable as the TOPIC. Name the actual SPECIFIC people, places, objects, era, clothing, architecture, or symbols from the section text. Use proper nouns when relevant.
-- Be CONCRETE: describe exactly what appears (subjects, setting, lighting, colors, composition).
+- Be CONCRETE: describe exactly what appears (subjects, action, setting, period-accurate clothing/architecture/objects, atmosphere and colors).
 - 30-60 words per prompt.
-- All images are 16:9 landscape, photorealistic, cinematic. Vary camera angles and lighting (wide shot, close-up, low angle, golden hour, candlelight, overcast, etc.) but DO NOT change the subject matter to fit a style.
+- All images are 16:9 landscape. Vary scene composition (wide vistas, close-up details, group scenes, intimate moments) and atmosphere (dawn, dusk, candlelit, overcast, etc.) but DO NOT change the subject matter to fit a style.
+- DO NOT specify camera angles, lenses, or any photography/film terminology. The channel will impose its own visual style at render time, so describe the SCENE CONTENT only.
 - ABSOLUTELY FORBIDDEN: cosmic / space / nebula imagery (unless the topic is astronomy), microscopic / scientific diagrams (unless the topic is biology/chemistry), futuristic holographic / sci-fi visuals (unless the topic is futurism), abstract geometric / fractal patterns, generic "concept" or "metaphor" visualizations. NEVER swap topical content for these styles.
-- ALSO FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation.
+- ALSO FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
 - Write in English.
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
@@ -3170,20 +3179,20 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             if get_verbose():
                 warning("Failed to parse long video prompts, using section-anchored fallback")
             fallback_styles = [
-                "cinematic wide shot, dramatic side lighting, film grain",
-                "close-up detail, shallow depth of field, soft natural light",
-                "low angle hero shot, golden hour, epic scale",
-                "atmospheric scene, volumetric light, moody shadows",
-                "documentary photography, available light, candid framing",
-                "intimate medium shot, rim lighting, warm tones",
-                "establishing wide vista, overcast diffuse light, painterly",
-                "candlelit interior, warm shadows, period-accurate set",
+                "wide vista with key subjects centered, dramatic atmosphere",
+                "detail of the central object or person, period-accurate textures",
+                "low-angle hero composition, epic scale",
+                "atmospheric scene with depth and moody shadows",
+                "intimate framing of figures interacting in period-accurate context",
+                "establishing view of the era's setting, painterly mood",
+                "overcast atmosphere, period-accurate detail",
+                "warm interior scene, period-accurate furnishings and dress",
             ]
             image_prompts = [
                 (
                     f"Scene from \"{sections[i] if i < len(sections) else self.subject}\" "
                     f"in the context of {self.subject}, {fallback_styles[i % len(fallback_styles)]}, "
-                    f"photorealistic, 8K, 16:9 landscape"
+                    f"period-accurate, 16:9 landscape"
                 )
                 for i in range(n_prompts)
             ]
