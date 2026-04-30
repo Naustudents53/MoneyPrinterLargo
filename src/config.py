@@ -387,6 +387,46 @@ def get_tts_provider() -> str:
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         return json.load(file).get("tts_provider", "edge_tts")
 
+def get_series() -> list:
+    """
+    Gets the list of series defined in config.json. Each series is a dict with:
+      - id (str): unique identifier (e.g. "un_dia_en_la_historia")
+      - title_template (str): template with {placeholders} the LLM will fill
+      - thumbnail_overlay (str): exact text stamped on the thumbnail (no LLM)
+      - thumbnail_font (str, optional): font filename to look up in Windows Fonts
+
+    Returns:
+        series (list): list of series dicts, or [] if none configured.
+    """
+    # utf-8 here so users can paste accented chars (á, é, í, ó, ú, ñ) literally
+    # into title_template / thumbnail_overlay without re-encoding the file.
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
+        return json.load(file).get("series", []) or []
+
+
+def resolve_series(subject: str):
+    """
+    If `subject` starts with a `[series_id]` prefix that matches a configured
+    series, return (series_dict, cleaned_subject). Otherwise return (None, subject).
+
+    Example:
+        "[un_dia_en_la_historia] samurai en el Japón feudal"
+        → ({"id": "un_dia_en_la_historia", ...}, "samurai en el Japón feudal")
+    """
+    if not subject:
+        return None, subject
+    import re as _re
+    m = _re.match(r"^\s*\[([a-zA-Z0-9_\-]+)\]\s*(.*)$", subject)
+    if not m:
+        return None, subject
+    series_id = m.group(1).strip().lower()
+    cleaned = m.group(2).strip()
+    for s in get_series():
+        if str(s.get("id", "")).strip().lower() == series_id:
+            return s, (cleaned or subject)
+    return None, subject
+
+
 def get_script_sentence_length() -> int:
     """
     Gets the forced script's sentence length.

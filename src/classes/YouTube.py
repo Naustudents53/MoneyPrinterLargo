@@ -307,6 +307,7 @@ class YouTube:
         self._used_stock_urls: set = set()
         self.word_timestamps = None
         self.thumbnail_path: str = ""
+        self.active_series: dict = None
 
         # Initialize the Firefox profile
         self.options: Options = Options()
@@ -613,25 +614,88 @@ class YouTube:
             return False, ""
 
         # ---- 4. Build forbidden block (topics + banned entities) ----
+        # IMPORTANT: this block is purely a duplicate-avoidance hint for the LLM.
+        # It must NOT push the model out of the niche. With heavy channel history
+        # (e.g. 100+ videos) the older wording ("FORBIDDEN entities ... Generate a
+        # COMPLETELY DIFFERENT and ORIGINAL idea") read like "abandon the niche",
+        # because every entity listed *was* a niche entity. We now (a) cap counts
+        # tighter, (b) phrase the avoidance as "still WITHIN the niche", and
+        # (c) re-anchor the niche AFTER the avoidance list so the model holds it
+        # in working memory while picking a new angle. The cache-side dedupe
+        # guard (`_is_duplicate`) is unchanged and still catches collisions.
         forbidden_block = ""
         if past_topics:
-            shown = past_clean[-60:]
+            shown = past_clean[-25:]
             all_ents: set = set()
-            for ents in past_entities[-60:]:
+            for ents in past_entities[-25:]:
                 all_ents.update(ents)
-            entity_list = sorted(e for e in all_ents if len(e) >= 4)[:80]
+            entity_list = sorted(e for e in all_ents if len(e) >= 4)[:40]
             forbidden_block = (
-                "\n\nIMPORTANT: Do NOT repeat, rephrase, or pick a similar angle "
-                "to ANY of these previously made videos:\n"
+                "\n\nALREADY COVERED in this niche (pick a DIFFERENT angle, but stay WITHIN the niche):\n"
                 + "\n".join(f"- {t}" for t in shown)
             )
             if entity_list:
                 forbidden_block += (
-                    "\n\nFORBIDDEN keywords/entities (already covered — your topic must NOT "
-                    "involve ANY of these people, places, events, or concepts):\n"
+                    "\n\nSpecific subjects already covered — avoid these particular ones, "
+                    "but DO NOT leave the niche to avoid them (the niche is huge — pick a different "
+                    "person/place/event/concept from the SAME niche):\n"
                     + ", ".join(entity_list)
                 )
-            forbidden_block += "\n\nGenerate a COMPLETELY DIFFERENT and ORIGINAL idea."
+            forbidden_block += (
+                f"\n\nGenerate a fresh angle WITHIN the niche \"{self.niche}\". "
+                f"The new topic must still unmistakably belong to this niche — "
+                f"only the specific subject should differ from the list above."
+            )
+
+        # ---- 4b. Niche validator (second LLM pass that double-checks the candidate) ----
+        def _topic_in_niche(candidate: str) -> bool:
+            """
+            Ask the LLM whether the candidate topic clearly belongs to the channel's
+            niche. Returns False if the verdict is anything other than an unambiguous
+            FITS, so off-niche or ambiguous topics get rejected and regenerated.
+
+            IMPORTANT: the response MUST be at least ~10 chars long. llm_provider's
+            garbage filter (`_is_garbage_response`) treats any reply shorter than 10
+            chars as conversational and DISABLES the provider for the whole session.
+            We require a short structured line ("VERDICT: FITS — <reason>") that
+            clears that bar.
+            """
+            try:
+                verdict = self.generate_response(
+                    f"""You are a strict content classifier. Decide if this video topic clearly and unmistakably belongs to the channel's niche.
+
+CHANNEL NICHE: {self.niche}
+
+CANDIDATE TOPIC: {candidate}
+
+Rules for your verdict:
+- Answer FITS only if the topic is undeniably part of the niche — a viewer would immediately recognize it as belonging to that niche.
+- Answer OFFNICHE if the topic is fictional, made-up, abstract, metaphorical, or drifts toward storytelling/fiction when the niche is factual/educational.
+- Answer OFFNICHE if the topic is a generic life lesson or philosophical musing not tied to the niche's actual subject matter.
+- Answer OFFNICHE if the topic could fit dozens of different niches — niches require specificity.
+- When in doubt, answer OFFNICHE.
+
+OUTPUT FORMAT (strict, exactly one line):
+VERDICT: <FITS or OFFNICHE> — <short reason in 5-15 words>
+
+Example outputs:
+VERDICT: FITS — clearly a real historical curiosity about ancient Egypt
+VERDICT: OFFNICHE — fictional storytelling, not a real subject in the niche
+
+Return ONLY that single line. No other text."""
+                )
+            except Exception:
+                # If the validator call fails, don't block the pipeline — accept the candidate.
+                return True
+            verdict_up = (verdict or "").strip().upper()
+            # Look for the verdict token anywhere in the response (handles wrappers like
+            # "**VERDICT: FITS — ...**" or stray quotes around the line).
+            if "OFFNICHE" in verdict_up or "OFF-NICHE" in verdict_up or "OFF NICHE" in verdict_up:
+                return False
+            if "FITS" in verdict_up:
+                return True
+            # Unparseable response → accept (the cache-side dedupe still guards the run).
+            return True
 
         # ---- 5. Generate with retries ----
         rejected: List[str] = []
@@ -652,14 +716,17 @@ class YouTube:
 
 YOUR NICHE (you MUST stay strictly within this niche): {self.niche}
 
-CRITICAL RULE: The topic MUST be directly and obviously related to the niche above. Do NOT generate topics about unrelated subjects like history, politics, celebrities, cinema, or any field outside the niche. If the niche is about the universe and the mind, the topic must be about the universe and the mind — NOT about historical figures, civilizations, or unrelated events.
+CRITICAL RULE: The topic MUST be directly and unmistakably part of the niche above. Anything that does not clearly belong to that niche is FORBIDDEN — including fictional stories, made-up characters, abstract metaphors, generic life lessons, philosophical musings disconnected from the niche, or any unrelated field. ONLY generate topics whose subject matter a viewer would immediately recognize as belonging to "{self.niche}".
 
-The topic must be ONE concrete story, event, mystery, or fact — NOT a broad category.
+The topic must be ONE concrete story, event, mystery, fact, person, place, or phenomenon — NOT a broad category, NOT a fictional scenario.
 
 BAD example: "Curiosidades del antiguo Egipto" (too broad, leads to random facts)
-GOOD example: "La maldición de la tumba de Tutankamón: ¿qué les pasó a los arqueólogos?" (one specific story)
-GOOD example: "¿Por qué los romanos usaban orina para lavar la ropa?" (one specific curiosity)
-GOOD example: "El día que un asteroide exterminó al 75% de la vida en la Tierra" (one specific event)
+BAD example: "El hombre que camina hacia atrás" (fictional story, not a real subject)
+GOOD example: "La maldición de la tumba de Tutankamón: ¿qué les pasó a los arqueólogos?" (one specific real story)
+GOOD example: "¿Por qué los romanos usaban orina para lavar la ropa?" (one specific real curiosity)
+GOOD example: "El día que un asteroide exterminó al 75% de la vida en la Tierra" (one specific real event)
+
+SELF-CHECK BEFORE ANSWERING: Re-read the niche "{self.niche}". If your topic is not unmistakably part of THAT niche, discard it and pick a different one.
 
 OUTPUT FORMAT (strict):
 - Return ONLY the topic as one plain sentence.
@@ -668,7 +735,7 @@ OUTPUT FORMAT (strict):
 - NO surrounding quotes.
 - WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.{forbidden_block}{extra_reject}
 
-(Creativity seed: {creativity_seed} — use this to inspire a unique, unexpected angle.)"""
+(Creativity seed: {creativity_seed} — use this to inspire a fresh angle WITHIN the niche. "Fresh" means a different specific subject from the same niche, NOT a different field.)"""
             )
 
             candidate = _strip_markdown(raw_candidate or "")
@@ -689,6 +756,15 @@ OUTPUT FORMAT (strict):
                     f"Topic collides with past video (attempt {attempt + 1}/{max_attempts}).\n"
                     f"   candidate: {candidate[:100]}\n"
                     f"   past     : {matched[:100]}"
+                )
+                rejected.append(candidate)
+                continue
+
+            if not _topic_in_niche(candidate):
+                warning(
+                    f"Topic off-niche (attempt {attempt + 1}/{max_attempts}).\n"
+                    f"   candidate: {candidate[:100]}\n"
+                    f"   niche    : {self.niche[:100]}"
                 )
                 rejected.append(candidate)
                 continue
@@ -750,6 +826,8 @@ CRITICAL RULES:
 - EXACTLY {sentence_length} sentences. Short and punchy (under 20 words each).
 - NO markdown, NO formatting, NO titles, NO bullet points.
 - NO "welcome", NO "voiceover", NO meta-references.
+- ABSOLUTELY NO stage directions of any kind. Never write "(image of ...)", "(imagen de ...)", "[B-roll: ...]", "(plano cerrado)", "(music)", "(música suave)", "(emoji)", "(transition)", "(voice over)" or anything similar. Only text a narrator would speak ALOUD.
+- NUMBERS: spell numbers out as words, not digits. Examples (in {self.language}): "mil cuatrocientos cincuenta y tres" not "1453"; "four thousand five hundred" not "4,500".
 - ONLY return the raw script text. Nothing else.
 - WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.
 """
@@ -870,12 +948,12 @@ The script has been divided into {n_prompts} sections. Each image MUST match its
 {sections_text}
 INSTRUCTIONS:
 - Image 1 MUST illustrate SECTION 1, Image 2 MUST illustrate SECTION 2, etc.
-- Describe the LITERAL content of each section as a visual scene.
-- Example: if a section says "The ancient Egyptians built massive pyramids", write: "Massive Egyptian pyramids under construction, thousands of workers pulling limestone blocks, desert sand, blue sky, cranes made of wood, cinematic wide angle"
+- Describe the LITERAL content of each section as a visual scene: who/what is in it, what they are doing, the setting, period-accurate clothing/architecture/objects, atmosphere and colors.
+- Example: if a section says "The ancient Egyptians built massive pyramids", write: "Massive Egyptian pyramids mid-construction, thousands of workers pulling limestone blocks across desert sand under a vast blue sky, wooden cranes and ramps, an overseer with a staff watching from a stone platform"
 - Be SPECIFIC: name real things (animals, buildings, objects, places, people).
-- Include: camera angle, lighting, colors, environment details.
+- DO NOT specify camera angles, lenses, or any photography/film terminology. The channel will impose its own visual style at render time, so describe the SCENE CONTENT only.
 - Write in English. Each prompt: 30-60 words.
-- FORBIDDEN: visualization, concept, essence, metaphor, abstract, symbolic, interpretation.
+- FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
@@ -909,12 +987,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             fallback_prompts = [self.subject] * n_prompts
         else:
             fallback_prompts = [
-                f"{self.subject}, realistic photograph, wide angle, natural lighting, highly detailed, 8K",
-                f"{self.subject}, close-up detail shot, soft natural light, vivid colors, photorealistic",
-                f"{self.subject}, panoramic landscape view, golden hour, cinematic composition, detailed",
-                f"{self.subject}, historical illustration style, warm earth tones, detailed environment",
-                f"{self.subject}, overhead aerial perspective, dramatic clouds, vast scale, ultra detailed",
-                f"{self.subject}, documentary photograph, authentic setting, natural atmosphere, 4K quality",
+                f"{self.subject}, full scene with the central subject visible, period-accurate setting and clothing, vivid mood",
+                f"{self.subject}, detail of the central object or person, period-accurate textures and materials",
+                f"{self.subject}, panoramic view of the environment, period-accurate landscape and architecture",
+                f"{self.subject}, illustrated historical scene with period-accurate clothing and architecture",
+                f"{self.subject}, group composition showing several figures interacting in period-accurate context",
+                f"{self.subject}, atmospheric scene with depth and storytelling, period-accurate mood and palette",
             ]
 
         if not image_prompts or not isinstance(image_prompts, list):
@@ -1070,6 +1148,65 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             return img_resp.content
         raise RuntimeError("Ideogram: failed to download image")
 
+    def _call_nanobanana2(self, prompt: str, aspect_ratio: str) -> bytes:
+        """
+        Call Google's Nano Banana 2 (Gemini image API) with the given prompt and
+        aspect ratio. Returns raw image bytes (PNG/JPEG). Used by both the
+        portrait (9:16) and landscape (16:9) wrappers below.
+        """
+        from config import (
+            get_nanobanana2_api_key,
+            get_nanobanana2_api_base_url,
+            get_nanobanana2_model,
+        )
+        api_key = get_nanobanana2_api_key()
+        if not api_key:
+            raise RuntimeError("Nano Banana 2 API key not configured (nanobanana2_api_key)")
+
+        base_url = (get_nanobanana2_api_base_url() or "").rstrip("/")
+        model = get_nanobanana2_model() or "gemini-3.1-flash-image-preview"
+        url = f"{base_url}/models/{model}:generateContent?key={api_key}"
+
+        print(colored(f"    [Nano Banana 2 {aspect_ratio}] Generating...", "cyan"), flush=True)
+        payload = {
+            "contents": [{"parts": [{"text": prompt[:1900]}]}],
+            "generationConfig": {
+                "responseModalities": ["IMAGE"],
+                "imageConfig": {"aspectRatio": aspect_ratio},
+            },
+        }
+        resp = requests.post(
+            url,
+            headers={"Content-Type": "application/json"},
+            json=payload,
+            timeout=120,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Nano Banana 2: HTTP {resp.status_code} — {resp.text[:200]}")
+
+        data = resp.json()
+        candidates = data.get("candidates") or []
+        for cand in candidates:
+            for part in (cand.get("content") or {}).get("parts") or []:
+                inline = part.get("inlineData") or part.get("inline_data") or {}
+                b64 = inline.get("data")
+                if b64:
+                    img_bytes = base64.b64decode(b64)
+                    if len(img_bytes) > 5000:
+                        print(colored("OK", "green"))
+                        return img_bytes
+        raise RuntimeError(f"Nano Banana 2: no image in response — {str(data)[:200]}")
+
+    def _try_nanobanana2(self, prompt: str) -> bytes:
+        """Nano Banana 2 in the configured aspect ratio (defaults to 9:16 for Shorts)."""
+        from config import get_nanobanana2_aspect_ratio
+        ratio = get_nanobanana2_aspect_ratio() or "9:16"
+        return self._call_nanobanana2(prompt, ratio)
+
+    def _try_nanobanana2_landscape(self, prompt: str) -> bytes:
+        """Nano Banana 2 in 16:9 for long-form videos."""
+        return self._call_nanobanana2(prompt, "16:9")
+
     def _try_leonardo(self, prompt: str) -> bytes:
         """Try Leonardo AI API (excellent quality, $5 free credit)."""
         from config import get_leonardo_api_key
@@ -1122,21 +1259,29 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         raise RuntimeError("Leonardo: timeout waiting for generation")
 
     def _augment_for_ai_fallback(self, query: str) -> str:
-        """Wrap a short photo-mode search query with cinematic styling so AI generators render a usable image."""
-        out = f"{query}, cinematic photograph, photorealistic, dramatic lighting, highly detailed, 4K"
+        """Wrap a short photo-mode search query so AI generators render a usable image. If the channel
+        imposes its own visual style (civilization-detected or `image_style`), defer to it instead of
+        forcing a photographic wrapper that would clash with drawn/illustrated styles."""
+        if self._detect_civilization_style() or self._image_style:
+            out = f"{query}, full scene with key subjects visible, period-accurate setting, vivid mood"
+        else:
+            out = f"{query}, cinematic photograph, photorealistic, dramatic lighting, highly detailed, 4K"
         return self._apply_channel_style(out)
 
     def _apply_channel_style(self, prompt: str) -> str:
         """
-        Append a style suffix to AI image prompts. Civilization-specific style
-        (detected from self.subject) takes precedence; falls back to the
-        per-channel `image_style`. Returns the original prompt if neither
-        applies. Output is capped to ~1000 chars to fit provider limits.
+        Wrap an AI image prompt with the channel's visual style. Civilization-specific
+        style (detected from self.subject) takes precedence; falls back to the
+        per-channel `image_style`. The style is placed BOTH at the start and end
+        of the prompt — diffusion models weight earlier tokens more, so a trailing
+        suffix alone gets overpowered by photographic terms inside the scene
+        description. Returns the original prompt if neither applies. Output is
+        capped to ~1000 chars to fit provider limits.
         """
-        suffix = self._detect_civilization_style() or self._image_style
-        if not suffix:
+        style = self._detect_civilization_style() or self._image_style
+        if not style:
             return prompt
-        combined = f"{prompt.rstrip(', .')}, {suffix}"
+        combined = f"{style}. Scene: {prompt.rstrip(', .')}. Render strictly in this style: {style}"
         return combined[:1000]
 
     def _detect_civilization_style(self) -> str:
@@ -1717,6 +1862,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 ("Pexels", self._try_pexels, "stock"),
                 ("Pixabay", self._try_pixabay, "stock"),
                 # Tier 3: AI fallback when no real photo matches the topic
+                ("Nano Banana 2", self._try_nanobanana2, "ai"),
                 ("Leonardo AI", self._try_leonardo, "ai"),
                 ("Pollinations FLUX", self._try_pollinations, "ai"),
                 ("Pollinations turbo", self._try_pollinations_turbo, "ai"),
@@ -1724,14 +1870,16 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         else:
             print(colored(f"\n  [Images] Generating {len(prompts)} images...", "blue"))
             providers = [
-                # Tier 1: High-quality AI generator
+                # Tier 1: Nano Banana 2 (Gemini 3 image preview) — primary AI generator
+                ("Nano Banana 2", self._try_nanobanana2, "ai"),
+                # Tier 2: High-quality AI generator
                 ("Leonardo AI", self._try_leonardo, "ai"),
-                # Tier 2: Free unlimited AI generators (no daily limits)
+                # Tier 3: Free unlimited AI generators (no daily limits)
                 ("Pollinations FLUX", self._try_pollinations, "ai"),
                 ("Pollinations turbo", self._try_pollinations_turbo, "ai"),
                 ("Pollinations flux-realism", self._try_pollinations_realism, "ai"),
                 ("HuggingFace", self._try_huggingface, "ai"),
-                # Tier 3: Stock photos (reliable, always available)
+                # Tier 4: Stock photos (reliable, always available)
                 ("Pexels", self._try_pexels, "stock"),
                 ("Pixabay", self._try_pixabay, "stock"),
             ]
@@ -1817,8 +1965,15 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         # so Edge-TTS pauses naturally. The script we display keeps Roman
         # numerals intact ("Cosimo I"); only the text fed to TTS expands them
         # ("Cosimo primero") so pronunciation is correct.
+        # Strip leaked stage directions ("(imagen de ...)") before any other
+        # cleaning so TTS never reads them out loud.
+        self.script = strip_stage_directions(self.script)
         self.script = clean_script_for_tts(self.script)
         tts_text, regnal_subs = expand_regnal_numerals_tracked(self.script)
+        # Expand digit numbers to Spanish words. Applied to tts_text only so
+        # the original self.script (used for subtitle alignment) keeps its
+        # short tokens, while what the TTS reads has natural Spanish numbers.
+        tts_text = expand_spanish_numbers(tts_text)
 
         # Per-channel short voice override (falls back to TTS instance default if empty).
         short_vid = self._resolve_voice(self._short_voice)
@@ -2473,19 +2628,25 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             active_provider = ""
 
         if active_provider == "gemini":
-            info(" [Script] Gemini detected — trying single-call fast path...")
-            try:
-                full = self._generate_long_script_single_call(lang)
-                word_count = len(full.split())
-                if word_count >= 2000:
-                    full = self._postprocess_long_script(full)
-                    self.script = full
-                    self._persist_long_script(full)
-                    info(f" => Generated long script: {len(full.split())} words (~{len(full.split()) // 165} min)")
-                    return full
-                warning(f"   Single-call returned only {word_count} words; falling back to per-section.")
-            except Exception as e:
-                warning(f"   Single-call failed: {str(e)[:200]}; falling back to per-section.")
+            SINGLE_CALL_ATTEMPTS = 3
+            info(f" [Script] Gemini detected — trying single-call fast path (up to {SINGLE_CALL_ATTEMPTS} attempts)...")
+            best_short = ""  # remember the longest under-2000-word draft in case all attempts come up short
+            for attempt in range(1, SINGLE_CALL_ATTEMPTS + 1):
+                try:
+                    full = self._generate_long_script_single_call(lang)
+                    word_count = len(full.split())
+                    if word_count >= 2000:
+                        full = self._postprocess_long_script(full)
+                        self.script = full
+                        self._persist_long_script(full)
+                        info(f" => Generated long script: {len(full.split())} words (~{len(full.split()) // 165} min) (single-call attempt {attempt})")
+                        return full
+                    warning(f"   Single-call attempt {attempt}/{SINGLE_CALL_ATTEMPTS} returned only {word_count} words.")
+                    if word_count > len(best_short.split()):
+                        best_short = full
+                except Exception as e:
+                    warning(f"   Single-call attempt {attempt}/{SINGLE_CALL_ATTEMPTS} failed: {str(e)[:200]}")
+            warning("   All single-call attempts came up short or failed; falling back to per-section.")
 
         # ---- DEFAULT PATH: per-section for capped providers ----
         full = self._generate_long_script_sectional(lang)
@@ -2584,16 +2745,25 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         Ask the LLM for the entire 15-20 min script in one call.
         Designed for high-output-window providers (Gemini Flash 2.5/3).
         """
-        prompt = f"""Eres un narrador experto de documentales y guionista profesional.
-Escribe un GUION COMPLETO de narración cautivador de 15 a 20 minutos sobre el siguiente tema.
+        # Series-aware: when the active series defines a brief / themes, build
+        # the structure description from those themes so the single-call prompt
+        # gets the same immersive guidance as the sectional path.
+        series = getattr(self, "active_series", None) or {}
+        script_brief = (series.get("script_brief") or "").strip()
+        series_themes = series.get("section_themes") or []
 
-Tema: {self.subject}
+        if script_brief:
+            info(f" => Using series narrative brief: {series.get('id', '')}")
 
-ESTRUCTURA OBLIGATORIA (usa estos marcadores EXACTOS):
-[INTRO]
-Gancho inicial poderoso (5-7 oraciones, 120-180 palabras). Empieza con un dato impactante, pregunta provocadora o afirmación audaz.
-
-[SECTION 1: <título corto>]
+        if isinstance(series_themes, list) and len(series_themes) == 10:
+            # Build the SECTION block from the series-defined chronological themes.
+            sections_block = "\n\n".join(
+                f"[SECTION {i+1}: <título corto>]\n{theme} (10-14 oraciones, 250-350 palabras)."
+                for i, theme in enumerate(series_themes)
+            )
+        else:
+            # Default documentary structure.
+            sections_block = """[SECTION 1: <título corto>]
 Aspecto fundacional o más fascinante del tema (10-14 oraciones, 250-350 palabras).
 
 [SECTION 2: <título corto>]
@@ -2621,7 +2791,23 @@ Conexión inesperada o paralelismo con otro ámbito (10-14 oraciones, 250-350 pa
 Clímax final — la revelación o giro más fuerte (10-14 oraciones, 250-350 palabras).
 
 [SECTION 10: <título corto>]
-Consecuencias, legado o impacto del tema en la actualidad (10-14 oraciones, 250-350 palabras).
+Consecuencias, legado o impacto del tema en la actualidad (10-14 oraciones, 250-350 palabras)."""
+
+        brief_block = (
+            f"\nDIRECTIVA NARRATIVA DE LA SERIE — OBLIGATORIA EN CADA PALABRA DE TU RESPUESTA:\n{script_brief}\n"
+            if script_brief else ""
+        )
+
+        prompt = f"""Eres un narrador experto de documentales y guionista profesional.
+Escribe un GUION COMPLETO de narración cautivador de 15 a 20 minutos sobre el siguiente tema.
+
+Tema: {self.subject}
+{brief_block}
+ESTRUCTURA OBLIGATORIA (usa estos marcadores EXACTOS):
+[INTRO]
+Gancho inicial poderoso (5-7 oraciones, 120-180 palabras). Empieza con un dato impactante, pregunta provocadora o afirmación audaz.
+
+{sections_block}
 
 [CLOSING]
 Conclusión memorable (5-7 oraciones, 120-180 palabras). Termina con una reflexión que perdure.
@@ -2643,9 +2829,20 @@ REGLAS DE ESTILO:
 - TOTAL OBLIGATORIO: entre 2700 y 3500 palabras.
 - Cada sección debe aportar material NUEVO, no repetir.
 - ESCRIBE TODO EN {lang}. NO uses inglés.
-- NO acotaciones, NO etiquetas de hablante, NO meta-texto.
 - NO markdown, NO viñetas, NO listas numeradas.
 - NO URLs, enlaces, citas ni referencias.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones de cualquier tipo. Solo texto que un narrador diría EN VOZ ALTA. NUNCA escribas:
+    * "(imagen de ...)", "(imágenes de ...)", "[plano cerrado de ...]", "(escena ...)", "(secuencia ...)"
+    * "(B-roll: ...)", "(B/O ...)", "(voz en off)", "(narrador:)"
+    * "(música suave)", "(sonido de ...)", "(efectos)", "(silencio)"
+    * "(emoji ...)", "(emoticono ...)", "(símbolo ...)"
+    * "(transición)", "(fundido)", "(zoom)", "(corte)", "(cierre)"
+  Si crees que necesitas describir una imagen o un sonido, NO LO HAGAS — el video ya tiene imágenes y música. Solo narra.
+- NÚMEROS: escribe TODOS los números con palabras, no con dígitos. Ejemplos:
+    * "hace cuatro mil quinientos años" (no "hace 4.500 años")
+    * "el año mil cuatrocientos cincuenta y tres" (no "1453")
+    * "el siglo dieciséis" (no "el siglo XVI" ni "el siglo 16")
+    * "tres coma uno cuatro" (no "3,14")
 - SOLO devuelve el guion completo con los 12 marcadores arriba listados. Sin preámbulo.
 """
         completion = self._clean_llm_script(self.generate_response(prompt))
@@ -2654,19 +2851,39 @@ REGLAS DE ESTILO:
     def _generate_long_script_sectional(self, lang: str) -> str:
         """Per-section generation (12 calls) for providers with low output caps."""
 
+        # Series-aware: when a series brief / themes are configured, use them so
+        # the script follows the series voice (e.g. immersive 2nd-person POV for
+        # "Un día en la historia") instead of the generic documentary structure.
+        series = getattr(self, "active_series", None) or {}
+        script_brief = (series.get("script_brief") or "").strip()
+        series_themes = series.get("section_themes") or []
+        if script_brief:
+            info(f" => Using series narrative brief: {series.get('id', '')}")
+
         # Per-section thematic guidance — what role each section plays in the narrative arc.
-        section_themes = [
-            "Aspecto fundacional o más fascinante del tema. Establece el contexto y captura la atención.",
-            "Ángulo distinto o construcción sobre la sección anterior, con anécdotas concretas o ejemplos.",
-            "Conexiones sorprendentes o hechos poco conocidos relacionados al tema.",
-            "Profundización con datos concretos, fechas, lugares o personas reales.",
-            "Clímax intermedio — el momento más impactante hasta este punto.",
-            "Consecuencia o nuevo ángulo que surge a partir de lo anterior.",
-            "Detalles narrativos profundos, anécdotas o testimonios.",
-            "Conexión inesperada o paralelismo con otro ámbito.",
-            "Clímax final — la revelación o giro más fuerte del tema.",
-            "Consecuencias, legado o impacto del tema en la actualidad.",
-        ]
+        # Series-defined themes win when present and are exactly 10 entries.
+        if isinstance(series_themes, list) and len(series_themes) == 10:
+            section_themes = list(series_themes)
+        else:
+            section_themes = [
+                "Aspecto fundacional o más fascinante del tema. Establece el contexto y captura la atención.",
+                "Ángulo distinto o construcción sobre la sección anterior, con anécdotas concretas o ejemplos.",
+                "Conexiones sorprendentes o hechos poco conocidos relacionados al tema.",
+                "Profundización con datos concretos, fechas, lugares o personas reales.",
+                "Clímax intermedio — el momento más impactante hasta este punto.",
+                "Consecuencia o nuevo ángulo que surge a partir de lo anterior.",
+                "Detalles narrativos profundos, anécdotas o testimonios.",
+                "Conexión inesperada o paralelismo con otro ámbito.",
+                "Clímax final — la revelación o giro más fuerte del tema.",
+                "Consecuencias, legado o impacto del tema en la actualidad.",
+            ]
+
+        # Block of narrative directives prepended to every per-call prompt when
+        # a series brief is active. Empty string in non-series mode (no-op).
+        brief_block = (
+            f"\n\nDIRECTIVA NARRATIVA DE LA SERIE — OBLIGATORIA EN CADA PALABRA DE TU RESPUESTA:\n{script_brief}\n\n"
+            if script_brief else ""
+        )
 
         def _ask_section(prompt: str, min_words: int) -> str:
             """Call the LLM with retries until we hit min_words AND the content is clean."""
@@ -2697,13 +2914,15 @@ REGLAS DE ESTILO:
 
         # ---- INTRO ----
         intro_prompt = f"""Eres un narrador experto de documentales. Escribe SOLO la INTRODUCCIÓN de un guion documental sobre: {self.subject}
-
+{brief_block}
 REGLAS:
 - 5-7 oraciones (120-180 palabras).
 - Empieza con un gancho poderoso: dato impactante, pregunta provocadora o afirmación audaz.
 - Lenguaje vívido y sensorial. Oraciones CORTAS (máximo 20 palabras).
 - ESCRIBE TODO EN {lang}. NO uses inglés.
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
+- NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [INTRO]
 """
         intro = _ensure_marker(_ask_section(intro_prompt, min_words=80), "[INTRO]")
@@ -2716,7 +2935,7 @@ REGLAS:
             tail = " ".join(prior.split()[-250:]) if prior else ""
 
             section_prompt = f"""Eres un narrador experto de documentales. Estás escribiendo la SECCIÓN {i} de 10 de un guion sobre: {self.subject}
-
+{brief_block}
 Esto es lo último que ya se narró (NO lo repitas, continúa el flujo natural):
 \"\"\"
 {tail}
@@ -2729,6 +2948,8 @@ Escribe SOLO la SECCIÓN {i}:
 - Aporta material NUEVO, no repitas ideas ya dichas.
 - ESCRIBE TODO EN {lang}. NO uses inglés.
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
+- NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
 - Devuelve SOLO el texto de la sección, precedido EXACTAMENTE por una línea con: [SECTION {i}: <título breve descriptivo>]
 """
             section = _ensure_marker(_ask_section(section_prompt, min_words=180), f"[SECTION {i}: parte {i}]")
@@ -2739,7 +2960,7 @@ Escribe SOLO la SECCIÓN {i}:
         prior = "\n\n".join(parts)
         tail = " ".join(prior.split()[-300:])
         closing_prompt = f"""Eres un narrador experto de documentales. Estás escribiendo el CIERRE de un guion sobre: {self.subject}
-
+{brief_block}
 Esto es lo último que se narró:
 \"\"\"
 {tail}
@@ -2751,6 +2972,8 @@ Escribe SOLO el CIERRE:
 - Lenguaje vívido. Oraciones CORTAS (máximo 20 palabras).
 - ESCRIBE TODO EN {lang}. NO uses inglés.
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
+- NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453").
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [CLOSING]
 """
         closing = _ensure_marker(_ask_section(closing_prompt, min_words=80), "[CLOSING]")
@@ -2780,6 +3003,7 @@ REGLAS:
 - Tono cálido, cercano, humano — como un amigo, no como una máquina.
 - Oraciones CORTAS (máximo 20 palabras).
 - NO uses markdown, viñetas, listas, URLs, hashtags ni meta-texto.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [OUTRO]
 """
         outro = _ensure_marker(_ask_section(outro_prompt, min_words=40), "[OUTRO]")
@@ -2799,18 +3023,60 @@ REGLAS:
         """
         Generates metadata optimized for long-form YouTube videos.
         """
-        title = self.generate_response(
-            f"Genera un título para un video largo de YouTube sobre: {self.subject}.\n"
-            f"REQUISITOS DEL TÍTULO:\n"
-            f"- Máximo 70 caracteres.\n"
-            f"- Clickbait MODERADO: incluye exactamente 1 o 2 palabras clave en MAYÚSCULAS para enfatizar "
-            f"(ejemplos: SECRETO, NUNCA, JAMÁS, NADIE, OCULTO, VERDAD, IMPOSIBLE, REAL, PROHIBIDO, INCREÍBLE).\n"
-            f"- Despierta curiosidad o promete una revelación.\n"
-            f"- SIN signos de exclamación ni de interrogación.\n"
-            f"- SIN emojis, SIN comillas, SIN hashtags.\n"
-            f"- ESCRIBE EN {self.language}.\n"
-            f"Devuelve SOLO el título, sin explicación."
-        )
+        series = getattr(self, "active_series", None)
+        title_template = (series or {}).get("title_template", "").strip()
+
+        if title_template:
+            # Series mode: ask the LLM only for the placeholder values, then format
+            # the template ourselves. This guarantees every video in the series
+            # ends up with the same title shape.
+            placeholders = re.findall(r"\{(\w+)\}", title_template)
+            if placeholders:
+                fields_desc = ", ".join(f'"{p}"' for p in placeholders)
+                raw = self.generate_response(
+                    f"Vas a producir los datos para el título de un video de la serie "
+                    f"\"{series.get('id', '')}\".\n"
+                    f"TEMA DEL VIDEO: {self.subject}\n\n"
+                    f"Devuelve SOLO un objeto JSON con estos campos exactos: {fields_desc}.\n"
+                    f"Cada valor debe ir en {self.language}, en MAYÚSCULAS, sin comillas, "
+                    f"sin tildes invertidas, conciso (1-4 palabras por campo), y derivado "
+                    f"directamente del tema. Ejemplo de formato: {{\"rol\": \"SAMURÁI\", "
+                    f"\"lugar\": \"EL JAPÓN FEUDAL\"}}.\n"
+                    f"NO devuelvas markdown, NO devuelvas explicación, SOLO el JSON."
+                )
+                raw = str(raw).replace("```json", "").replace("```", "").strip()
+                values = {}
+                try:
+                    values = json.loads(raw)
+                except Exception:
+                    m = re.search(r"\{.*\}", raw, re.DOTALL)
+                    if m:
+                        try:
+                            values = json.loads(m.group())
+                        except Exception:
+                            values = {}
+                # Default each missing placeholder to the subject in upper-case so
+                # we never crash on a malformed LLM response.
+                fallback = re.sub(r"\s+", " ", self.subject).strip().upper()
+                filled = {p: str(values.get(p, fallback)).strip().upper() or fallback
+                          for p in placeholders}
+                title = title_template.format(**filled)
+            else:
+                # Template has no placeholders → use it verbatim.
+                title = title_template
+        else:
+            title = self.generate_response(
+                f"Genera un título para un video largo de YouTube sobre: {self.subject}.\n"
+                f"REQUISITOS DEL TÍTULO:\n"
+                f"- Máximo 70 caracteres.\n"
+                f"- Clickbait MODERADO: incluye exactamente 1 o 2 palabras clave en MAYÚSCULAS para enfatizar "
+                f"(ejemplos: SECRETO, NUNCA, JAMÁS, NADIE, OCULTO, VERDAD, IMPOSIBLE, REAL, PROHIBIDO, INCREÍBLE).\n"
+                f"- Despierta curiosidad o promete una revelación.\n"
+                f"- SIN signos de exclamación ni de interrogación.\n"
+                f"- SIN emojis, SIN comillas, SIN hashtags.\n"
+                f"- ESCRIBE EN {self.language}.\n"
+                f"Devuelve SOLO el título, sin explicación."
+            )
 
         # Strip any quotes the LLM might add (regular, curly, single)
         title = re.sub(r'^[\"\'\u201c\u201d\u2018\u2019]+|[\"\'\u201c\u201d\u2018\u2019]+$', '', title.strip()).strip()
@@ -2859,6 +3125,11 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
 
         video_title = (self.metadata or {}).get("title", "") if hasattr(self, "metadata") else ""
 
+        # Series mode: overlay text is pinned, so we skip the entire LLM-overlay
+        # path and only ask the LLM for a visual prompt for the background image.
+        series = getattr(self, "active_series", None)
+        series_overlay = (series or {}).get("thumbnail_overlay", "").strip()
+
         # Build the set of allowed tokens (lowercased, accent-stripped) from title + topic.
         # Any LLM-generated overlay word must derive from this vocabulary or it gets rejected
         # (this is what catches hallucinations like "TÁQUILAS SE HOJAN").
@@ -2872,9 +3143,35 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
             _norm(t) for t in re.findall(r"[A-Za-zÀ-ÿ]+", title_topic_text) if len(t) > 2
         }
 
+        visual_prompt = ""
+        overlay_words = ""
+
+        if series_overlay:
+            overlay_words = series_overlay.upper()
+            # Ask the LLM for a visual prompt only (no overlay words) — keeps the
+            # series identity stable while letting the background still match the topic.
+            visual_prompt = str(self.generate_response(
+                f"Write a SINGLE English image-generation prompt for a YouTube thumbnail "
+                f"about: {self.subject}.\n"
+                f"REQUIREMENTS:\n"
+                f"- 40-70 words.\n"
+                f"- Describe a SPECIFIC dramatic scene tied to the topic. Name actual people, "
+                f"places, objects, era, clothing, architecture or symbols. Use proper nouns "
+                f"when relevant.\n"
+                f"- ONE single dramatic scene, not a list of unrelated elements.\n"
+                f"- Include: dramatic side lighting, high contrast, shallow depth of field, "
+                f"cinematic composition, photorealistic.\n"
+                f"- End with: no text, no letters, no logos, no watermark.\n"
+                f"- Return ONLY the prompt itself. No quotes, no preamble, no explanation."
+            )).strip().strip('"\'`')
+            info(f"Thumbnail: using series overlay '{overlay_words}'")
+
         # Step 1: ask LLM for the visual concept + overlay words.
-        llm_raw = str(self.generate_response(
-            f"""Design a YouTube thumbnail for this video.
+        # Skipped entirely in series mode — overlay is pinned and visual was
+        # built above without the JSON ceremony.
+        if not series_overlay:
+            llm_raw = str(self.generate_response(
+                f"""Design a YouTube thumbnail for this video.
 
 VIDEO TITLE: {video_title or "(see topic)"}
 TOPIC: {self.subject}
@@ -2901,52 +3198,50 @@ Return ONLY a JSON object with two fields:
   * AVOID these overused clichés entirely: "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR", "INCREÍBLE", "JAMÁS LO CREERÁS".
 
 Return ONLY the JSON. No markdown, no explanation."""
-        )).replace("```json", "").replace("```", "").strip()
+            )).replace("```json", "").replace("```", "").strip()
 
-        visual_prompt = ""
-        overlay_words = ""
-        try:
-            data = json.loads(llm_raw)
-            visual_prompt = str(data.get("visual", "")).strip()
-            overlay_words = str(data.get("words", "")).strip().upper()
-        except Exception:
-            match = re.search(r"\{.*\}", llm_raw, re.DOTALL)
-            if match:
-                try:
-                    data = json.loads(match.group())
-                    visual_prompt = str(data.get("visual", "")).strip()
-                    overlay_words = str(data.get("words", "")).strip().upper()
-                except Exception:
-                    pass
+            try:
+                data = json.loads(llm_raw)
+                visual_prompt = str(data.get("visual", "")).strip()
+                overlay_words = str(data.get("words", "")).strip().upper()
+            except Exception:
+                match = re.search(r"\{.*\}", llm_raw, re.DOTALL)
+                if match:
+                    try:
+                        data = json.loads(match.group())
+                        visual_prompt = str(data.get("visual", "")).strip()
+                        overlay_words = str(data.get("words", "")).strip().upper()
+                    except Exception:
+                        pass
 
-        BANNED_OVERLAYS = {
-            "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR",
-            "INCREÍBLE", "INCREIBLE", "JAMÁS LO CREERÁS", "JAMAS LO CREERAS",
-        }
+            BANNED_OVERLAYS = {
+                "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR",
+                "INCREÍBLE", "INCREIBLE", "JAMÁS LO CREERÁS", "JAMAS LO CREERAS",
+            }
 
-        def _validate_overlay(candidate: str) -> bool:
-            """Reject if too short, banned, or any content word is hallucinated."""
-            if not candidate:
-                return False
-            if candidate in BANNED_OVERLAYS:
-                return False
-            STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
-                    "que", "por", "para", "con", "en", "a", "su", "sus", "lo"}
-            words = [_norm(w) for w in re.findall(r"[A-Za-zÀ-ÿ]+", candidate)]
-            # Reject one-word overlays — clickbait needs a phrase.
-            if len(words) < 3:
-                return False
-            content_words = [w for w in words if w not in STOP]
-            if not content_words:
-                return False
-            for w in content_words:
-                if not any(w == a or w in a or a in w for a in allowed_tokens):
+            def _validate_overlay(candidate: str) -> bool:
+                """Reject if too short, banned, or any content word is hallucinated."""
+                if not candidate:
                     return False
-            return True
+                if candidate in BANNED_OVERLAYS:
+                    return False
+                STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
+                        "que", "por", "para", "con", "en", "a", "su", "sus", "lo"}
+                words = [_norm(w) for w in re.findall(r"[A-Za-zÀ-ÿ]+", candidate)]
+                # Reject one-word overlays — clickbait needs a phrase.
+                if len(words) < 3:
+                    return False
+                content_words = [w for w in words if w not in STOP]
+                if not content_words:
+                    return False
+                for w in content_words:
+                    if not any(w == a or w in a or a in w for a in allowed_tokens):
+                        return False
+                return True
 
-        if overlay_words and not _validate_overlay(overlay_words):
-            warning(f"Thumbnail: LLM overlay '{overlay_words}' rejected (hallucinated or banned).")
-            overlay_words = ""
+            if overlay_words and not _validate_overlay(overlay_words):
+                warning(f"Thumbnail: LLM overlay '{overlay_words}' rejected (hallucinated or banned).")
+                overlay_words = ""
 
         if not visual_prompt:
             visual_prompt = (
@@ -3004,14 +3299,22 @@ Return ONLY the JSON. No markdown, no explanation."""
             overlay_words = " ".join(topic_words).upper() if topic_words else "DESCUBRE LA VERDAD"
             warning(f"Thumbnail: using topic-derived overlay text: {overlay_words}")
 
-        # Step 2: render the background image (Leonardo first, Pollinations fallback).
+        # Step 2: render the background image (Nano Banana 2 first, then Leonardo, then Pollinations).
+        # Apply the same per-channel / civilization-detected art style that
+        # generate_long_images uses, so the thumbnail matches the video's look
+        # (ukiyo-e woodblock for feudal Japan, Renaissance painting for Florence, etc.).
+        styled_visual_prompt = self._apply_channel_style(visual_prompt)
+        if get_verbose() and styled_visual_prompt != visual_prompt:
+            info(" => Thumbnail: applied channel art style")
+
         bg_bytes = None
         for name, fn in (
+            ("Nano Banana 2 16:9", self._try_nanobanana2_landscape),
             ("Leonardo AI", self._try_leonardo_landscape),
             ("Pollinations FLUX 16:9", self._try_pollinations_landscape),
         ):
             try:
-                bg_bytes = fn(visual_prompt)
+                bg_bytes = fn(styled_visual_prompt)
                 if bg_bytes and len(bg_bytes) > 5000:
                     break
                 bg_bytes = None
@@ -3056,11 +3359,22 @@ Return ONLY the JSON. No markdown, no explanation."""
         # Step 4: stamp overlay text in the BOTTOM-LEFT, left-aligned (Impact font for clickbait look).
         if overlay_words:
             font_path = None
-            for cand in (
+            series_font = (series or {}).get("thumbnail_font", "").strip()
+            font_candidates = []
+            if series_font:
+                # Series-specific font wins. Accept either an absolute path, a
+                # bare filename in C:\Windows\Fonts, or a name in fonts/.
+                if os.path.isabs(series_font):
+                    font_candidates.append(series_font)
+                else:
+                    font_candidates.append(os.path.join(r"C:\Windows\Fonts", series_font))
+                    font_candidates.append(os.path.join(get_fonts_dir(), series_font))
+            font_candidates.extend([
                 r"C:\Windows\Fonts\impact.ttf",
                 r"C:\Windows\Fonts\arialbd.ttf",
                 os.path.join(get_fonts_dir(), get_font()),
-            ):
+            ])
+            for cand in font_candidates:
                 if cand and os.path.isfile(cand):
                     font_path = cand
                     break
@@ -3163,11 +3477,12 @@ The narration is divided into {n_prompts} sections. Each image must illustrate I
 CRITICAL RULES:
 - Image N MUST illustrate SECTION N. Read the section text and describe the LITERAL scene, person, object or event it talks about.
 - Every prompt must be visually unmistakable as the TOPIC. Name the actual SPECIFIC people, places, objects, era, clothing, architecture, or symbols from the section text. Use proper nouns when relevant.
-- Be CONCRETE: describe exactly what appears (subjects, setting, lighting, colors, composition).
+- Be CONCRETE: describe exactly what appears (subjects, action, setting, period-accurate clothing/architecture/objects, atmosphere and colors).
 - 30-60 words per prompt.
-- All images are 16:9 landscape, photorealistic, cinematic. Vary camera angles and lighting (wide shot, close-up, low angle, golden hour, candlelight, overcast, etc.) but DO NOT change the subject matter to fit a style.
+- All images are 16:9 landscape. Vary scene composition (wide vistas, close-up details, group scenes, intimate moments) and atmosphere (dawn, dusk, candlelit, overcast, etc.) but DO NOT change the subject matter to fit a style.
+- DO NOT specify camera angles, lenses, or any photography/film terminology. The channel will impose its own visual style at render time, so describe the SCENE CONTENT only.
 - ABSOLUTELY FORBIDDEN: cosmic / space / nebula imagery (unless the topic is astronomy), microscopic / scientific diagrams (unless the topic is biology/chemistry), futuristic holographic / sci-fi visuals (unless the topic is futurism), abstract geometric / fractal patterns, generic "concept" or "metaphor" visualizations. NEVER swap topical content for these styles.
-- ALSO FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation.
+- ALSO FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
 - Write in English.
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
@@ -3198,20 +3513,20 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             if get_verbose():
                 warning("Failed to parse long video prompts, using section-anchored fallback")
             fallback_styles = [
-                "cinematic wide shot, dramatic side lighting, film grain",
-                "close-up detail, shallow depth of field, soft natural light",
-                "low angle hero shot, golden hour, epic scale",
-                "atmospheric scene, volumetric light, moody shadows",
-                "documentary photography, available light, candid framing",
-                "intimate medium shot, rim lighting, warm tones",
-                "establishing wide vista, overcast diffuse light, painterly",
-                "candlelit interior, warm shadows, period-accurate set",
+                "wide vista with key subjects centered, dramatic atmosphere",
+                "detail of the central object or person, period-accurate textures",
+                "low-angle hero composition, epic scale",
+                "atmospheric scene with depth and moody shadows",
+                "intimate framing of figures interacting in period-accurate context",
+                "establishing view of the era's setting, painterly mood",
+                "overcast atmosphere, period-accurate detail",
+                "warm interior scene, period-accurate furnishings and dress",
             ]
             image_prompts = [
                 (
                     f"Scene from \"{sections[i] if i < len(sections) else self.subject}\" "
                     f"in the context of {self.subject}, {fallback_styles[i % len(fallback_styles)]}, "
-                    f"photorealistic, 8K, 16:9 landscape"
+                    f"period-accurate, 16:9 landscape"
                 )
                 for i in range(n_prompts)
             ]
@@ -3289,6 +3604,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             styled_prompt = self._apply_channel_style(prompt)
 
             for name, fn in [
+                ("Nano Banana 2 16:9", lambda p: self._try_nanobanana2_landscape(p)),
                 ("Leonardo AI", lambda p: self._try_leonardo_landscape(p)),
                 ("Pollinations.ai FLUX", lambda p: self._try_pollinations_landscape(p)),
                 ("HuggingFace", self._try_huggingface),
@@ -3462,6 +3778,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
     def _clean_script_for_tts(cls, script: str) -> str:
         """Last-line-of-defense cleaner: only spoken narration survives."""
         text = script
+
+        # Strip stage-direction artifacts the LLM leaks ("(imagen de ...)",
+        # "[B-roll: ...]", "Música: ...") BEFORE the section-marker pass so
+        # nothing falls through.
+        text = strip_stage_directions(text)
 
         # Strip section markers in any language / case.
         text = re.sub(r'\[(INTRO|INTRODUCCIÓN|INTRODUCCION|CLOSING|CIERRE|OUTRO|DESPEDIDA)\]', '', text, flags=re.IGNORECASE)
@@ -3703,6 +4024,15 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             )
             self.video_path = ""
             return ""
+
+        # Series detection: if subject starts with "[series_id] ...", strip the
+        # prefix and remember which series this video belongs to. generate_long_metadata
+        # and generate_thumbnail use the series template/overlay instead of asking
+        # the LLM to invent a title or overlay text.
+        self.active_series, self.subject = resolve_series(self.subject)
+        if self.active_series:
+            info(f" => Series: {self.active_series.get('id', '')}")
+
         success(f" Topic: {self.subject}")
 
         # Step 2: Generate long script with chapters
@@ -3748,6 +4078,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         # Expand regnal numerals ("Luis XIV" -> "Luis catorce") for correct TTS pronunciation
         tts_script = expand_regnal_numerals(tts_script)
+
+        # Expand digit numbers to Spanish words ("4.500" -> "cuatro mil quinientos",
+        # "1453" -> "mil cuatrocientos cincuenta y tres") so the TTS doesn't read
+        # them digit-by-digit ("4 punto 5 0 0").
+        tts_script = expand_spanish_numbers(tts_script)
 
         if get_verbose():
             info(f" => TTS script preview (first 200 chars): {tts_script[:200]}")
