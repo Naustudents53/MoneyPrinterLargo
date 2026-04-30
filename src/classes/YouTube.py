@@ -4726,10 +4726,6 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             time.sleep(0.5)
             driver.execute_script("arguments[0].click();", title_el)
             time.sleep(0.5)
-            title_el.send_keys(Keys.CONTROL + "a")
-            time.sleep(0.3)
-            title_el.send_keys(Keys.DELETE)
-            time.sleep(0.3)
 
             # Type the new title character by character to avoid issues
             clean_title = self.metadata["title"].replace("\n", " ")[:100]
@@ -4751,10 +4747,6 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             time.sleep(0.5)
             driver.execute_script("arguments[0].click();", description_el)
             time.sleep(0.5)
-            description_el.send_keys(Keys.CONTROL + "a")
-            time.sleep(0.3)
-            description_el.send_keys(Keys.DELETE)
-            time.sleep(0.3)
 
             clean_desc = self.metadata["description"].replace("\n", " ")[:5000]
             description_el.send_keys(clean_desc)
