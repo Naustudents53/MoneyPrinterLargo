@@ -2717,16 +2717,25 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         Ask the LLM for the entire 15-20 min script in one call.
         Designed for high-output-window providers (Gemini Flash 2.5/3).
         """
-        prompt = f"""Eres un narrador experto de documentales y guionista profesional.
-Escribe un GUION COMPLETO de narración cautivador de 15 a 20 minutos sobre el siguiente tema.
+        # Series-aware: when the active series defines a brief / themes, build
+        # the structure description from those themes so the single-call prompt
+        # gets the same immersive guidance as the sectional path.
+        series = getattr(self, "active_series", None) or {}
+        script_brief = (series.get("script_brief") or "").strip()
+        series_themes = series.get("section_themes") or []
 
-Tema: {self.subject}
+        if script_brief:
+            info(f" => Using series narrative brief: {series.get('id', '')}")
 
-ESTRUCTURA OBLIGATORIA (usa estos marcadores EXACTOS):
-[INTRO]
-Gancho inicial poderoso (5-7 oraciones, 120-180 palabras). Empieza con un dato impactante, pregunta provocadora o afirmación audaz.
-
-[SECTION 1: <título corto>]
+        if isinstance(series_themes, list) and len(series_themes) == 10:
+            # Build the SECTION block from the series-defined chronological themes.
+            sections_block = "\n\n".join(
+                f"[SECTION {i+1}: <título corto>]\n{theme} (10-14 oraciones, 250-350 palabras)."
+                for i, theme in enumerate(series_themes)
+            )
+        else:
+            # Default documentary structure.
+            sections_block = """[SECTION 1: <título corto>]
 Aspecto fundacional o más fascinante del tema (10-14 oraciones, 250-350 palabras).
 
 [SECTION 2: <título corto>]
@@ -2754,7 +2763,23 @@ Conexión inesperada o paralelismo con otro ámbito (10-14 oraciones, 250-350 pa
 Clímax final — la revelación o giro más fuerte (10-14 oraciones, 250-350 palabras).
 
 [SECTION 10: <título corto>]
-Consecuencias, legado o impacto del tema en la actualidad (10-14 oraciones, 250-350 palabras).
+Consecuencias, legado o impacto del tema en la actualidad (10-14 oraciones, 250-350 palabras)."""
+
+        brief_block = (
+            f"\nDIRECTIVA NARRATIVA DE LA SERIE — OBLIGATORIA EN CADA PALABRA DE TU RESPUESTA:\n{script_brief}\n"
+            if script_brief else ""
+        )
+
+        prompt = f"""Eres un narrador experto de documentales y guionista profesional.
+Escribe un GUION COMPLETO de narración cautivador de 15 a 20 minutos sobre el siguiente tema.
+
+Tema: {self.subject}
+{brief_block}
+ESTRUCTURA OBLIGATORIA (usa estos marcadores EXACTOS):
+[INTRO]
+Gancho inicial poderoso (5-7 oraciones, 120-180 palabras). Empieza con un dato impactante, pregunta provocadora o afirmación audaz.
+
+{sections_block}
 
 [CLOSING]
 Conclusión memorable (5-7 oraciones, 120-180 palabras). Termina con una reflexión que perdure.
@@ -2798,19 +2823,39 @@ REGLAS DE ESTILO:
     def _generate_long_script_sectional(self, lang: str) -> str:
         """Per-section generation (12 calls) for providers with low output caps."""
 
+        # Series-aware: when a series brief / themes are configured, use them so
+        # the script follows the series voice (e.g. immersive 2nd-person POV for
+        # "Un día en la historia") instead of the generic documentary structure.
+        series = getattr(self, "active_series", None) or {}
+        script_brief = (series.get("script_brief") or "").strip()
+        series_themes = series.get("section_themes") or []
+        if script_brief:
+            info(f" => Using series narrative brief: {series.get('id', '')}")
+
         # Per-section thematic guidance — what role each section plays in the narrative arc.
-        section_themes = [
-            "Aspecto fundacional o más fascinante del tema. Establece el contexto y captura la atención.",
-            "Ángulo distinto o construcción sobre la sección anterior, con anécdotas concretas o ejemplos.",
-            "Conexiones sorprendentes o hechos poco conocidos relacionados al tema.",
-            "Profundización con datos concretos, fechas, lugares o personas reales.",
-            "Clímax intermedio — el momento más impactante hasta este punto.",
-            "Consecuencia o nuevo ángulo que surge a partir de lo anterior.",
-            "Detalles narrativos profundos, anécdotas o testimonios.",
-            "Conexión inesperada o paralelismo con otro ámbito.",
-            "Clímax final — la revelación o giro más fuerte del tema.",
-            "Consecuencias, legado o impacto del tema en la actualidad.",
-        ]
+        # Series-defined themes win when present and are exactly 10 entries.
+        if isinstance(series_themes, list) and len(series_themes) == 10:
+            section_themes = list(series_themes)
+        else:
+            section_themes = [
+                "Aspecto fundacional o más fascinante del tema. Establece el contexto y captura la atención.",
+                "Ángulo distinto o construcción sobre la sección anterior, con anécdotas concretas o ejemplos.",
+                "Conexiones sorprendentes o hechos poco conocidos relacionados al tema.",
+                "Profundización con datos concretos, fechas, lugares o personas reales.",
+                "Clímax intermedio — el momento más impactante hasta este punto.",
+                "Consecuencia o nuevo ángulo que surge a partir de lo anterior.",
+                "Detalles narrativos profundos, anécdotas o testimonios.",
+                "Conexión inesperada o paralelismo con otro ámbito.",
+                "Clímax final — la revelación o giro más fuerte del tema.",
+                "Consecuencias, legado o impacto del tema en la actualidad.",
+            ]
+
+        # Block of narrative directives prepended to every per-call prompt when
+        # a series brief is active. Empty string in non-series mode (no-op).
+        brief_block = (
+            f"\n\nDIRECTIVA NARRATIVA DE LA SERIE — OBLIGATORIA EN CADA PALABRA DE TU RESPUESTA:\n{script_brief}\n\n"
+            if script_brief else ""
+        )
 
         def _ask_section(prompt: str, min_words: int) -> str:
             """Call the LLM with retries until we hit min_words AND the content is clean."""
@@ -2841,7 +2886,7 @@ REGLAS DE ESTILO:
 
         # ---- INTRO ----
         intro_prompt = f"""Eres un narrador experto de documentales. Escribe SOLO la INTRODUCCIÓN de un guion documental sobre: {self.subject}
-
+{brief_block}
 REGLAS:
 - 5-7 oraciones (120-180 palabras).
 - Empieza con un gancho poderoso: dato impactante, pregunta provocadora o afirmación audaz.
@@ -2862,7 +2907,7 @@ REGLAS:
             tail = " ".join(prior.split()[-250:]) if prior else ""
 
             section_prompt = f"""Eres un narrador experto de documentales. Estás escribiendo la SECCIÓN {i} de 10 de un guion sobre: {self.subject}
-
+{brief_block}
 Esto es lo último que ya se narró (NO lo repitas, continúa el flujo natural):
 \"\"\"
 {tail}
@@ -2887,7 +2932,7 @@ Escribe SOLO la SECCIÓN {i}:
         prior = "\n\n".join(parts)
         tail = " ".join(prior.split()[-300:])
         closing_prompt = f"""Eres un narrador experto de documentales. Estás escribiendo el CIERRE de un guion sobre: {self.subject}
-
+{brief_block}
 Esto es lo último que se narró:
 \"\"\"
 {tail}
