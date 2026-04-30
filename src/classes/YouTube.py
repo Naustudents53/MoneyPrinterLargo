@@ -1012,24 +1012,30 @@ Reference markers for {era_name}: {era_brief}.
 Use these as grounding cues — pick the ones that fit each section, do not list them all in every prompt.
 """
 
-            prompt = f"""Generate exactly {n_prompts} image prompts for a video about: {self.subject}
+            prompt = f"""You are an art director picking visual frames for an animated video about: {self.subject}
 
-The script has been divided into {n_prompts} sections. Each image MUST illustrate EXACTLY what is happening in its section — the specific action, person, or event described — not a generic scene of the topic.
+The narration has been divided into {n_prompts} sections. For EACH section you must:
+  STEP 1 — read the section text and pick ONE concrete visual moment (a single action / event / object / person that someone could literally paint). Reject vague summaries.
+  STEP 2 — write a detailed image prompt of THAT specific moment.
 {sections_text}{era_block}
-INSTRUCTIONS:
-- Image N MUST show the SPECIFIC ACTION or EVENT in SECTION N.
-  • If the section says "the samurai stands up and begins training with his sword" → show a samurai mid-swing practicing with a katana, not just a samurai standing around.
-  • If the section says "Caesar crosses the Rubicon" → show Caesar on horseback leading troops through a river, not just Roman soldiers.
-  • If the section says "the crowd cheers in the Colosseum" → show a packed Colosseum crowd roaring, gladiators on the arena floor.
-  • NEVER produce a generic establishing shot of the civilization when the section describes a specific moment.
-- Describe WHO is doing WHAT, with specific body language and action verbs, in the exact setting the section mentions.
-- Include period-accurate details: clothing, weapons, architecture, objects that belong to this era.
-- Be SPECIFIC: use proper nouns (real people, places, buildings) when the section names them.
-- DO NOT specify camera angles, lenses, or photography/film terms. Describe SCENE CONTENT only.
-- Write in English. Each prompt: 30-60 words.
+HOW TO PICK THE VISUAL MOMENT (STEP 1):
+- It must be a CONCRETE action with a verb: "Caesar crosses the Rubicon", "the samurai swings his katana", "the priestess lights the sacred fire", "merchants haggle at the market".
+- NEVER pick an abstraction like "Roman society", "the importance of philosophy", "people were afraid". If the section is abstract, INVENT a concrete scene that depicts that idea in the era (e.g. abstract "people feared Caesar" → concrete "a Roman senator hides his face as Caesar's lictors march past").
+- If the section names a specific person, place, or event by name → that MUST be your moment.
+- The moment must be DIFFERENT from the moments of other sections. NEVER repeat the same composition twice.
+
+HOW TO WRITE THE PROMPT (STEP 2):
+- Describe WHO is doing WHAT, plus body language, expression, and what they hold / wear / face.
+- Add the immediate setting (where exactly: a temple, a battlefield, a forum step, a kitchen, a ship deck) and 2-3 period-accurate details (objects, clothing items, architecture).
+- 35-55 words. English. No camera/photography/film terms.
 - FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
 
-Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
+OUTPUT FORMAT — return ONLY this JSON array, no markdown, no explanation:
+[
+  {{"section": 1, "moment": "<short concrete action>", "prompt": "<35-55 word visual description>"}},
+  {{"section": 2, "moment": "...", "prompt": "..."}},
+  ... (one entry per section, exactly {n_prompts} entries)
+]"""
 
         completion = (
             str(self.generate_response(prompt))
@@ -1040,19 +1046,39 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         image_prompts = []
 
-        # Try to extract JSON array from the response
+        def _extract_prompts(parsed_value):
+            """Pull the prompt strings out of a parsed LLM response.
+            For AI mode the LLM returns objects {"section", "moment", "prompt"};
+            for photos mode (legacy) it returns plain strings. Handle both."""
+            out = []
+            if isinstance(parsed_value, list):
+                for item in parsed_value:
+                    if isinstance(item, str):
+                        out.append(item)
+                    elif isinstance(item, dict):
+                        # Prefer the structured "prompt" field; if missing,
+                        # combine moment + any description we can find.
+                        p = item.get("prompt") or item.get("image_prompt") or ""
+                        moment = item.get("moment") or item.get("key_visual_moment") or ""
+                        if p:
+                            out.append(str(p))
+                        elif moment:
+                            out.append(str(moment))
+            elif isinstance(parsed_value, dict) and "image_prompts" in parsed_value:
+                out = parsed_value["image_prompts"]
+            return out
+
+        # Try to extract JSON from the response
         try:
             parsed = json.loads(completion)
-            if isinstance(parsed, list):
-                image_prompts = [str(p) for p in parsed if isinstance(p, str)]
-            elif isinstance(parsed, dict) and "image_prompts" in parsed:
-                image_prompts = parsed["image_prompts"]
+            image_prompts = _extract_prompts(parsed)
         except Exception:
-            # Try to find a JSON array in the response
-            match = re.search(r'\[.*?\]', completion, re.DOTALL)
+            # Try to find a JSON array anywhere in the response
+            match = re.search(r'\[.*\]', completion, re.DOTALL)
             if match:
                 try:
-                    image_prompts = json.loads(match.group())
+                    parsed = json.loads(match.group())
+                    image_prompts = _extract_prompts(parsed)
                 except Exception:
                     pass
 
@@ -3575,29 +3601,34 @@ Reference markers for {era_name}: {era_brief}.
 Use these as grounding cues — pick the ones that fit each section, do not list them all in every prompt.
 """
 
-        prompt = f"""Generate exactly {n_prompts} image prompts for a long-form documentary video.
+        prompt = f"""You are an art director picking visual frames for a long-form documentary video.
 
 TOPIC: {self.subject}
 
-The narration is divided into {n_prompts} sections. Each image must illustrate EXACTLY what is happening in its section — the specific action, person, or event described — not a generic scene of the topic.
+The narration has been divided into {n_prompts} sections. For EACH section you must:
+  STEP 1 — read the section text and pick ONE concrete visual moment (a single action / event / object / person that someone could literally paint). Reject vague summaries.
+  STEP 2 — write a detailed image prompt of THAT specific moment.
 {sections_text}{era_block}
-CRITICAL RULES:
-- Image N MUST show the SPECIFIC ACTION or EVENT in SECTION N.
-  • If the section says "the samurai stands up and begins training with his sword" → show a samurai mid-swing practicing with a katana, not just a samurai standing around.
-  • If the section says "Caesar crosses the Rubicon" → show Caesar on horseback leading troops through a river, not just Roman soldiers.
-  • If the section says "the crowd cheers in the Colosseum" → show a packed Colosseum crowd roaring, gladiators on the arena floor.
-  • NEVER produce a generic establishing shot of the civilization when the section describes a specific moment.
-- Describe WHO is doing WHAT, with specific body language and action verbs, in the exact setting the section mentions.
-- Include period-accurate details: clothing, weapons, architecture, objects that belong to this era.
-- Use proper nouns (real people, places, buildings) when the section names them.
-- 30-60 words per prompt. All images are 16:9 landscape.
-- Vary composition and atmosphere (dawn, dusk, candlelit, overcast, etc.) across the {n_prompts} images but NEVER change the subject matter to fit a style.
-- DO NOT specify camera angles, lenses, or photography/film terms. Describe SCENE CONTENT only.
-- ABSOLUTELY FORBIDDEN: cosmic/space/nebula imagery (unless topic is astronomy), microscopic diagrams (unless biology/chemistry), futuristic/sci-fi visuals (unless topic is futurism), abstract geometric patterns, generic "concept" visualizations.
-- ALSO FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
-- Write in English.
+HOW TO PICK THE VISUAL MOMENT (STEP 1):
+- It must be a CONCRETE action with a verb: "Caesar crosses the Rubicon", "the samurai swings his katana", "the priestess lights the sacred fire", "merchants haggle at the market".
+- NEVER pick an abstraction like "Roman society", "the importance of philosophy", "people were afraid". If the section is abstract, INVENT a concrete scene that depicts that idea in the era (e.g. abstract "people feared Caesar" → concrete "a Roman senator hides his face as Caesar's lictors march past").
+- If the section names a specific person, place, or event by name → that MUST be your moment.
+- The moments must be DIFFERENT across the {n_prompts} sections. Vary action, setting, character, and time of day.
 
-Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
+HOW TO WRITE THE PROMPT (STEP 2):
+- Describe WHO is doing WHAT, plus body language, expression, and what they hold / wear / face.
+- Add the immediate setting (where exactly: a temple, a battlefield, a forum step, a kitchen, a ship deck) and 2-3 period-accurate details (objects, clothing items, architecture).
+- 35-55 words. English. 16:9 landscape framing implied (do not say "16:9").
+- No camera/photography/film terms.
+- ABSOLUTELY FORBIDDEN: cosmic/space/nebula imagery (unless topic is astronomy), microscopic diagrams (unless biology/chemistry), futuristic/sci-fi visuals (unless topic is futurism), abstract geometric patterns, generic "concept" visualizations.
+- FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
+
+OUTPUT FORMAT — return ONLY this JSON array, no markdown, no explanation:
+[
+  {{"section": 1, "moment": "<short concrete action>", "prompt": "<35-55 word visual description>"}},
+  {{"section": 2, "moment": "...", "prompt": "..."}},
+  ... (one entry per section, exactly {n_prompts} entries)
+]"""
 
         completion = (
             str(self.generate_response(prompt))
@@ -3606,16 +3637,31 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             .strip()
         )
 
+        def _extract_prompts_long(parsed_value):
+            out = []
+            if isinstance(parsed_value, list):
+                for item in parsed_value:
+                    if isinstance(item, str):
+                        out.append(item)
+                    elif isinstance(item, dict):
+                        p = item.get("prompt") or item.get("image_prompt") or ""
+                        moment = item.get("moment") or item.get("key_visual_moment") or ""
+                        if p:
+                            out.append(str(p))
+                        elif moment:
+                            out.append(str(moment))
+            return out
+
         image_prompts = []
         try:
             parsed = json.loads(completion)
-            if isinstance(parsed, list):
-                image_prompts = [str(p) for p in parsed if isinstance(p, str)]
+            image_prompts = _extract_prompts_long(parsed)
         except Exception:
             match = re.search(r'\[.*\]', completion, re.DOTALL)
             if match:
                 try:
-                    image_prompts = json.loads(match.group())
+                    parsed = json.loads(match.group())
+                    image_prompts = _extract_prompts_long(parsed)
                 except Exception:
                     pass
 
