@@ -247,6 +247,20 @@ CIVILIZATION_ART_STYLES: dict = {
 }
 
 
+# Fixed visual style applied to ALL Shorts (overrides civilization detection and
+# per-channel image_style). The goal is consistency across the channel: every
+# Short has the same recognizable look regardless of topic, while the SCENE
+# content (what the script is talking about right now) remains the dominant
+# subject. Inspired by 2D animated history channels like "Impacto Stories":
+# flat-color vector illustration with cinematic lighting and bold outlines.
+SHORTS_FIXED_STYLE: str = (
+    "2D vector illustration, flat-color cartoon style, bold dark outlines, "
+    "cinematic comic-book aesthetic, vibrant saturated palette, dramatic shading "
+    "and rim lighting, expressive characters with clean shapes, hand-drawn "
+    "animation feel, modern motion-comic look"
+)
+
+
 class YouTube:
     """
     Class for YouTube Automation.
@@ -1259,10 +1273,15 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         raise RuntimeError("Leonardo: timeout waiting for generation")
 
     def _augment_for_ai_fallback(self, query: str) -> str:
-        """Wrap a short photo-mode search query so AI generators render a usable image. If the channel
-        imposes its own visual style (civilization-detected or `image_style`), defer to it instead of
-        forcing a photographic wrapper that would clash with drawn/illustrated styles."""
-        if self._detect_civilization_style() or self._image_style:
+        """Wrap a short photo-mode search query so AI generators render a usable image.
+        Shorts always use the fixed 2D style, so we must NOT inject photorealistic
+        wrapping (it would clash). Long videos defer to the civilization/channel
+        style if present, and only fall back to the photographic wrapper otherwise."""
+        is_long = bool(getattr(self, "_is_long_video", False))
+        if not is_long:
+            # Shorts: scene-only description, the 2D style is added by _apply_channel_style.
+            out = f"{query}, full scene with the key subjects clearly visible, vivid mood"
+        elif self._detect_civilization_style() or self._image_style:
             out = f"{query}, full scene with key subjects visible, period-accurate setting, vivid mood"
         else:
             out = f"{query}, cinematic photograph, photorealistic, dramatic lighting, highly detailed, 4K"
@@ -1270,16 +1289,26 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
     def _apply_channel_style(self, prompt: str) -> str:
         """
-        Wrap an AI image prompt with the channel's visual style. Civilization-specific
-        style (detected from self.subject) takes precedence; falls back to the
-        per-channel `image_style`. The SCENE description goes FIRST so the diffusion
-        model treats the literal scene content from the script as the dominant
-        subject; the art style follows as a rendering modifier. A previous version
-        put the style at the start, which caused the model to generate generic
-        civilization art instead of the specific scene from the script section.
-        Output is capped to ~1000 chars to fit provider limits.
+        Wrap an AI image prompt with the visual style appropriate for the format.
+
+        - SHORTS (`_is_long_video` False): use the channel's `image_style` (so each
+          channel keeps its own consistent look). Civilization detection is
+          intentionally skipped here — for shorts the priority is branding
+          consistency + faithfulness to the script line, not period-accurate art.
+          Falls back to SHORTS_FIXED_STYLE only if the channel has no `image_style`
+          configured.
+        - LONG VIDEOS (`_is_long_video` True): civilization-specific style takes
+          precedence, falling back to the per-channel `image_style`.
+
+        The SCENE description goes FIRST so the diffusion model treats the literal
+        scene content from the script as the dominant subject; the style follows
+        as a rendering modifier. Output is capped to ~1000 chars to fit provider limits.
         """
-        style = self._detect_civilization_style() or self._image_style
+        is_long = bool(getattr(self, "_is_long_video", False))
+        if is_long:
+            style = self._detect_civilization_style() or self._image_style
+        else:
+            style = self._image_style or SHORTS_FIXED_STYLE
         if not style:
             return prompt
         scene = prompt.rstrip(', .')
