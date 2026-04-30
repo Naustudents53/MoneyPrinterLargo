@@ -1014,14 +1014,18 @@ Use these as grounding cues — pick the ones that fit each section, do not list
 
             prompt = f"""Generate exactly {n_prompts} image prompts for a video about: {self.subject}
 
-The script has been divided into {n_prompts} sections. Each image MUST match its section:
+The script has been divided into {n_prompts} sections. Each image MUST illustrate EXACTLY what is happening in its section — the specific action, person, or event described — not a generic scene of the topic.
 {sections_text}{era_block}
 INSTRUCTIONS:
-- Image 1 MUST illustrate SECTION 1, Image 2 MUST illustrate SECTION 2, etc.
-- Describe the LITERAL content of each section as a visual scene: who/what is in it, what they are doing, the setting, period-accurate clothing/architecture/objects, atmosphere and colors.
-- Example: if a section says "The ancient Egyptians built massive pyramids", write: "Massive Egyptian pyramids mid-construction, thousands of workers in linen schenti kilts pulling limestone blocks across desert sand under a vast blue sky, wooden ramps and copper tools, an overseer with a staff watching from a stone platform, Nile river in the distance"
-- Be SPECIFIC: name real things from the era (animals, buildings, objects, places, people, clothing items, weapons).
-- DO NOT specify camera angles, lenses, or any photography/film terminology. The channel will impose its own visual style at render time, so describe the SCENE CONTENT only.
+- Image N MUST show the SPECIFIC ACTION or EVENT in SECTION N.
+  • If the section says "the samurai stands up and begins training with his sword" → show a samurai mid-swing practicing with a katana, not just a samurai standing around.
+  • If the section says "Caesar crosses the Rubicon" → show Caesar on horseback leading troops through a river, not just Roman soldiers.
+  • If the section says "the crowd cheers in the Colosseum" → show a packed Colosseum crowd roaring, gladiators on the arena floor.
+  • NEVER produce a generic establishing shot of the civilization when the section describes a specific moment.
+- Describe WHO is doing WHAT, with specific body language and action verbs, in the exact setting the section mentions.
+- Include period-accurate details: clothing, weapons, architecture, objects that belong to this era.
+- Be SPECIFIC: use proper nouns (real people, places, buildings) when the section names them.
+- DO NOT specify camera angles, lenses, or photography/film terms. Describe SCENE CONTENT only.
 - Write in English. Each prompt: 30-60 words.
 - FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
 
@@ -1360,11 +1364,13 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         scene content from the script as the dominant subject; the style follows
         as a rendering modifier. Output is capped to ~1000 chars to fit provider limits.
         """
-        is_long = bool(getattr(self, "_is_long_video", False))
-        if is_long:
-            style = self._detect_civilization_style() or self._image_style
-        else:
-            style = self._image_style or SHORTS_FIXED_STYLE
+        # Both shorts and long videos use the channel's image_style so every video
+        # on the channel has the same recognisable look. Civilization detection is
+        # intentionally skipped here — era accuracy is enforced at the LLM prompt
+        # level (CRITICAL HISTORICAL ERA RULE in generate_prompts /
+        # generate_long_prompts) so the scene content is period-correct while the
+        # rendering style stays consistent with the channel's brand.
+        style = self._image_style or SHORTS_FIXED_STYLE
         if not style:
             return prompt
         scene = prompt.rstrip(', .')
@@ -3573,16 +3579,21 @@ Use these as grounding cues — pick the ones that fit each section, do not list
 
 TOPIC: {self.subject}
 
-The narration is divided into {n_prompts} sections. Each image must illustrate ITS section.
+The narration is divided into {n_prompts} sections. Each image must illustrate EXACTLY what is happening in its section — the specific action, person, or event described — not a generic scene of the topic.
 {sections_text}{era_block}
 CRITICAL RULES:
-- Image N MUST illustrate SECTION N. Read the section text and describe the LITERAL scene, person, object or event it talks about.
-- Every prompt must be visually unmistakable as the TOPIC. Name the actual SPECIFIC people, places, objects, era, clothing, architecture, or symbols from the section text. Use proper nouns when relevant.
-- Be CONCRETE: describe exactly what appears (subjects, action, setting, period-accurate clothing/architecture/objects, atmosphere and colors).
-- 30-60 words per prompt.
-- All images are 16:9 landscape. Vary scene composition (wide vistas, close-up details, group scenes, intimate moments) and atmosphere (dawn, dusk, candlelit, overcast, etc.) but DO NOT change the subject matter to fit a style.
-- DO NOT specify camera angles, lenses, or any photography/film terminology. The channel will impose its own visual style at render time, so describe the SCENE CONTENT only.
-- ABSOLUTELY FORBIDDEN: cosmic / space / nebula imagery (unless the topic is astronomy), microscopic / scientific diagrams (unless the topic is biology/chemistry), futuristic holographic / sci-fi visuals (unless the topic is futurism), abstract geometric / fractal patterns, generic "concept" or "metaphor" visualizations. NEVER swap topical content for these styles.
+- Image N MUST show the SPECIFIC ACTION or EVENT in SECTION N.
+  • If the section says "the samurai stands up and begins training with his sword" → show a samurai mid-swing practicing with a katana, not just a samurai standing around.
+  • If the section says "Caesar crosses the Rubicon" → show Caesar on horseback leading troops through a river, not just Roman soldiers.
+  • If the section says "the crowd cheers in the Colosseum" → show a packed Colosseum crowd roaring, gladiators on the arena floor.
+  • NEVER produce a generic establishing shot of the civilization when the section describes a specific moment.
+- Describe WHO is doing WHAT, with specific body language and action verbs, in the exact setting the section mentions.
+- Include period-accurate details: clothing, weapons, architecture, objects that belong to this era.
+- Use proper nouns (real people, places, buildings) when the section names them.
+- 30-60 words per prompt. All images are 16:9 landscape.
+- Vary composition and atmosphere (dawn, dusk, candlelit, overcast, etc.) across the {n_prompts} images but NEVER change the subject matter to fit a style.
+- DO NOT specify camera angles, lenses, or photography/film terms. Describe SCENE CONTENT only.
+- ABSOLUTELY FORBIDDEN: cosmic/space/nebula imagery (unless topic is astronomy), microscopic diagrams (unless biology/chemistry), futuristic/sci-fi visuals (unless topic is futurism), abstract geometric patterns, generic "concept" visualizations.
 - ALSO FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
 - Write in English.
 
