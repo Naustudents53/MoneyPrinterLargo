@@ -79,6 +79,8 @@ HOOK_PROFILES: dict = {
 # `_detect_civilization_style` and applied in `_apply_channel_style`.
 CIVILIZATION_ART_STYLES: dict = {
     "roman": {
+        "name": "Ancient Rome",
+        "era_brief": "togas, tunics, leather sandals, bronze cuirass and plumed helmets, gladius swords, marble columns, Roman arches, mosaics, terracotta tile roofs, oil lamps, papyrus scrolls, Roman Forum, amphitheaters, chariots, laurel wreaths",
         "keywords": [
             "roma", "romano", "romana", "romanos", "rome", "roman",
             "cesar", "augusto", "neron", "caligula", "trajano", "adriano",
@@ -89,6 +91,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "Roman fresco style, Pompeii mural aesthetic, classical Mediterranean palette, hand-painted illustration, non-photorealistic, period-accurate museum artwork",
     },
     "greek": {
+        "name": "Ancient Greece",
+        "era_brief": "white chitons and peplos robes, leather sandals, bronze hoplite armor, round shields, long spears, Doric and Ionic marble columns, white marble temples, agoras, amphorae, olive trees, oil lamps, laurel wreaths",
         "keywords": [
             "grecia", "griego", "griega", "griegos", "greece", "greek",
             "atenas", "athens", "esparta", "sparta",
@@ -101,6 +105,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "ancient Greek red-figure pottery aesthetic, classical marble sculpture, hand-painted illustration, ochre and black palette, period-accurate non-photorealistic art",
     },
     "chinese": {
+        "name": "Imperial China",
+        "era_brief": "hanfu silk robes, dynasty-specific headwear, jade ornaments, calligraphy ink brushes and bamboo scrolls, pagodas, curved tile roofs, painted screens, paper lanterns, dragons, tea ceremony objects, Forbidden City courtyards",
         "keywords": [
             "china", "chino", "chinos", "chinese",
             "qin shi huang", "shi huang",
@@ -114,6 +120,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "Chinese ink wash painting, Song dynasty scroll aesthetic, traditional brushwork, soft mist palette, period-accurate non-photorealistic illustration",
     },
     "japanese": {
+        "name": "Feudal Japan",
+        "era_brief": "kimonos and yukatas, samurai armor (do, kabuto helmet), katana and wakizashi, tatami mats, shoji paper screens, pagodas, torii gates, paper lanterns, cherry blossoms, Edo-period streets, Mt. Fuji backdrop",
         "keywords": [
             "japon", "japan", "japones", "japonesa", "japanese",
             "samurai", "shogun", "ronin", "ninja",
@@ -124,6 +132,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "Japanese ukiyo-e woodblock print, Edo period aesthetic, Hokusai/Hiroshige style, flat color planes, bold outlines, period-accurate non-photorealistic illustration",
     },
     "indian": {
+        "name": "Ancient and Medieval India",
+        "era_brief": "saris, dhotis, turbans, ornate gold jewelry, Mughal architecture with onion domes and pointed arches, intricately carved Hindu temples, elephants with howdahs, palace marble jali screens, sitar and tabla instruments",
         "keywords": [
             "india", "indio", "indios", "indian", "hindu", "hinduismo",
             "buda", "buddha", "ashoka", "mauryan", "maurya",
@@ -133,6 +143,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "Mughal miniature painting, Rajput manuscript illumination, intricate ornamental detail, vivid jewel tones, gold leaf accents, period-accurate non-photorealistic illustration",
     },
     "mayan": {
+        "name": "Maya civilization",
+        "era_brief": "cotton huipiles and loincloths, jade ornaments, jaguar pelt and feather headdresses, stepped stone pyramids, glyph-carved stelae, ball courts, jungle backdrops, codex screenfold books, obsidian-edged weapons, feathered serpent motifs",
         "keywords": [
             "maya", "mayas", "mayan",
             "tikal", "chichen", "palenque", "yucatan",
@@ -141,6 +153,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "Mayan codex style, pre-Columbian Mesoamerican glyphs, Bonampak mural palette, flat figures with bold outlines, period-accurate non-photorealistic illustration",
     },
     "inca": {
+        "name": "Inca Empire",
+        "era_brief": "wool tunics with geometric patterns, llama-wool sandals, gold ornaments, terraced mountain cities, polygonal stone block masonry without mortar, llamas, quipu knot strings, Andes mountain backdrops, Machu Picchu-style citadels",
         "keywords": [
             "inca", "incas", "incaico", "incaica",
             "machu picchu", "cuzco", "cusco",
@@ -150,6 +164,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "Andean textile pattern aesthetic, Inca and Moche pottery art, geometric stepped motifs, earth-tone palette, period-accurate non-photorealistic illustration",
     },
     "egyptian": {
+        "name": "Ancient Egypt",
+        "era_brief": "linen schenti kilts, white pleated dresses, kohl eye makeup, gold collars, nemes royal headdresses, pyramids, sphinxes, hieroglyph-covered temple walls, papyrus scrolls, oil lamps, Nile river, palm trees, falcon and scarab motifs, lotus columns",
         "keywords": [
             "egipto", "egipcio", "egipcia", "egipcios", "egypt", "egyptian",
             "faraon", "pharaoh", "tutankamon", "tutankhamun",
@@ -162,6 +178,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "ancient Egyptian tomb painting, hieroglyphic mural style, profile-view figures, flat ochre/red/gold palette, period-accurate non-photorealistic illustration",
     },
     "renaissance": {
+        "name": "Italian Renaissance",
+        "era_brief": "doublet jackets, hose, fur-trimmed gowns, ruffed collars, velvet caps, Florence and Venice cityscapes, domed cathedrals, marble palaces, frescoed walls, easel paintings on wooden panels, quill pens, oil lanterns, gondolas, period nobility and merchants",
         "keywords": [
             "renacimiento", "renaissance",
             "leonardo da vinci", "miguel angel", "michelangelo",
@@ -172,6 +190,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "Italian Renaissance fresco aesthetic, Botticelli/Da Vinci painting style, soft sfumato, classical composition, period-accurate non-photorealistic painted illustration",
     },
     "viking": {
+        "name": "Viking Age Norse",
+        "era_brief": "wool tunics with brooches, fur cloaks, leather boots, conical iron helmets (no horns), round wooden shields, longswords and battle-axes, longhouses with thatched roofs, longships (drakkar), runestones, fjord landscapes",
         "keywords": [
             "vikingo", "vikinga", "vikingos", "viking", "vikings",
             "ragnar", "odin", "thor", "valhalla",
@@ -180,6 +200,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "Norse manuscript illumination, runestone carving aesthetic, intricate knotwork, cold muted palette, period-accurate non-photorealistic illustration",
     },
     "aztec": {
+        "name": "Aztec Empire",
+        "era_brief": "maxtlatl loincloths, quechquemitl shawls, feathered headdresses, jaguar and eagle warrior costumes, obsidian-edged macuahuitl swords, stepped temple pyramids, painted codices, chinampa floating gardens, Lake Texcoco, Tenochtitlan plaza",
         "keywords": [
             "azteca", "aztecas", "aztec",
             "tenochtitlan", "moctezuma", "montezuma",
@@ -189,6 +211,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "Aztec codex style, Codex Borgia palette, Mexica pictogram aesthetic, flat figures with bold black outlines, period-accurate non-photorealistic illustration",
     },
     "persian": {
+        "name": "Ancient Persia",
+        "era_brief": "long flowing robes with embroidered borders, conical Persian caps, ornate jewelry, recurve bows, scale armor, lamassu winged-bull statues, columns with double-bull capitals, Persepolis bas-reliefs, formal gardens, cypress trees",
         "keywords": [
             "persia", "persa", "persas", "persian",
             "ciro el grande", "cyrus the great", "dario", "darius",
@@ -199,6 +223,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "Persian miniature painting, Safavid manuscript illumination, intricate ornamental borders, jewel tones, period-accurate non-photorealistic illustration",
     },
     "mesopotamian": {
+        "name": "Ancient Mesopotamia",
+        "era_brief": "long woolen kaunakes tunics with fringed hems, conical hats, beards in tight curls, ziggurats, mud-brick walls, cuneiform clay tablets, cylinder seals, recurve bows, cedar gates, palm trees, Tigris and Euphrates river scenes",
         "keywords": [
             "mesopotamia", "mesopotamico",
             "sumerio", "sumeria", "sumerian",
@@ -211,6 +237,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "Mesopotamian relief carving aesthetic, Assyrian palace bas-relief style, cuneiform inscription motifs, ochre stone palette, period-accurate non-photorealistic illustration",
     },
     "ottoman": {
+        "name": "Ottoman Empire",
+        "era_brief": "long caftans and turbans, embroidered sashes, scimitar swords, Janissary uniforms with tall caps, domed mosques with slender minarets, Iznik blue-tile interiors, palace gardens, Topkapi-style architecture, bazaars, ornate carpets",
         "keywords": [
             "otomano", "otomana", "otomanos", "ottoman",
             "imperio otomano", "ottoman empire",
@@ -221,6 +249,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "Ottoman miniature painting, Iznik tile pattern aesthetic, ornate calligraphic borders, jewel tones, period-accurate non-photorealistic illustration",
     },
     "byzantine": {
+        "name": "Byzantine Empire",
+        "era_brief": "long ornate robes with gold embroidery, jeweled imperial crowns, mosaic-decorated church interiors, Hagia Sophia-style domes, gold-leaf icons, marble columns, candle-lit halls, Constantinople walls",
         "keywords": [
             "bizantino", "bizantina", "bizantinos", "byzantine",
             "imperio bizantino", "byzantine empire",
@@ -232,6 +262,8 @@ CIVILIZATION_ART_STYLES: dict = {
         "style": "Byzantine icon painting, gold-leaf mosaic aesthetic, flat hieratic figures, deep ultramarine and gold palette, period-accurate non-photorealistic illustration",
     },
     "medieval": {
+        "name": "Medieval Europe",
+        "era_brief": "tunics, hose, hooded cloaks, chainmail and plate armor, kite shields, longswords, knightly heraldry on tabards, stone castles with battlements, gothic cathedrals, peasant villages with thatched roofs, illuminated manuscripts, monks in robes",
         "keywords": [
             "medieval", "edad media", "middle ages",
             "feudalismo", "feudal",
@@ -956,15 +988,39 @@ INSTRUCTIONS:
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         else:
+            # If a civilization is detected from the subject, inject a strict era
+            # rule. This forces the LLM to ground EVERY scene in the right historical
+            # period (clothing, architecture, weapons, objects, transport, atmosphere)
+            # — even when the script section is abstract. Without this, abstract lines
+            # like "the city was vibrant" generate generic modern-looking scenes
+            # because the rendering style (cartoon/2D) doesn't carry era information
+            # by itself.
+            civ_info = self._get_civilization_info()
+            era_block = ""
+            if civ_info:
+                era_name = civ_info["name"]
+                era_brief = civ_info["era_brief"]
+                era_block = f"""
+
+CRITICAL HISTORICAL ERA RULE — IGNORING THIS WILL FAIL THE TASK:
+This video is about {era_name}. EVERY image prompt MUST place the scene in {era_name}.
+- Clothing/uniforms must be strictly {era_name} era (NEVER modern suits, jeans, t-shirts, ties, dresses, sneakers, or any contemporary clothing).
+- Architecture must be {era_name} (NEVER modern buildings, skyscrapers, cars, electric lights, asphalt streets).
+- Weapons, tools, transport, and objects must be {era_name}-period only.
+- Even if a script section is abstract or generic (e.g., "the city was vibrant", "people were afraid"), you MUST ground it explicitly in {era_name}: name what they wear, where they stand, what surrounds them, all in {era_name} terms.
+Reference markers for {era_name}: {era_brief}.
+Use these as grounding cues — pick the ones that fit each section, do not list them all in every prompt.
+"""
+
             prompt = f"""Generate exactly {n_prompts} image prompts for a video about: {self.subject}
 
 The script has been divided into {n_prompts} sections. Each image MUST match its section:
-{sections_text}
+{sections_text}{era_block}
 INSTRUCTIONS:
 - Image 1 MUST illustrate SECTION 1, Image 2 MUST illustrate SECTION 2, etc.
 - Describe the LITERAL content of each section as a visual scene: who/what is in it, what they are doing, the setting, period-accurate clothing/architecture/objects, atmosphere and colors.
-- Example: if a section says "The ancient Egyptians built massive pyramids", write: "Massive Egyptian pyramids mid-construction, thousands of workers pulling limestone blocks across desert sand under a vast blue sky, wooden cranes and ramps, an overseer with a staff watching from a stone platform"
-- Be SPECIFIC: name real things (animals, buildings, objects, places, people).
+- Example: if a section says "The ancient Egyptians built massive pyramids", write: "Massive Egyptian pyramids mid-construction, thousands of workers in linen schenti kilts pulling limestone blocks across desert sand under a vast blue sky, wooden ramps and copper tools, an overseer with a staff watching from a stone platform, Nile river in the distance"
+- Be SPECIFIC: name real things from the era (animals, buildings, objects, places, people, clothing items, weapons).
 - DO NOT specify camera angles, lenses, or any photography/film terminology. The channel will impose its own visual style at render time, so describe the SCENE CONTENT only.
 - Write in English. Each prompt: 30-60 words.
 - FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
@@ -1321,12 +1377,14 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         suffix from CIVILIZATION_ART_STYLES, or "" if none matches.
         Matching is accent- and case-insensitive; the highest keyword-hit
         count wins. Result is cached per subject so we don't rescan on
-        every prompt.
+        every prompt. Also caches the civilization key so callers can
+        look up `name` / `era_brief` via `_get_civilization_info()`.
         """
         import unicodedata
 
         subject = (getattr(self, "subject", "") or "").strip()
         if not subject:
+            self._civ_key_cached = ""
             return ""
 
         if getattr(self, "_civ_style_subject", None) == subject:
@@ -1351,9 +1409,29 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         style = CIVILIZATION_ART_STYLES[best_civ]["style"] if best_civ else ""
         self._civ_style_subject = subject
         self._civ_style_cached = style
+        self._civ_key_cached = best_civ
         if style and get_verbose():
             info(f" => Detected civilization style: {best_civ}")
         return style
+
+    def _get_civilization_info(self) -> dict:
+        """
+        Returns {"key": ..., "name": ..., "era_brief": ...} for the civilization
+        detected from self.subject, or {} if none. Used by `generate_prompts` to
+        anchor every scene description in the correct historical era — even when
+        the channel's image_style hides civilization-specific styling (shorts).
+        """
+        # Ensures _civ_key_cached is populated for the current subject.
+        self._detect_civilization_style()
+        civ_key = getattr(self, "_civ_key_cached", "") or ""
+        if not civ_key:
+            return {}
+        data = CIVILIZATION_ART_STYLES.get(civ_key, {})
+        return {
+            "key": civ_key,
+            "name": data.get("name", civ_key.title()),
+            "era_brief": data.get("era_brief", ""),
+        }
 
     def _resolve_voice(self, voice: str) -> str:
         """Resolve a voice alias (e.g. 'Pablo') or raw Edge-TTS ID to its full voice ID."""
@@ -3471,12 +3549,32 @@ Return ONLY the JSON. No markdown, no explanation."""
             f'\nSECTION {i+1}: "{sec}"\n' for i, sec in enumerate(sections)
         )
 
+        # Era anchor (same logic as generate_prompts) — locks every scene to the
+        # detected historical period so abstract script lines don't generate
+        # modern/generic visuals.
+        civ_info = self._get_civilization_info()
+        era_block = ""
+        if civ_info:
+            era_name = civ_info["name"]
+            era_brief = civ_info["era_brief"]
+            era_block = f"""
+
+CRITICAL HISTORICAL ERA RULE — IGNORING THIS WILL FAIL THE TASK:
+This video is about {era_name}. EVERY image prompt MUST place the scene in {era_name}.
+- Clothing/uniforms must be strictly {era_name} era (NEVER modern suits, jeans, t-shirts, ties, dresses, sneakers, or any contemporary clothing).
+- Architecture must be {era_name} (NEVER modern buildings, skyscrapers, cars, electric lights, asphalt streets).
+- Weapons, tools, transport, and objects must be {era_name}-period only.
+- Even if a script section is abstract or generic (e.g., "the city was vibrant", "people were afraid"), you MUST ground it explicitly in {era_name}: name what they wear, where they stand, what surrounds them, all in {era_name} terms.
+Reference markers for {era_name}: {era_brief}.
+Use these as grounding cues — pick the ones that fit each section, do not list them all in every prompt.
+"""
+
         prompt = f"""Generate exactly {n_prompts} image prompts for a long-form documentary video.
 
 TOPIC: {self.subject}
 
 The narration is divided into {n_prompts} sections. Each image must illustrate ITS section.
-{sections_text}
+{sections_text}{era_block}
 CRITICAL RULES:
 - Image N MUST illustrate SECTION N. Read the section text and describe the LITERAL scene, person, object or event it talks about.
 - Every prompt must be visually unmistakable as the TOPIC. Name the actual SPECIFIC people, places, objects, era, clothing, architecture, or symbols from the section text. Use proper nouns when relevant.
