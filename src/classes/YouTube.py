@@ -6,6 +6,13 @@ import os
 import requests
 import assemblyai as aai
 
+# Pillow 10+ removed Image.ANTIALIAS, but moviepy 1.0.3 still references it.
+# Patch the alias before moviepy is imported, otherwise resize() / write_videofile()
+# raise AttributeError and the long-video combine pipeline fails.
+from PIL import Image as _PIL_Image
+if not hasattr(_PIL_Image, "ANTIALIAS"):
+    _PIL_Image.ANTIALIAS = _PIL_Image.LANCZOS
+
 from utils import *
 from cache import *
 from .Tts import TTS
@@ -2527,10 +2534,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         cloud thinking model used by long videos (DeepSeek V4 Pro on Ollama
         Cloud by default, `think=high`), then delegates to the inner pipeline.
         """
-        from llm_provider import force_provider
+        from llm_provider import force_provider, warmup_ollama_model
         long_model = get_long_video_llm_model()
-        info(f"\n  Short LLM: ollama/{long_model} (think=high)")
-        with force_provider("ollama", long_model, think="high"):
+        info(f"\n  Short LLM: ollama/{long_model}")
+        warmup_ollama_model(long_model)
+        with force_provider("ollama", long_model):
             return self._generate_video_inner(tts_instance, custom_topic, image_mode)
 
     def _generate_video_inner(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai") -> str:
@@ -3985,10 +3993,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         thinking depth, then delegates to `_generate_long_video_inner`.
         Shorts and other features keep using the configured default provider.
         """
-        from llm_provider import force_provider
+        from llm_provider import force_provider, warmup_ollama_model
         long_model = get_long_video_llm_model()
-        info(f"\n  Long-video LLM: ollama/{long_model} (think=high)")
-        with force_provider("ollama", long_model, think="high"):
+        info(f"\n  Long-video LLM: ollama/{long_model}")
+        warmup_ollama_model(long_model)
+        with force_provider("ollama", long_model):
             return self._generate_long_video_inner(tts_instance, custom_topic)
 
     def _generate_long_video_inner(self, tts_instance: TTS, custom_topic: str = "") -> str:
@@ -4090,6 +4099,14 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         # Per-channel long-video voice (or fall back to the default deep narrator).
         from .Tts import LONG_VIDEO_NARRATOR
         long_vid = self._resolve_voice(self._long_voice) or LONG_VIDEO_NARRATOR
+        # Locale guard: Edge-TTS returns NoAudioReceived if you ship Spanish
+        # text to an English voice (e.g. "Bruno" -> en-US-DavisNeural). When
+        # the channel language is Spanish, force a Spanish narrator.
+        lang = (self._language or "").strip().lower()
+        is_spanish = lang.startswith("esp") or lang in {"es", "spanish"}
+        if is_spanish and not long_vid.lower().startswith("es-"):
+            warning(f"Voice '{long_vid}' is not Spanish but channel language is '{self._language}'. Falling back to {LONG_VIDEO_NARRATOR}.")
+            long_vid = LONG_VIDEO_NARRATOR
         info(f" => Using long-video voice: {long_vid}")
         tts_instance.synthesize_long(tts_script, path, voice_id=long_vid)
         self.tts_path = path
