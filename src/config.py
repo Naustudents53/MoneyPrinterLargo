@@ -427,6 +427,51 @@ def resolve_series(subject: str):
     return None, subject
 
 
+def get_movie_max_duration_seconds() -> int:
+    """Maximum total length of a movie summary video, including the hook."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return int(json.load(file).get("movie_max_duration_seconds", 1200))
+
+
+def get_movie_min_clip_seconds() -> int:
+    """Minimum length of any single body clip in a movie summary."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return int(json.load(file).get("movie_min_clip_seconds", 12))
+
+
+def get_movie_max_clip_seconds() -> int:
+    """Maximum length of any single body clip in a movie summary."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return int(json.load(file).get("movie_max_clip_seconds", 45))
+
+
+def get_movie_hook_seconds() -> int:
+    """Length of the opening hook in a movie summary."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return int(json.load(file).get("movie_hook_seconds", 15))
+
+
+def get_movie_chunk_minutes() -> int:
+    """Transcript chunk size (minutes) for the Stage-1 beat-extraction LLM calls."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return int(json.load(file).get("movie_chunk_minutes", 25))
+
+
+def get_movie_original_audio_volume() -> float:
+    """Volume multiplier for the source movie audio under the TTS narration (0.08 = 8%)."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return float(json.load(file).get("movie_original_audio_volume", 0.08))
+
+
+def get_movie_download_format() -> str:
+    """yt-dlp format selector used when downloading the source movie."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return json.load(file).get(
+            "movie_download_format",
+            "bestvideo[height<=720]+bestaudio/best[height<=720]",
+        )
+
+
 def get_script_sentence_length() -> int:
     """
     Gets the forced script's sentence length.

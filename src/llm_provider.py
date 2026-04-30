@@ -173,14 +173,18 @@ def warmup_ollama_model(model: str) -> None:
     # Step 2: server is up — preload the model with a synchronous one-shot.
     print(f"  [+] ollama run {model}")
     try:
+        # Read raw bytes and decode manually. `text=True` + `encoding="utf-8"`
+        # is unreliable on Windows + Python 3.14: the per-thread reader still
+        # falls back to cp1252 and crashes on UTF-8 spinners/auth output that
+        # `ollama run` emits. Binary mode bypasses TextIOWrapper entirely.
         result = subprocess.run(
             ["ollama", "run", model, "hi"],
             capture_output=True,
             timeout=180,
-            text=True,
         )
         if result.returncode != 0:
-            err = (result.stderr or result.stdout or "").strip()
+            raw = result.stderr or result.stdout or b""
+            err = raw.decode("utf-8", errors="replace").strip()
             print(f"  [!] ollama run {model} exited {result.returncode}: {err[:200]}")
     except FileNotFoundError:
         print(f"  [!] `ollama` CLI not found on PATH — skipping warmup for {model}")

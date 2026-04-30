@@ -10,6 +10,7 @@ OPTIONS = [
     "Twitter Bot",
     "Affiliate Marketing",
     "Outreach",
+    "Movie Summary",
     "Quit"
 ]
 
@@ -32,11 +33,29 @@ YOUTUBE_OPTIONS = [
     "Upload Long Video",
     "Show all Videos",
     "Clean up saved videos",
+    "Re-upload existing video",
     "Setup CRON Job",
     "Quit"
 ]
 
 YOUTUBE_CRON_OPTIONS = [
+    "Once a day",
+    "Twice a day",
+    "Thrice a day",
+    "Quit"
+]
+
+MOVIE_OPTIONS = [
+    "Browse archive.org catalog (paginated)",
+    "Refresh catalog from archive.org",
+    "Generate from custom title (search YouTube)",
+    "Show all summaries",
+    "Re-upload existing summary",
+    "Setup CRON Job",
+    "Quit"
+]
+
+MOVIE_CRON_OPTIONS = [
     "Once a day",
     "Twice a day",
     "Thrice a day",

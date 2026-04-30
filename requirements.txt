@@ -8,7 +8,7 @@ webdriver_manager
 selenium_firefox
 selenium
 ollama
-moviepy
+moviepy==1.0.3
 Pillow>=10.0.0
 yagmail
 assemblyai
@@ -17,3 +17,4 @@ srt_equalizer
 undetected_chromedriver
 platformdirs
 num2words
+yt-dlp

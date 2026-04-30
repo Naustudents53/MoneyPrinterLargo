@@ -46,6 +46,8 @@ from classes.Tts import TTS
 from termcolor import colored
 from classes.Twitter import Twitter
 from classes.YouTube import YouTube
+from classes.MovieSummary import MovieSummary
+from classes.MovieCatalog import MovieCatalog, PAGE_SIZE
 from prettytable import PrettyTable
 from classes.Outreach import Outreach
 from classes.AFM import AffiliateMarketing
@@ -56,6 +58,128 @@ def _trunc(s, n: int) -> str:
     """Truncate string to at most n chars, adding an ellipsis if cut. Plain text only — apply BEFORE coloring."""
     s = "" if s is None else str(s)
     return s if len(s) <= n else s[: max(1, n - 1)] + "…"
+
+
+def _browse_movie_catalog(catalog: MovieCatalog, account_id: str, ms, tts) -> None:
+    """
+    Paginated picker over the archive.org catalog. Shows 10 entries per page,
+    marks already-summarized ones with ✓ and pending ones with ·. Commands:
+      n / p          → next / previous page
+      s <query>      → filter by title substring (empty s clears the filter)
+      a              → toggle "show all" vs "show only pending" (default: pending)
+      <1-10>         → pick that entry, run the summary pipeline, then return here
+      q              → exit the browser
+    """
+    from cache import get_accounts as _get_accounts
+
+    page = 1
+    query = ""
+    show_all = False  # default: hide already summarized
+
+    while True:
+        # Re-load account each iteration so we pick up newly summarized entries
+        accounts = _get_accounts("movies")
+        account = next((a for a in accounts if a.get("id") == account_id), None)
+        if account is None:
+            error("Account vanished from cache.")
+            return
+
+        all_items = catalog.search(query) if show_all else catalog.pending(account, query)
+        total = len(all_items)
+        total_pages = catalog.total_pages(all_items, PAGE_SIZE)
+        page = max(1, min(page, total_pages))
+        page_items = catalog.paginate(all_items, page, PAGE_SIZE)
+        done_set = catalog.summarized_identifiers(account)
+
+        view_label = "all" if show_all else "pending only"
+        filter_label = f' filter:"{query}"' if query else ""
+        info(
+            f"\n[Catalog] page {page}/{total_pages} — {total} items ({view_label}){filter_label}",
+            False,
+        )
+        if total == 0:
+            warning(" No movies match those filters.")
+        else:
+            for i, e in enumerate(page_items, 1):
+                mark = colored("✓", "green") if e["identifier"] in done_set else colored("·", "yellow")
+                year = f" ({e['year']})" if e.get("year") else ""
+                runtime = f" [{e['runtime']}]" if e.get("runtime") else ""
+                downloads = f" {e.get('downloads', 0):,} dl"
+                title = _trunc(e["title"], 60)
+                rating = e.get("imdb_rating")
+                if rating:
+                    votes = e.get("imdb_votes", 0)
+                    rating_str = colored(f" ⭐ {rating:.1f} ({votes:,})", "yellow")
+                else:
+                    rating_str = colored("  —     ", "white")
+                print(f"  {mark} {i:>2}. {rating_str}  {colored(title, 'cyan')}{year}{runtime}{downloads}")
+
+        info(
+            "\n[n]ext / [p]rev / [s] <query> / [a] toggle all/pending / [1-10] pick / [q]uit",
+            False,
+        )
+        raw = question("> ").strip()
+        if not raw:
+            continue
+        cmd = raw.lower()
+
+        if cmd == "q":
+            return
+        if cmd == "n":
+            if page < total_pages:
+                page += 1
+            continue
+        if cmd == "p":
+            if page > 1:
+                page -= 1
+            continue
+        if cmd == "a":
+            show_all = not show_all
+            page = 1
+            continue
+        if cmd.startswith("s "):
+            query = raw[2:].strip()
+            page = 1
+            continue
+        if cmd == "s":
+            query = ""
+            page = 1
+            continue
+
+        # Numeric selection
+        try:
+            idx = int(raw) - 1
+        except ValueError:
+            warning("Unrecognized command.")
+            continue
+        if not (0 <= idx < len(page_items)):
+            warning("Out of range.")
+            continue
+
+        selected = page_items[idx]
+        if selected["identifier"] in done_set:
+            if not confirm(f"'{selected['title']}' already summarized. Run again?", default=False):
+                continue
+
+        info(f"\n=> Generating summary for: {selected['title']}")
+        try:
+            video_path = ms.generate_movie_summary(
+                tts, selected["title"], archive_identifier=selected["identifier"]
+            )
+        except Exception as gen_err:
+            error(f"Movie summary failed: {type(gen_err).__name__}: {gen_err}")
+            continue
+        if not video_path:
+            warning("Movie summary aborted — nothing to upload.")
+            continue
+        if confirm("Upload this video to YouTube?", default=True):
+            try:
+                ms.upload_video()
+            except KeyboardInterrupt:
+                warning(f"\nUpload cancelled. Video saved at: {video_path}")
+            except Exception as up_err:
+                error(f"Upload failed: {type(up_err).__name__}: {up_err}")
+                warning(f"Video preserved on disk: {video_path}")
 
 
 def main():
@@ -302,7 +426,14 @@ def main():
                         if not video_path:
                             warning("Video generation aborted — nothing to upload.")
                         elif confirm("Do you want to upload this video to YouTube?", default=True):
-                            youtube.upload_video()
+                            try:
+                                youtube.upload_video()
+                            except KeyboardInterrupt:
+                                warning(f"\nUpload cancelled by user. Video saved at: {video_path}")
+                            except Exception as _upload_err:
+                                error(f"Upload failed: {type(_upload_err).__name__}: {_upload_err}")
+                                warning(f"Video preserved on disk: {video_path}")
+                                warning("You can retry uploading by running the app again.")
                     elif user_input == 2:
                         # Upload Long Video
                         custom_topic = question(
@@ -337,7 +468,14 @@ def main():
                         if not long_path:
                             warning("Long video generation aborted — nothing to upload.")
                         elif confirm("Do you want to upload this video to YouTube?", default=True):
-                            youtube.upload_video()
+                            try:
+                                youtube.upload_video()
+                            except KeyboardInterrupt:
+                                warning(f"\nUpload cancelled by user. Video saved at: {long_path}")
+                            except Exception as _upload_err:
+                                error(f"Upload failed: {type(_upload_err).__name__}: {_upload_err}")
+                                warning(f"Video preserved on disk: {long_path}")
+                                warning("You can retry uploading by running the app again.")
                     elif user_input == 3:
                         # Show all Videos
                         videos = youtube.get_videos()
@@ -386,6 +524,83 @@ def main():
                             else:
                                 info(" => Cancelled.")
                     elif user_input == 5:
+                        # Re-upload existing video
+                        mp_dir = os.path.join(ROOT_DIR, ".mp")
+                        try:
+                            mp4s = sorted(
+                                [
+                                    os.path.join(mp_dir, f)
+                                    for f in os.listdir(mp_dir)
+                                    if f.lower().endswith(".mp4")
+                                ],
+                                key=os.path.getmtime,
+                                reverse=True,
+                            )
+                        except FileNotFoundError:
+                            mp4s = []
+
+                        if not mp4s:
+                            warning(" => No saved videos found in .mp/ to re-upload.")
+                        else:
+                            info(f"\n => Found {len(mp4s)} saved video(s):")
+                            for i, p in enumerate(mp4s, 1):
+                                size_mb = os.path.getsize(p) / (1024 * 1024)
+                                mtime = datetime.fromtimestamp(os.path.getmtime(p)).strftime("%Y-%m-%d %H:%M")
+                                meta = YouTube.load_metadata_sidecar(p)
+                                if meta and meta.get("title"):
+                                    tag = colored(f"  [meta: {meta['title'][:50]}]", "green")
+                                else:
+                                    tag = colored("  [no metadata]", "yellow")
+                                print(colored(f"   {i}. {os.path.basename(p)}  ({size_mb:.1f} MB, {mtime})", "cyan") + tag)
+
+                            sel = question("\nSelect a video to re-upload (number, or empty to cancel): ").strip()
+                            if not sel:
+                                info(" => Cancelled.")
+                            else:
+                                try:
+                                    idx = int(sel) - 1
+                                    if not (0 <= idx < len(mp4s)):
+                                        raise ValueError()
+                                except ValueError:
+                                    warning(" => Invalid selection.")
+                                else:
+                                    chosen_path = mp4s[idx]
+                                    saved_meta = YouTube.load_metadata_sidecar(chosen_path)
+
+                                    subj_to_pass = None
+                                    proceed = True
+
+                                    if saved_meta and saved_meta.get("title") and saved_meta.get("description"):
+                                        info(f" => Found saved metadata: {saved_meta['title']}")
+                                        if not confirm("Use saved metadata?", default=True):
+                                            saved_meta = None  # fall through to recovery menu
+
+                                    if not saved_meta:
+                                        info("\n => No saved metadata. Recovery options:")
+                                        print(colored("   1. Auto-transcribe with Whisper (recovers original content)", "cyan"))
+                                        print(colored("   2. Type a topic manually (LLM generates title + description)", "cyan"))
+                                        print(colored("   3. Cancel", "cyan"))
+                                        choice = question("Select [1/2/3]: ").strip()
+                                        if choice == "1":
+                                            subj_to_pass = None  # triggers Whisper path in reupload_video
+                                        elif choice == "2":
+                                            subj_to_pass = question("Enter the topic: ").strip()
+                                            if not subj_to_pass:
+                                                warning(" => Empty topic — cancelled.")
+                                                proceed = False
+                                        else:
+                                            info(" => Cancelled.")
+                                            proceed = False
+
+                                    if proceed:
+                                        try:
+                                            youtube.reupload_video(chosen_path, subj_to_pass)
+                                        except KeyboardInterrupt:
+                                            warning(f"\nUpload cancelled by user. Video preserved at: {chosen_path}")
+                                        except Exception as _re_err:
+                                            error(f"Re-upload failed: {type(_re_err).__name__}: {_re_err}")
+                                            warning(f"Video preserved at: {chosen_path}")
+                    elif user_input == 6:
                         # Setup CRON Job
                         info("How often do you want to upload?")
 
@@ -414,7 +629,7 @@ def main():
                             success("Set up CRON Job.")
                         else:
                             break
-                    elif user_input == 6:
+                    elif user_input == 7:
                         if get_verbose():
                             info(" => Climbing Options Ladder...", False)
                         break
@@ -623,6 +838,243 @@ def main():
 
         outreach.start()
     elif user_input == 5:
+        info("Starting Movie Summary...")
+
+        cached_accounts = get_accounts("movies")
+
+        if len(cached_accounts) == 0:
+            warning("No accounts found in cache.")
+            if confirm("Create one now?", default=True):
+                generated_uuid = str(uuid4())
+                success(f" => Generated ID: {generated_uuid}")
+                fields = _prompt_youtube_account_fields()
+                account_data = {"id": generated_uuid, **fields, "videos": [], "pending_titles": []}
+                add_account("movies", account_data)
+                success("Account configured successfully!")
+        else:
+            table = PrettyTable()
+            table.field_names = ["#", "Nickname", "Niche", "Long voice"]
+            for col in ("Nickname", "Niche", "Long voice"):
+                table.align[col] = "l"
+            for idx, account in enumerate(cached_accounts):
+                table.add_row([
+                    idx + 1,
+                    colored(_trunc(account.get("nickname", ""), 18), "blue"),
+                    colored(_trunc(account.get("niche", ""), 26), "green"),
+                    colored(_trunc(account.get("long_voice") or "<default>", 24), "magenta"),
+                ])
+            print(table)
+            info("Type 'd' to delete, 'n' to add new, 'e' to edit an account.", False)
+
+            user_input = question("Select an account to start (or 'd'/'n'/'e'): ").strip()
+
+            if user_input.lower() == "n":
+                generated_uuid = str(uuid4())
+                success(f" => Generated ID: {generated_uuid}")
+                fields = _prompt_youtube_account_fields()
+                add_account("movies", {"id": generated_uuid, **fields, "videos": [], "pending_titles": []})
+                success("Account configured successfully!")
+                return
+
+            if user_input.lower() == "d":
+                delete_input = question("Enter account number to delete: ").strip()
+                target = next((a for i, a in enumerate(cached_accounts) if str(i + 1) == delete_input), None)
+                if target is None:
+                    error("Invalid account selected. Please try again.", "red")
+                elif confirm(f"Are you sure you want to delete '{target['nickname']}'?", default=False):
+                    remove_account("movies", target["id"])
+                    success("Account removed successfully!")
+                else:
+                    warning("Account deletion canceled.", False)
+                return
+
+            if user_input.lower() == "e":
+                edit_input = question("Enter account number to edit: ").strip()
+                target = next((a for i, a in enumerate(cached_accounts) if str(i + 1) == edit_input), None)
+                if target is None:
+                    error("Invalid account selected. Please try again.", "red")
+                else:
+                    info(f"Editing '{target['nickname']}' — press Enter to keep current value.")
+                    new_fields = _prompt_youtube_account_fields(defaults=target)
+                    merged = {**target, **new_fields}
+                    remove_account("movies", target["id"])
+                    add_account("movies", merged)
+                    success(f"Account '{merged['nickname']}' updated.")
+                return
+
+            selected_account = next(
+                (a for i, a in enumerate(cached_accounts) if str(i + 1) == user_input),
+                None,
+            )
+
+            if selected_account is None:
+                error("Invalid account selected. Please try again.", "red")
+                main()
+            else:
+                ms = MovieSummary(
+                    selected_account["id"],
+                    selected_account["nickname"],
+                    selected_account["firefox_profile"],
+                    selected_account["niche"],
+                    selected_account["language"],
+                    image_style=selected_account.get("image_style", ""),
+                    short_voice=selected_account.get("short_voice", ""),
+                    long_voice=selected_account.get("long_voice", ""),
+                    hook_profile=selected_account.get("hook_profile", ""),
+                    voice_drama=selected_account.get("voice_drama", False),
+                )
+
+                while True:
+                    rem_temp_files()
+                    info("\n============ OPTIONS ============", False)
+                    for idx, opt in enumerate(MOVIE_OPTIONS):
+                        print(colored(f" {idx + 1}. {opt}", "cyan"))
+                    info("=================================\n", False)
+
+                    movie_choice = int(question("Select an option: "))
+                    tts = TTS()
+
+                    if movie_choice == 1:
+                        # Browse archive.org catalog (paginated)
+                        catalog = MovieCatalog()
+                        if not catalog.is_fresh():
+                            warning(
+                                " Catalog is empty or older than 7 days. "
+                                "Run 'Refresh catalog' first or wait for auto-refresh."
+                            )
+                            if confirm("Refresh catalog now?", default=True):
+                                info(" => Refreshing catalog from archive.org "
+                                     "(may take 1-3 min)...")
+                                total = catalog.refresh(
+                                    progress_cb=lambda c, n, tot: info(
+                                        f"   - {c}: {n}/{tot or '?'}", False
+                                    )
+                                )
+                                success(f" Catalog refreshed: {total} movies.")
+                            else:
+                                continue
+                        _browse_movie_catalog(catalog, selected_account["id"], ms, tts)
+                    elif movie_choice == 2:
+                        # Refresh catalog
+                        catalog = MovieCatalog()
+                        info(" => Refreshing catalog from archive.org "
+                             "(may take 1-3 min)...")
+                        try:
+                            total = catalog.refresh(
+                                progress_cb=lambda c, n, tot: info(
+                                    f"   - {c}: {n}/{tot or '?'}", False
+                                )
+                            )
+                            success(f" Catalog refreshed: {total} movies.")
+                        except Exception as cat_err:
+                            error(f"Catalog refresh failed: {type(cat_err).__name__}: {cat_err}")
+                    elif movie_choice == 3:
+                        # Generate from custom title (YouTube fallback search)
+                        movie_title = question("Enter the movie title (in any language): ").strip()
+                        if not movie_title:
+                            warning("Empty title — cancelled.")
+                            continue
+                        try:
+                            video_path = ms.generate_movie_summary(tts, movie_title)
+                        except Exception as gen_err:
+                            error(f"Movie summary generation failed: {type(gen_err).__name__}: {gen_err}")
+                            continue
+                        if not video_path:
+                            warning("Movie summary aborted — nothing to upload.")
+                        elif confirm("Do you want to upload this video to YouTube?", default=True):
+                            try:
+                                ms.upload_video()
+                            except KeyboardInterrupt:
+                                warning(f"\nUpload cancelled by user. Video saved at: {video_path}")
+                            except Exception as up_err:
+                                error(f"Upload failed: {type(up_err).__name__}: {up_err}")
+                                warning(f"Video preserved on disk: {video_path}")
+                    elif movie_choice == 4:
+                        # Show all summaries (across both archive.org picks and custom titles)
+                        accounts_now = get_accounts("movies")
+                        acc_now = next(
+                            (a for a in accounts_now if a.get("id") == selected_account["id"]),
+                            selected_account,
+                        )
+                        summarized = acc_now.get("summarized_movies", []) or []
+                        videos = acc_now.get("videos", []) or []
+                        if not summarized and not videos:
+                            warning(" No summaries found.")
+                        else:
+                            t = PrettyTable()
+                            t.field_names = ["#", "Date", "Source", "Title"]
+                            t.align["Title"] = "l"
+                            row = 0
+                            for s in summarized:
+                                row += 1
+                                t.add_row([
+                                    row,
+                                    colored(s.get("date", ""), "blue"),
+                                    colored("archive.org", "magenta"),
+                                    colored(_trunc(s.get("title", ""), 60), "green"),
+                                ])
+                            for v in videos:
+                                row += 1
+                                t.add_row([
+                                    row,
+                                    colored(v.get("date", ""), "blue"),
+                                    colored("youtube", "magenta"),
+                                    colored(_trunc(v.get("title", ""), 60), "green"),
+                                ])
+                            print(t)
+                    elif movie_choice == 5:
+                        # Re-upload existing summary (reuses inherited reupload_video)
+                        mp_dir = os.path.join(ROOT_DIR, ".mp")
+                        try:
+                            mp4s = sorted(
+                                [os.path.join(mp_dir, f) for f in os.listdir(mp_dir) if f.lower().endswith(".mp4")],
+                                key=os.path.getmtime,
+                                reverse=True,
+                            )
+                        except FileNotFoundError:
+                            mp4s = []
+                        if not mp4s:
+                            warning(" => No saved videos in .mp/.")
+                        else:
+                            for i, p in enumerate(mp4s, 1):
+                                size_mb = os.path.getsize(p) / (1024 * 1024)
+                                mtime = datetime.fromtimestamp(os.path.getmtime(p)).strftime("%Y-%m-%d %H:%M")
+                                print(colored(f"   {i}. {os.path.basename(p)}  ({size_mb:.1f} MB, {mtime})", "cyan"))
+                            sel = question("\nSelect a video to re-upload (number, empty to cancel): ").strip()
+                            if sel:
+                                try:
+                                    idx = int(sel) - 1
+                                    if 0 <= idx < len(mp4s):
+                                        ms.reupload_video(mp4s[idx], None)
+                                except (ValueError, Exception) as re_err:
+                                    error(f"Re-upload failed: {type(re_err).__name__}: {re_err}")
+                    elif movie_choice == 6:
+                        info("How often do you want to upload?")
+                        info("\n============ OPTIONS ============", False)
+                        for idx, cron_opt in enumerate(MOVIE_CRON_OPTIONS):
+                            print(colored(f" {idx + 1}. {cron_opt}", "cyan"))
+                        info("=================================\n", False)
+                        cron_choice = int(question("Select an Option: "))
+                        cron_script_path = os.path.join(ROOT_DIR, "src", "cron.py")
+                        command = ["python", cron_script_path, "movies", selected_account["id"], get_active_model()]
+
+                        def movie_job():
+                            subprocess.run(command)
+
+                        if cron_choice == 1:
+                            schedule.every(1).day.do(movie_job)
+                            success("Set up CRON Job.")
+                        elif cron_choice == 2:
+                            schedule.every().day.at("10:00").do(movie_job)
+                            schedule.every().day.at("16:00").do(movie_job)
+                            success("Set up CRON Job.")
+                        else:
+                            break
+                    elif movie_choice == 7:
+                        if get_verbose():
+                            info(" => Climbing Options Ladder...", False)
+                        break
+    elif user_input == 6:
         if get_verbose():
             print(colored(" => Quitting...", "blue"))
         sys.exit(0)

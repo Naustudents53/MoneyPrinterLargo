@@ -330,6 +330,30 @@ class YouTube:
         # Initialize the Firefox profile
         self.options: Options = Options()
 
+        # `eager` returns control as soon as the DOM is interactive instead of
+        # waiting for every iframe/asset. YouTube Studio loads many trackers
+        # and ads SDKs that can stall the default `normal` strategy long
+        # enough for geckodriver to lose the marionette heartbeat with the
+        # Firefox process, surfacing as `Failed to decode response from
+        # marionette`. Eager avoids that whole class of failures.
+        self.options.page_load_strategy = "eager"
+
+        # Disable noisy/unneeded subsystems that occasionally cause Firefox to
+        # spin (auto-update probe, crash reporter, telemetry) and that don't
+        # matter inside an automation run.
+        for pref_name, pref_value in (
+            ("app.update.enabled", False),
+            ("app.update.auto", False),
+            ("browser.crashReports.unsubmittedCheck.enabled", False),
+            ("toolkit.telemetry.enabled", False),
+            ("datareporting.healthreport.uploadEnabled", False),
+            ("dom.ipc.processCount", 1),
+        ):
+            try:
+                self.options.set_preference(pref_name, pref_value)
+            except Exception:
+                pass
+
         # Set headless state of browser
         if get_headless():
             self.options.add_argument("--headless")
@@ -2444,6 +2468,14 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 this_dur = req_dur
             if this_dur <= 0:
                 break
+            # MoviePy's blit assumes 3-channel arrays; LA/P/RGBA images cause
+            # `could not broadcast (H,W,2) into (H,W,3)`. Force RGB on disk.
+            try:
+                with _PIL_Image.open(image_path) as _im:
+                    if _im.mode != "RGB":
+                        _im.convert("RGB").save(image_path)
+            except Exception:
+                pass
             clip = ImageClip(image_path).set_duration(this_dur).set_fps(30)
 
             # Not all images are same size,
@@ -2636,6 +2668,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             info(f" => Generated Video: {path}")
 
         self.video_path = os.path.abspath(path)
+        self._save_metadata_sidecar()
 
         return path
 
@@ -3913,6 +3946,14 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             try:
                 clip_idx += 1
                 print(colored(f"    [Build] Clip {clip_idx}/{n_total} ({clip_dur:.1f}s)...", "cyan"), flush=True)
+                # MoviePy's blit assumes 3-channel arrays; LA/P/RGBA images cause
+                # `could not broadcast (H,W,2) into (H,W,3)`. Force RGB on disk.
+                try:
+                    with _PIL_Image.open(image_path) as _im:
+                        if _im.mode != "RGB":
+                            _im.convert("RGB").save(image_path)
+                except Exception:
+                    pass
                 img_clip = ImageClip(image_path).set_duration(clip_dur)
 
                 # Resize to 1920x1080
@@ -4150,6 +4191,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         video_path = self.combine_long()
 
         self.video_path = os.path.abspath(video_path)
+        self._save_metadata_sidecar()
         success(f"\n=> Long video generated: {video_path}")
 
         return video_path
@@ -4290,9 +4332,28 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         if not session_alive:
             info(" => Conectando con Firefox...")
-            service = Service(GeckoDriverManager().install())
-            self.browser = webdriver.Firefox(service=service, options=self.options)
-            success(" => Firefox conectado.")
+            try:
+                info("    [1/3] Instalando/verificando geckodriver...")
+                driver_path = GeckoDriverManager().install()
+                info(f"    [2/3] geckodriver listo: {driver_path}")
+                service = Service(driver_path)
+                info("    [3/3] Lanzando Firefox con perfil temporal...")
+                self.browser = webdriver.Firefox(service=service, options=self.options)
+                # Bound how long any single navigation can stall before
+                # Selenium gives up — keeps marionette failures bounded
+                # instead of hanging indefinitely.
+                try:
+                    self.browser.set_page_load_timeout(90)
+                    self.browser.set_script_timeout(60)
+                except Exception:
+                    pass
+                success(" => Firefox conectado.")
+            except Exception as e:
+                import traceback as _tb
+                error(f"Failed to launch Firefox: {type(e).__name__}: {e}")
+                error("Full traceback:")
+                error(_tb.format_exc())
+                raise
 
     def get_channel_id(self) -> str:
         """
@@ -4301,13 +4362,40 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         Returns:
             channel_id (str): The Channel ID.
         """
-        driver = self.browser
-        driver.get("https://studio.youtube.com")
-        time.sleep(2)
-        channel_id = driver.current_url.split("/")[-1]
-        self.channel_id = channel_id
+        from selenium.common.exceptions import WebDriverException, TimeoutException
 
-        return channel_id
+        # First navigation under a freshly-loaded profile occasionally trips
+        # `Failed to decode response from marionette` — geckodriver lost the
+        # heartbeat while Firefox was still warming up cookies/extensions.
+        # If that happens, recreate the browser and try once more.
+        attempts = 2
+        last_err = None
+        for attempt in range(1, attempts + 1):
+            try:
+                driver = self.browser
+                driver.get("https://studio.youtube.com")
+                time.sleep(2)
+                channel_id = driver.current_url.split("/")[-1]
+                self.channel_id = channel_id
+                return channel_id
+            except (WebDriverException, TimeoutException) as e:
+                last_err = e
+                msg = str(e)
+                if attempt < attempts:
+                    warning(f"Navigation to YouTube Studio failed ({type(e).__name__}: {msg[:120]}). Retrying with a fresh browser...")
+                    try:
+                        if self.browser is not None:
+                            self.browser.quit()
+                    except Exception:
+                        pass
+                    self.browser = None
+                    self._ensure_browser()
+                    continue
+                raise
+
+        if last_err:
+            raise last_err
+        return ""
 
     def _wait_for_listing_settled(
         self,
@@ -4681,6 +4769,162 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     driver.switch_to.window(original_handle)
             except Exception:
                 pass
+
+    @staticmethod
+    def _sidecar_path(video_path: str) -> str:
+        return os.path.splitext(video_path)[0] + ".meta.json"
+
+    def _save_metadata_sidecar(self) -> None:
+        """
+        Persist {title, description, subject, language} as `<video>.meta.json`
+        next to the rendered .mp4. Called right after rendering so that if the
+        Selenium upload later crashes, the metadata is not lost.
+        """
+        if not getattr(self, "video_path", None):
+            return
+        if not getattr(self, "metadata", None):
+            return
+        try:
+            sidecar = self._sidecar_path(self.video_path)
+            with open(sidecar, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "title": self.metadata.get("title", ""),
+                        "description": self.metadata.get("description", ""),
+                        "subject": getattr(self, "subject", "") or "",
+                        "language": getattr(self, "_language", "") or "",
+                    },
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+        except Exception as e:
+            warning(f"Could not save metadata sidecar: {e}")
+
+    @staticmethod
+    def load_metadata_sidecar(video_path: str) -> dict | None:
+        """Return saved metadata dict for a video, or None if no sidecar exists."""
+        sidecar = YouTube._sidecar_path(video_path)
+        if not os.path.isfile(sidecar):
+            return None
+        try:
+            with open(sidecar, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def _transcribe_video_audio(self, video_path: str) -> str:
+        """
+        Transcribe the audio embedded in a .mp4 to plain text using
+        faster-whisper. Used to recover metadata for orphan videos that have
+        no `.meta.json` sidecar. Returns the concatenated transcript.
+        """
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as e:
+            raise RuntimeError(
+                "faster-whisper is required for transcript-based metadata recovery. "
+                "Install it (`pip install faster-whisper`) or provide a subject manually."
+            ) from e
+
+        info(f"  [Whisper] Loading model '{get_whisper_model()}'...")
+        model = WhisperModel(
+            get_whisper_model(),
+            device=get_whisper_device(),
+            compute_type=get_whisper_compute_type(),
+        )
+        info("  [Whisper] Transcribing audio (this may take a minute)...")
+        segments, _ = model.transcribe(video_path, vad_filter=True)
+        text = " ".join(s.text.strip() for s in segments if s.text and s.text.strip())
+        return text.strip()
+
+    def reupload_video(self, video_path: str, subject: str | None = None) -> bool:
+        """
+        Re-upload a previously rendered .mp4. Picks a metadata source in
+        priority order:
+
+          1. `<video>.meta.json` sidecar — if it exists, use saved title +
+             description as-is (fastest, no LLM call).
+          2. `subject` argument — generate title + description from the topic
+             via the LLM (used when the user remembers what the video was).
+          3. Whisper transcript fallback — transcribe the audio and ask the
+             LLM to generate title + description from the actual content.
+
+        Always runs the normal `upload_video` flow once metadata is ready.
+        """
+        if not os.path.isfile(video_path):
+            error(f"Cannot re-upload: file not found at '{video_path}'.")
+            return False
+
+        self.video_path = video_path
+
+        # 1) Sidecar
+        sidecar = self.load_metadata_sidecar(video_path)
+        if sidecar and sidecar.get("title") and sidecar.get("description"):
+            self.subject = sidecar.get("subject") or ""
+            self.metadata = {
+                "title": sidecar["title"],
+                "description": sidecar["description"],
+            }
+            info(" => Loaded saved metadata from sidecar.")
+            success(f" => Title: {self.metadata['title']}")
+            return self.upload_video()
+
+        # 2) Subject provided
+        if subject and subject.strip():
+            self.subject = subject.strip()
+            info(f" => Generating title + description for subject: {self.subject}")
+            title_prompt = (
+                f"Please generate a YouTube Video Title for the following subject: {self.subject}. "
+                f"Optionally include 1-2 relevant hashtags at the end (but only if they fit naturally). "
+                f"Only return the title, nothing else. Limit the title under 80 characters. Be concise. "
+                f"YOU MUST WRITE THE TITLE IN {self.language}. Do NOT wrap the title in quotes."
+            )
+            desc_prompt = (
+                f"Please generate a YouTube Video Description (2-4 sentences) for a video about: {self.subject}. "
+                f"Only return the description, nothing else. Do NOT wrap it in quotes. "
+                f"YOU MUST WRITE THE DESCRIPTION IN {self.language}."
+            )
+        else:
+            # 3) Whisper fallback
+            transcript = self._transcribe_video_audio(video_path)
+            if not transcript:
+                error("Whisper produced an empty transcript — cannot generate metadata.")
+                return False
+            info(f"  [Whisper] Transcript: {transcript[:160]}{'...' if len(transcript) > 160 else ''}")
+            # Use first 600 chars of transcript as the implicit subject
+            self.subject = transcript[:200]
+            title_prompt = (
+                f"Generate a YouTube Video Title that fits this video transcript:\n\n{transcript[:1500]}\n\n"
+                f"Optionally include 1-2 relevant hashtags. Only return the title. "
+                f"Limit under 80 characters. Be concise. "
+                f"YOU MUST WRITE THE TITLE IN {self.language}. Do NOT wrap in quotes."
+            )
+            desc_prompt = (
+                f"Generate a YouTube Video Description (2-4 sentences) that fits this transcript:\n\n{transcript[:2500]}\n\n"
+                f"Only return the description, nothing else. Do NOT wrap in quotes. "
+                f"YOU MUST WRITE THE DESCRIPTION IN {self.language}."
+            )
+
+        title = self.generate_response(title_prompt)
+        title = re.sub(r'^[\"\'“”‘’]+|[\"\'“”‘’]+$', '', title.strip()).strip()
+        if len(title) > 100:
+            if "#" in title:
+                title = title[:title.index("#")].strip()
+            if len(title) > 100:
+                title = title[:100]
+
+        description = self.generate_response(desc_prompt)
+        description = re.sub(r'^[\"\'“”‘’]+|[\"\'“”‘’]+$', '', description.strip()).strip()
+
+        self.metadata = {"title": title, "description": description}
+        success(f" => Title: {title}")
+        info(f" => Description: {description[:120]}{'...' if len(description) > 120 else ''}")
+
+        # Save sidecar so next retry skips the LLM/Whisper round
+        self._save_metadata_sidecar()
+
+        return self.upload_video()
 
     def upload_video(self) -> bool:
         """

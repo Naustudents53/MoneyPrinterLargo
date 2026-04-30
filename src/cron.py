@@ -7,6 +7,8 @@ from config import get_verbose
 from classes.Tts import TTS
 from classes.Twitter import Twitter
 from classes.YouTube import YouTube
+from classes.MovieSummary import MovieSummary
+from cache import add_account, remove_account
 from config import get_llm_provider, get_pollinations_text_model
 from llm_provider import select_model, set_llm_provider
 
@@ -97,6 +99,47 @@ def main():
                 youtube.upload_video()
                 if verbose:
                     success("Uploaded Short.")
+                break
+    elif purpose == "movies":
+        tts = TTS()
+
+        accounts = get_accounts("movies")
+
+        if not account_id:
+            error("Account UUID cannot be empty.")
+
+        for acc in accounts:
+            if acc["id"] == account_id:
+                if verbose:
+                    info("Initializing Movie Summary...")
+                ms = MovieSummary(
+                    acc["id"],
+                    acc["nickname"],
+                    acc["firefox_profile"],
+                    acc["niche"],
+                    acc["language"],
+                    image_style=acc.get("image_style", ""),
+                    short_voice=acc.get("short_voice", ""),
+                    long_voice=acc.get("long_voice", ""),
+                    hook_profile=acc.get("hook_profile", ""),
+                    voice_drama=acc.get("voice_drama", False),
+                )
+                pending = list(acc.get("pending_titles") or [])
+                if not pending:
+                    error("No pending movie titles in account; nothing to do.")
+                    sys.exit(1)
+                next_title = pending.pop(0)
+                video_path = ms.generate_movie_summary(tts, next_title)
+                if not video_path:
+                    error("Skipping upload: movie summary aborted.")
+                    sys.exit(1)
+                ms.upload_video()
+                # Persist the consumed-from-queue state by rewriting the account
+                acc["pending_titles"] = pending
+                remove_account("movies", acc["id"])
+                add_account("movies", acc)
+                if verbose:
+                    success(f"Uploaded movie summary: {next_title}")
                 break
     else:
         error("Invalid Purpose, exiting...")

@@ -81,3 +81,41 @@ All config lives in `config.json` at the project root. See `config.example.json`
 ## Contributing
 
 PRs go against `main`. One feature/fix per PR. Open an issue first. Use `WIP` label for in-progress PRs.
+
+## Upstream merge policy (`andre` remote → `andrepichardo/MoneyPrinterV2`)
+
+This fork has diverged significantly. **Never run `git merge andre/main` blindly** — the upstream is on a simplification trajectory that deletes features we depend on. Cherry-pick only.
+
+### Channel context (drives the policy)
+
+The active YouTube channel niche is **Universo / astronomía** (e.g. agujeros negros, supernovas, paradoja de Olbers). Movie Summary builds on top of that. There is no history-channel use case in this repo, so changes scoped to ancient civilizations are useless overhead here.
+
+### What we have that upstream is removing — DO NOT let a merge delete these
+
+- `scripts/peek_inspiration.py` — used to seed topics from external content
+- `scripts/video_from_inspiration.py` — full inspiration-driven pipeline
+- `src/inspire.py` — the inspiration module
+- `src/config.py::get_long_video_llm_model()` — required by Movie Summary; upstream deleted it
+- Large chunks of `src/utils.py` and `src/llm_provider.py` (we have the more complete versions)
+- The entire Movie Summary stack we built locally (`MovieSummary.py`, `MovieCatalog.py`, `ImdbIndex.py`) — upstream doesn't know about these
+
+### What's safe to cherry-pick from upstream
+
+As of the last audit (commits `e321e5f` and earlier), **nothing**. Every change in those 7 commits is one of:
+- History-niche specific (era anchoring via `name`/`era_brief` fields on `CIVILIZATION_ART_STYLES`, the era-clause injection in `generate_long_prompts`, the 3 historical example scenes in the prompt) — irrelevant for the Universo niche, and the historical examples actively bias the LLM toward the wrong visuals
+- Already in our code in a more complete form (`SONG_KEYWORDS`, `choose_random_song`, song history) — our `utils.py` has these plus extras
+- A subset of forbidden-words lists we already have (we have the bigger list)
+
+### When we WOULD cherry-pick
+
+Re-audit the upstream only if one of:
+- We start a history channel (era anchoring becomes valuable)
+- Upstream lands a substantively new feature that's not in this list of "already have / not applicable"
+
+To audit safely:
+```bash
+git fetch andre
+git log HEAD..andre/main --oneline
+git diff HEAD..andre/main -- src/classes/YouTube.py
+```
+Apply changes by hand, never `git cherry-pick` the whole commit (their commits are titled "Update YouTube.py" with no body and bundle multiple unrelated edits).
