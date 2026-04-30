@@ -988,54 +988,30 @@ INSTRUCTIONS:
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         else:
-            # If a civilization is detected from the subject, inject a strict era
-            # rule. This forces the LLM to ground EVERY scene in the right historical
-            # period (clothing, architecture, weapons, objects, transport, atmosphere)
-            # — even when the script section is abstract. Without this, abstract lines
-            # like "the city was vibrant" generate generic modern-looking scenes
-            # because the rendering style (cartoon/2D) doesn't carry era information
-            # by itself.
+            # Detect civilization from subject so we can anchor every scene to the
+            # right historical era (clothing, architecture, weapons, objects).
+            # Local LLMs (Ollama) drift into modern visuals if the era isn't named
+            # explicitly inside the prompt.
             civ_info = self._get_civilization_info()
-            era_block = ""
+            era_clause = ""
             if civ_info:
-                era_name = civ_info["name"]
-                era_brief = civ_info["era_brief"]
-                era_block = f"""
+                era_clause = f" Era: {civ_info['name']}. Period markers: {civ_info['era_brief']}. All clothing, architecture, weapons and objects MUST be from this era."
 
-CRITICAL HISTORICAL ERA RULE — IGNORING THIS WILL FAIL THE TASK:
-This video is about {era_name}. EVERY image prompt MUST place the scene in {era_name}.
-- Clothing/uniforms must be strictly {era_name} era (NEVER modern suits, jeans, t-shirts, ties, dresses, sneakers, or any contemporary clothing).
-- Architecture must be {era_name} (NEVER modern buildings, skyscrapers, cars, electric lights, asphalt streets).
-- Weapons, tools, transport, and objects must be {era_name}-period only.
-- Even if a script section is abstract or generic (e.g., "the city was vibrant", "people were afraid"), you MUST ground it explicitly in {era_name}: name what they wear, where they stand, what surrounds them, all in {era_name} terms.
-Reference markers for {era_name}: {era_brief}.
-Use these as grounding cues — pick the ones that fit each section, do not list them all in every prompt.
-"""
+            prompt = f"""Task: write {n_prompts} image prompts for a video about "{self.subject}".{era_clause}
 
-            prompt = f"""You are an art director picking visual frames for an animated video about: {self.subject}
+Below are {n_prompts} script sections. For each one, write a vivid 35-55 word English description of a SPECIFIC visual scene that illustrates that exact section. Pick a concrete action with a verb (NOT a general theme). Name what people do, wear, hold; name the setting and 2-3 period objects. Each scene must be different.
 
-The narration has been divided into {n_prompts} sections. For EACH section you must:
-  STEP 1 — read the section text and pick ONE concrete visual moment (a single action / event / object / person that someone could literally paint). Reject vague summaries.
-  STEP 2 — write a detailed image prompt of THAT specific moment.
-{sections_text}{era_block}
-HOW TO PICK THE VISUAL MOMENT (STEP 1):
-- It must be a CONCRETE action with a verb: "Caesar crosses the Rubicon", "the samurai swings his katana", "the priestess lights the sacred fire", "merchants haggle at the market".
-- NEVER pick an abstraction like "Roman society", "the importance of philosophy", "people were afraid". If the section is abstract, INVENT a concrete scene that depicts that idea in the era (e.g. abstract "people feared Caesar" → concrete "a Roman senator hides his face as Caesar's lictors march past").
-- If the section names a specific person, place, or event by name → that MUST be your moment.
-- The moment must be DIFFERENT from the moments of other sections. NEVER repeat the same composition twice.
+Examples of good scenes:
+- "Caesar in red cloak rides a black warhorse across the shallow Rubicon at dusk, his Thirteenth Legion wading behind in lorica segmentata, eagle standards held high, hills in the distance, tense determined faces."
+- "A samurai in dark do armor swings his katana mid-stroke in a wooden dojo, sweat on his brow, paper shoji screens around, morning light on tatami mats, wooden practice swords stacked nearby."
+- "A Byzantine sailor lights a bronze siphon of Greek fire on a dromon warship, flames leaping toward an enemy galley, sea spray, gold-trimmed sails, oars mid-stroke, Constantinople walls in the distance."
 
-HOW TO WRITE THE PROMPT (STEP 2):
-- Describe WHO is doing WHAT, plus body language, expression, and what they hold / wear / face.
-- Add the immediate setting (where exactly: a temple, a battlefield, a forum step, a kitchen, a ship deck) and 2-3 period-accurate details (objects, clothing items, architecture).
-- 35-55 words. English. No camera/photography/film terms.
-- FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
+{sections_text}
+Forbidden words: cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization.
 
-OUTPUT FORMAT — return ONLY this JSON array, no markdown, no explanation:
-[
-  {{"section": 1, "moment": "<short concrete action>", "prompt": "<35-55 word visual description>"}},
-  {{"section": 2, "moment": "...", "prompt": "..."}},
-  ... (one entry per section, exactly {n_prompts} entries)
-]"""
+Return ONLY a JSON array of {n_prompts} strings (one prompt per section, in order). Example format:
+["scene 1 description...", "scene 2 description...", ...]
+No markdown. No explanation. Just the JSON array."""
 
         completion = (
             str(self.generate_response(prompt))
@@ -3581,54 +3557,28 @@ Return ONLY the JSON. No markdown, no explanation."""
             f'\nSECTION {i+1}: "{sec}"\n' for i, sec in enumerate(sections)
         )
 
-        # Era anchor (same logic as generate_prompts) — locks every scene to the
-        # detected historical period so abstract script lines don't generate
-        # modern/generic visuals.
+        # Era anchor — names the historical period inside the prompt so the LLM
+        # doesn't drift into modern visuals on abstract script lines.
         civ_info = self._get_civilization_info()
-        era_block = ""
+        era_clause = ""
         if civ_info:
-            era_name = civ_info["name"]
-            era_brief = civ_info["era_brief"]
-            era_block = f"""
+            era_clause = f" Era: {civ_info['name']}. Period markers: {civ_info['era_brief']}. All clothing, architecture, weapons and objects MUST be from this era."
 
-CRITICAL HISTORICAL ERA RULE — IGNORING THIS WILL FAIL THE TASK:
-This video is about {era_name}. EVERY image prompt MUST place the scene in {era_name}.
-- Clothing/uniforms must be strictly {era_name} era (NEVER modern suits, jeans, t-shirts, ties, dresses, sneakers, or any contemporary clothing).
-- Architecture must be {era_name} (NEVER modern buildings, skyscrapers, cars, electric lights, asphalt streets).
-- Weapons, tools, transport, and objects must be {era_name}-period only.
-- Even if a script section is abstract or generic (e.g., "the city was vibrant", "people were afraid"), you MUST ground it explicitly in {era_name}: name what they wear, where they stand, what surrounds them, all in {era_name} terms.
-Reference markers for {era_name}: {era_brief}.
-Use these as grounding cues — pick the ones that fit each section, do not list them all in every prompt.
-"""
+        prompt = f"""Task: write {n_prompts} image prompts for a long-form documentary about "{self.subject}".{era_clause}
 
-        prompt = f"""You are an art director picking visual frames for a long-form documentary video.
+Below are {n_prompts} script sections. For each one, write a vivid 35-55 word English description of a SPECIFIC visual scene that illustrates that exact section. Pick a concrete action with a verb (NOT a general theme). Name what people do, wear, hold; name the setting and 2-3 period objects. Each scene must be different — vary action, setting, character and time of day.
 
-TOPIC: {self.subject}
+Examples of good scenes:
+- "Caesar in red cloak rides a black warhorse across the shallow Rubicon at dusk, his Thirteenth Legion wading behind in lorica segmentata, eagle standards held high, hills in the distance, tense determined faces."
+- "A samurai in dark do armor swings his katana mid-stroke in a wooden dojo, sweat on his brow, paper shoji screens around, morning light on tatami mats, wooden practice swords stacked nearby."
+- "A Byzantine sailor lights a bronze siphon of Greek fire on a dromon warship, flames leaping toward an enemy galley, sea spray, gold-trimmed sails, oars mid-stroke, Constantinople walls in the distance."
 
-The narration has been divided into {n_prompts} sections. For EACH section you must:
-  STEP 1 — read the section text and pick ONE concrete visual moment (a single action / event / object / person that someone could literally paint). Reject vague summaries.
-  STEP 2 — write a detailed image prompt of THAT specific moment.
-{sections_text}{era_block}
-HOW TO PICK THE VISUAL MOMENT (STEP 1):
-- It must be a CONCRETE action with a verb: "Caesar crosses the Rubicon", "the samurai swings his katana", "the priestess lights the sacred fire", "merchants haggle at the market".
-- NEVER pick an abstraction like "Roman society", "the importance of philosophy", "people were afraid". If the section is abstract, INVENT a concrete scene that depicts that idea in the era (e.g. abstract "people feared Caesar" → concrete "a Roman senator hides his face as Caesar's lictors march past").
-- If the section names a specific person, place, or event by name → that MUST be your moment.
-- The moments must be DIFFERENT across the {n_prompts} sections. Vary action, setting, character, and time of day.
+{sections_text}
+Forbidden words: cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization. Also forbidden: cosmic/space/nebula imagery, microscopic diagrams, futuristic/sci-fi visuals (unless the topic itself is astronomy/biology/futurism).
 
-HOW TO WRITE THE PROMPT (STEP 2):
-- Describe WHO is doing WHAT, plus body language, expression, and what they hold / wear / face.
-- Add the immediate setting (where exactly: a temple, a battlefield, a forum step, a kitchen, a ship deck) and 2-3 period-accurate details (objects, clothing items, architecture).
-- 35-55 words. English. 16:9 landscape framing implied (do not say "16:9").
-- No camera/photography/film terms.
-- ABSOLUTELY FORBIDDEN: cosmic/space/nebula imagery (unless topic is astronomy), microscopic diagrams (unless biology/chemistry), futuristic/sci-fi visuals (unless topic is futurism), abstract geometric patterns, generic "concept" visualizations.
-- FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
-
-OUTPUT FORMAT — return ONLY this JSON array, no markdown, no explanation:
-[
-  {{"section": 1, "moment": "<short concrete action>", "prompt": "<35-55 word visual description>"}},
-  {{"section": 2, "moment": "...", "prompt": "..."}},
-  ... (one entry per section, exactly {n_prompts} entries)
-]"""
+Return ONLY a JSON array of {n_prompts} strings (one prompt per section, in order). Example format:
+["scene 1 description...", "scene 2 description...", ...]
+No markdown. No explanation. Just the JSON array."""
 
         completion = (
             str(self.generate_response(prompt))
