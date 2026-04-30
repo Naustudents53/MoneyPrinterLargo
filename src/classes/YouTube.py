@@ -1272,16 +1272,18 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         """
         Wrap an AI image prompt with the channel's visual style. Civilization-specific
         style (detected from self.subject) takes precedence; falls back to the
-        per-channel `image_style`. The style is placed BOTH at the start and end
-        of the prompt — diffusion models weight earlier tokens more, so a trailing
-        suffix alone gets overpowered by photographic terms inside the scene
-        description. Returns the original prompt if neither applies. Output is
-        capped to ~1000 chars to fit provider limits.
+        per-channel `image_style`. The SCENE description goes FIRST so the diffusion
+        model treats the literal scene content from the script as the dominant
+        subject; the art style follows as a rendering modifier. A previous version
+        put the style at the start, which caused the model to generate generic
+        civilization art instead of the specific scene from the script section.
+        Output is capped to ~1000 chars to fit provider limits.
         """
         style = self._detect_civilization_style() or self._image_style
         if not style:
             return prompt
-        combined = f"{style}. Scene: {prompt.rstrip(', .')}. Render strictly in this style: {style}"
+        scene = prompt.rstrip(', .')
+        combined = f"{scene}. Depicted as {style}. The scene described above is the subject; the style is only how it is rendered."
         return combined[:1000]
 
     def _detect_civilization_style(self) -> str:
