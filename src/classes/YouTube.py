@@ -4075,6 +4075,8 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         Returns True if any custom-thumbnail signal is detected.
         """
         try:
+            # Primary signal: scoped <img> elements inside the thumbnail editor whose
+            # src is NOT an i.ytimg.com auto-generated URL.
             imgs = driver.find_elements(
                 By.CSS_SELECTOR,
                 "ytcp-thumbnails-compact-editor img, "
@@ -4089,12 +4091,18 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     src = (img.get_attribute("src") or "").lower()
                 except Exception:
                     continue
+                if not src:
+                    continue
                 # Auto-generated thumbnails from YT come from i.ytimg.com / i9.ytimg.com.
-                # A custom upload renders as a blob:, data:, or googleusercontent URL.
+                # Anything else inside the editor area (blob:, data:, googleusercontent,
+                # lh3.google, or a YT-internal upload URL) means a custom upload rendered.
+                if "ytimg.com" in src:
+                    continue
                 if (src.startswith("blob:")
                         or src.startswith("data:image")
                         or "googleusercontent.com" in src
-                        or "lh3.google" in src):
+                        or "lh3.google" in src
+                        or "yt3.ggpht.com" in src):
                     return True
             # Alternative signal: any control that only renders once a custom
             # thumbnail is in place (Replace / Edit / Options menu).
@@ -4725,13 +4733,46 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 warning(f"Could not set kids option: {e}")
 
             # Step 6.5: Upload custom thumbnail (long videos only — set by generate_thumbnail()).
+            # Strategy: send_keys() returning without exception is NOT proof that YouTube
+            # accepted the file. Empirically, the file can fail to register (busy uploader
+            # widget, oversized file, channel not verified, stale input element) while
+            # send_keys silently succeeds, and clicking Next then publishes with the
+            # auto-generated thumbnail. So: visual verification is REQUIRED before we
+            # leave the Details panel; if we can't verify, we retry the whole upload.
             thumb_path = getattr(self, "thumbnail_path", "")
             self._thumbnail_uploaded = False
             if thumb_path and os.path.isfile(thumb_path):
                 abs_thumb = os.path.abspath(thumb_path)
+
+                # Pre-flight: YouTube silently rejects thumbnails over 2 MB. If we're
+                # over the limit, re-encode as JPEG (quality 90) into a sibling path
+                # so the original PNG is preserved for manual recovery.
+                YT_THUMB_MAX_BYTES = 2 * 1024 * 1024
+                try:
+                    fsize = os.path.getsize(abs_thumb)
+                except Exception:
+                    fsize = 0
+                if fsize > YT_THUMB_MAX_BYTES:
+                    warning(
+                        f"\t=> Thumbnail is {fsize/1024/1024:.2f} MB (>2 MB cap); "
+                        "re-encoding as JPEG to fit YouTube's limit."
+                    )
+                    try:
+                        from PIL import Image as _PilImage
+                        jpg_path = os.path.splitext(abs_thumb)[0] + "_yt.jpg"
+                        with _PilImage.open(abs_thumb) as im:
+                            im.convert("RGB").save(jpg_path, "JPEG", quality=90, optimize=True)
+                        if os.path.getsize(jpg_path) <= YT_THUMB_MAX_BYTES:
+                            abs_thumb = jpg_path
+                            info(f"\t=> Re-encoded thumbnail: {abs_thumb} ({os.path.getsize(jpg_path)/1024/1024:.2f} MB)")
+                        else:
+                            warning(f"\t=> Re-encoded JPEG still over 2 MB; YouTube will likely reject it.")
+                    except Exception as e:
+                        warning(f"\t=> JPEG re-encode failed: {str(e)[:150]}")
+
                 info(f"\t=> Uploading thumbnail: {abs_thumb}")
 
-                # Try to scroll the thumbnail editor into view (it's below title/description).
+                # Scroll the thumbnail editor into view (it's below title/description).
                 try:
                     editor = driver.find_element(
                         By.CSS_SELECTOR,
@@ -4742,20 +4783,13 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 except Exception:
                     pass
 
-                # Empirically, send_keys() on the file input always succeeds in uploading
-                # the thumbnail — what was failing before was the visual verification.
-                # So the strategy is:
-                #   1. Find the input + send_keys (this is the actual upload trigger).
-                #   2. If send_keys raises → it's a real failure → retry once after 120s.
-                #   3. If send_keys succeeds → wait for upload to complete and try to
-                #      verify visually for logging/UX. Verify failure is NOT treated
-                #      as upload failure — we trust send_keys.
-                VERIFY_TIMEOUT_S = 90
+                VERIFY_TIMEOUT_S = 180         # YT can take a while to render the preview
                 VERIFY_POLL_S = 2
-                RETRY_BACKOFF_S = 120
-                MAX_SENDKEYS_ATTEMPTS = 2
-                send_ok = False
-                for attempt in range(1, MAX_SENDKEYS_ATTEMPTS + 1):
+                RETRY_BACKOFF_S = 30
+                MAX_ATTEMPTS = 3
+                accepted = False
+                for attempt in range(1, MAX_ATTEMPTS + 1):
+                    info(f"\t=> Thumbnail upload attempt {attempt}/{MAX_ATTEMPTS}...")
                     try:
                         thumb_input = self._find_thumbnail_input(driver, wait)
                         if thumb_input is None:
@@ -4769,50 +4803,42 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                             thumb_input,
                         )
                         thumb_input.send_keys(abs_thumb)
-                        send_ok = True
-                        info(f"\t=> Thumbnail send_keys OK (attempt {attempt}/{MAX_SENDKEYS_ATTEMPTS}).")
-                        break
+                        info(f"\t=> send_keys dispatched; polling up to {VERIFY_TIMEOUT_S}s for preview...")
                     except Exception as e:
-                        warning(f"\t=> Thumbnail send_keys attempt {attempt}/{MAX_SENDKEYS_ATTEMPTS} failed: {str(e)[:200]}")
-                        if attempt < MAX_SENDKEYS_ATTEMPTS:
-                            info(f"\t=> Waiting {RETRY_BACKOFF_S}s before retry...")
+                        warning(f"\t=> send_keys failed on attempt {attempt}: {str(e)[:200]}")
+                        if attempt < MAX_ATTEMPTS:
                             time.sleep(RETRY_BACKOFF_S)
+                        continue
 
-                if send_ok:
-                    # Trust the upload happened. Try to confirm visually for nicer logs,
-                    # but don't fail the run if we can't detect the preview.
-                    info(f"\t=> Polling up to {VERIFY_TIMEOUT_S}s for thumbnail preview (informational)...")
                     deadline = time.time() + VERIFY_TIMEOUT_S
-                    accepted = False
                     while time.time() < deadline:
                         if self._verify_thumbnail_uploaded(driver):
                             accepted = True
                             break
                         time.sleep(VERIFY_POLL_S)
-                    self._thumbnail_uploaded = True
+
                     if accepted:
-                        success("\t=> Thumbnail visually confirmed on the page.")
+                        success(f"\t=> Thumbnail visually confirmed (attempt {attempt}).")
+                        # Give YouTube Studio a few seconds to commit the upload to its
+                        # internal video draft state. Empirically, navigating away too
+                        # fast can cause the thumbnail to revert to the auto-generated one.
+                        time.sleep(5)
+                        self._thumbnail_uploaded = True
+                        break
                     else:
                         warning(
-                            f"\t=> Thumbnail preview not detected after {VERIFY_TIMEOUT_S}s, "
-                            "but send_keys succeeded — assuming upload OK and continuing."
+                            f"\t=> Thumbnail preview NOT detected after {VERIFY_TIMEOUT_S}s on attempt {attempt}."
                         )
-                        # Save a screenshot so you can verify it actually went through
-                        # if there's any doubt.
-                        try:
-                            debug_path = os.path.join(
-                                ROOT_DIR, "thumbnails",
-                                f"upload_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                            )
-                            driver.save_screenshot(debug_path)
-                            info(f"\t=> Saved screenshot for visual confirmation: {debug_path}")
-                        except Exception:
-                            pass
-                else:
+                        if attempt < MAX_ATTEMPTS:
+                            info(f"\t=> Waiting {RETRY_BACKOFF_S}s before re-trying full upload...")
+                            time.sleep(RETRY_BACKOFF_S)
+
+                if not accepted:
                     error(
-                        f"Thumbnail upload failed: send_keys errored on all {MAX_SENDKEYS_ATTEMPTS} attempts. "
+                        f"Thumbnail upload failed: visual verification never succeeded after {MAX_ATTEMPTS} attempts. "
                         f"The thumbnail file is preserved at:\n    {abs_thumb}\n"
-                        "Open YouTube Studio → your video → Edit → upload it manually."
+                        "Common causes: channel not verified for custom thumbnails, file > 2 MB, "
+                        "or YT Studio DOM changed. Open YouTube Studio → your video → Edit → upload it manually."
                     )
                     try:
                         debug_path = os.path.join(
