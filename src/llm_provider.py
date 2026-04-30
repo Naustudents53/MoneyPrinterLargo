@@ -14,8 +14,64 @@ _disabled_gemini_models: set = set()
 _ollama_think: str | bool | None = None
 
 
+_ollama_autostart_done: bool = False
+
+
+def _ensure_ollama_serve() -> None:
+    """
+    Make sure an `ollama serve` daemon is running before we open a client.
+    Idempotent — only spawns once per process. Used as a safety net for any
+    code path that didn't go through `warmup_ollama_model` first.
+    """
+    global _ollama_autostart_done
+    if _ollama_autostart_done:
+        return
+    _ollama_autostart_done = True
+
+    base = get_ollama_base_url().rstrip("/")
+    try:
+        if requests.get(f"{base}/api/tags", timeout=2).status_code == 200:
+            return
+    except Exception:
+        pass
+
+    import subprocess as _sp
+    import sys as _sys
+    import time as _time
+    import shutil as _shutil
+
+    if not _shutil.which("ollama"):
+        print("  [!] `ollama` CLI not found on PATH — cannot auto-start daemon")
+        return
+
+    print("  [+] Starting `ollama serve` (auto)")
+    try:
+        kwargs = dict(
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+            stdin=_sp.DEVNULL,
+            close_fds=True,
+        )
+        if _sys.platform == "win32":
+            kwargs["creationflags"] = 0x00000008 | 0x00000200
+        _sp.Popen(["ollama", "serve"], **kwargs)
+    except Exception as e:
+        print(f"  [!] failed to launch `ollama serve`: {e}")
+        return
+
+    deadline = _time.time() + 30
+    while _time.time() < deadline:
+        try:
+            if requests.get(f"{base}/api/tags", timeout=2).status_code == 200:
+                return
+        except Exception:
+            pass
+        _time.sleep(1)
+
+
 def _ollama_client():
     import ollama
+    _ensure_ollama_serve()
     return ollama.Client(host=get_ollama_base_url())
 
 
@@ -56,6 +112,82 @@ def get_active_model() -> str | None:
 def get_active_provider() -> str:
     """Return the runtime LLM provider (override or configured)."""
     return _llm_provider or get_llm_provider() or "ollama"
+
+
+def warmup_ollama_model(model: str) -> None:
+    """
+    Make sure the Ollama daemon is up and the requested model is preloaded
+    via `ollama run <model>`. On Windows, the first CLI call also bootstraps
+    the desktop app — but it exits before the HTTP server is listening, so
+    we poll `/api/tags` until reachable before issuing the actual warmup.
+    For cloud models (`:cloud` suffix) the warmup also forces the auth
+    handshake. Failures are logged, never raised.
+    """
+    import subprocess
+    import time
+
+    base = get_ollama_base_url().rstrip("/")
+    tags_url = f"{base}/api/tags"
+
+    def _server_up() -> bool:
+        try:
+            return requests.get(tags_url, timeout=3).status_code == 200
+        except Exception:
+            return False
+
+    # Step 1: if the server is down, start `ollama serve` as a detached
+    # background process. Using `ollama run X hi` to bootstrap is unreliable
+    # on Windows — it spawns a transient daemon that dies when the run exits,
+    # leaving subsequent HTTP calls with no server to talk to.
+    if not _server_up():
+        print(f"  [+] Bootstrapping Ollama daemon (ollama serve)")
+        import sys as _sys
+        try:
+            popen_kwargs = dict(
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                close_fds=True,
+            )
+            if _sys.platform == "win32":
+                # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — survives this
+                # Python process so the daemon stays up across runs.
+                popen_kwargs["creationflags"] = 0x00000008 | 0x00000200
+            subprocess.Popen(["ollama", "serve"], **popen_kwargs)
+        except FileNotFoundError:
+            print(f"  [!] `ollama` CLI not found on PATH — skipping warmup for {model}")
+            return
+        except Exception as e:
+            print(f"  [!] failed to launch `ollama serve`: {e}")
+
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            if _server_up():
+                print(f"  [+] Ollama daemon reachable at {base}")
+                break
+            time.sleep(1)
+        else:
+            print(f"  [!] Ollama daemon not reachable at {base} after 60s — skipping warmup")
+            return
+
+    # Step 2: server is up — preload the model with a synchronous one-shot.
+    print(f"  [+] ollama run {model}")
+    try:
+        result = subprocess.run(
+            ["ollama", "run", model, "hi"],
+            capture_output=True,
+            timeout=180,
+            text=True,
+        )
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "").strip()
+            print(f"  [!] ollama run {model} exited {result.returncode}: {err[:200]}")
+    except FileNotFoundError:
+        print(f"  [!] `ollama` CLI not found on PATH — skipping warmup for {model}")
+    except subprocess.TimeoutExpired:
+        print(f"  [!] ollama run {model} timed out during warmup (continuing)")
+    except Exception as e:
+        print(f"  [!] ollama warmup failed for {model}: {e}")
 
 
 @contextmanager
@@ -230,7 +362,19 @@ def _generate_text_ollama(prompt: str, model: str = None) -> str:
     else:
         response = client.chat(model=model, messages=messages)
 
-    return response["message"]["content"].strip()
+    content = (response["message"]["content"] or "").strip()
+
+    # Reasoning models (deepseek-v*, etc.) sometimes spend the whole budget on
+    # `thinking` and emit empty content. Retry once with thinking disabled so
+    # the model is forced to produce a direct answer.
+    if not content:
+        try:
+            response = client.chat(model=model, messages=messages, think=False)
+            content = (response["message"]["content"] or "").strip()
+        except TypeError:
+            pass
+
+    return content
 
 
 def _generate_text_gemini(prompt: str) -> str:
