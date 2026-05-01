@@ -943,15 +943,52 @@ CRITICAL RULES:
         Returns:
             metadata (dict): The generated metadata.
         """
-        title = self.generate_response(
-            f"Please generate a YouTube Video Title for the following subject: {self.subject}. "
-            f"Optionally include 1-2 relevant hashtags at the end (but only if they fit naturally). "
-            f"Only return the title, nothing else. Limit the title under 80 characters. Be concise. "
-            f"YOU MUST WRITE THE TITLE IN {self.language}. Do NOT wrap the title in quotes. Do NOT start or end with any quote character."
-        )
+        # Pass the actual script to the title prompt \u2014 without it, the model
+        # invents clickbait promises ("5 curiosidades", "3 secretos") that
+        # the script never delivers. The title must reflect what the video
+        # actually says.
+        title_prompt = f"""Generate a YouTube Short title for this video.
+
+SUBJECT: {self.subject}
+
+ACTUAL SCRIPT (the title must match what THIS script delivers):
+\"\"\"
+{self.script}
+\"\"\"
+
+ABSOLUTE RULES:
+- The title must accurately describe what the script says. Do NOT promise content that is not in the script.
+- FORBIDDEN: "X curiosidades", "X secretos", "X razones", "X cosas", "X datos", "X hechos", "Top X", "X que..." or ANY list-form promise (in {self.language} or English) UNLESS the script actually presents that exact number of distinct enumerated items. If the script tells ONE continuous story, the title MUST NOT promise a list.
+- FORBIDDEN: "no vas a creer", "te volar\u00e1 la cabeza", "el secreto que nadie te cont\u00f3", and similar empty hype that the script does not back up.
+- The title can be intriguing, but it must be HONEST \u2014 every promise in the title must be delivered by the script.
+- Optionally include 1-2 relevant hashtags at the end (only if they fit naturally).
+- Under 80 characters.
+- WRITE ENTIRELY IN {self.language}. Do NOT wrap the title in quotes. No leading/trailing quote characters.
+- Only return the title text, nothing else."""
+
+        title = self.generate_response(title_prompt)
 
         # Strip any quotes the LLM might add (regular, curly, single)
         title = re.sub(r'^[\"\'\u201c\u201d\u2018\u2019]+|[\"\'\u201c\u201d\u2018\u2019]+$', '', title.strip()).strip()
+
+        # Belt-and-suspenders enforcement: even with the prompt above, some
+        # models still slip in "X <noun>" list promises. If the title makes
+        # that promise but the script doesn't enumerate items, regenerate
+        # once with a stricter instruction.
+        if self._title_promises_list(title) and not self._script_has_enumerated_items(self.script):
+            warning(
+                f"Title promises a list but script does not enumerate items: '{title}' \u2014 regenerating."
+            )
+            retry = self.generate_response(
+                title_prompt
+                + "\n\nPREVIOUS ATTEMPT WAS REJECTED because it promised a numbered list that the script does NOT deliver. "
+                + "Your script tells ONE continuous story \u2014 the title must reflect that. "
+                + "Do NOT use any number followed by a noun ('5 curiosidades', '3 razones', etc.). "
+                + "Do NOT use 'Top N' or 'N que...'. Try again."
+            )
+            retry = re.sub(r'^[\"\'\u201c\u201d\u2018\u2019]+|[\"\'\u201c\u201d\u2018\u2019]+$', '', retry.strip()).strip()
+            if retry and not self._title_promises_list(retry):
+                title = retry
 
         # If truncation would cut a hashtag, remove hashtags instead
         if len(title) > 100:
@@ -1536,6 +1573,64 @@ No markdown. No explanation. Just the JSON array."""
                 continue
             out.add(t)
         return out
+
+    def _title_promises_list(self, title: str) -> bool:
+        """True if the title promises a numbered list of items.
+        Catches 'N <noun>' patterns ('5 curiosidades', '3 secretos', '7 razones')
+        and 'Top N' constructions in Spanish/English. We trigger only on small
+        single-digit lists (the typical clickbait range) — '1989' or 'mil años'
+        in a historical title shouldn't false-positive."""
+        if not title:
+            return False
+        t = title.lower()
+        # "N + noun" where N is 2-9 (single-digit clickbait counts).
+        list_nouns = (
+            r"curiosidad(?:es)?|secret[oa]s?|raz(?:ón|on|ones)|cosas?|"
+            r"dat[oa]s?|hech[oa]s?|reglas?|tips?|consejos?|trucos?|"
+            r"misterios?|claves?|pasos?|errores?|verdades?|mitos?|"
+            r"thing|things|reason|reasons|secret|secrets|fact|facts|"
+            r"rule|rules|tip|tips|step|steps|truth|truths|myth|myths"
+        )
+        if re.search(rf"\b[2-9]\s+(?:{list_nouns})\b", t):
+            return True
+        # "Top N" in Spanish/English.
+        if re.search(r"\btop\s+[2-9]\b", t):
+            return True
+        # "N <noun> que..." — catches "5 curiosidades que te sorprenderán" even
+        # when the noun isn't in the list above.
+        if re.search(r"\b[2-9]\s+\w{4,}\s+que\b", t):
+            return True
+        return False
+
+    def _script_has_enumerated_items(self, script: str) -> bool:
+        """Crude check: does the script actually list at least 3 enumerated items?
+        Looks for explicit ordinal/list markers ('primero', 'segundo', 'tercero',
+        'first', 'second', 'third', 'número uno', 'one:', '1.', '2.', etc.).
+        If it doesn't find them, we conclude the script tells one story and a
+        list-form title is dishonest."""
+        if not script:
+            return False
+        s = script.lower()
+        markers = 0
+        # Spanish ordinals as words
+        for w in ("primero", "primera", "segundo", "segunda", "tercero", "tercera",
+                  "cuarto", "cuarta", "quinto", "quinta", "sexto", "sexta",
+                  "séptimo", "séptima", "octavo", "octava", "noveno", "novena"):
+            if re.search(rf"\b{w}\b", s):
+                markers += 1
+        # English ordinals
+        for w in ("first", "second", "third", "fourth", "fifth", "sixth",
+                  "seventh", "eighth", "ninth"):
+            if re.search(rf"\b{w}\b", s):
+                markers += 1
+        # Numbered list markers ("1.", "1)", "1 -")
+        markers += len(re.findall(r"(?:^|\s)[1-9][\.\)\-:]\s", s))
+        # "número uno/dos/tres" / "number one/two/three"
+        for w in ("uno", "dos", "tres", "cuatro", "cinco",
+                  "one", "two", "three", "four", "five"):
+            if re.search(rf"\bn[uú]mero\s+{w}\b|\bnumber\s+{w}\b", s):
+                markers += 1
+        return markers >= 3
 
     def _is_relevant(self, query: str, *result_texts: str) -> bool:
         """Strict relevance check used by every photo provider.
