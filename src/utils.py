@@ -335,6 +335,14 @@ def rem_temp_files() -> None:
 
     files = os.listdir(mp_dir)
 
+    # Assets referenced by any active (in_progress|failed) checkpoint must
+    # survive cleanup so resume_video.py can pick up where the run left off.
+    try:
+        from checkpoint import get_protected_paths
+        protected = get_protected_paths()
+    except Exception:
+        protected = set()
+
     # Keep .json (cache state) AND .mp4 (rendered videos pending re-upload).
     # MP4s are preserved so the user can pick "Re-upload last generated video"
     # in the menu even after the menu loop has cycled.
@@ -342,8 +350,11 @@ def rem_temp_files() -> None:
     for file in files:
         if file.lower().endswith(KEEP_EXT):
             continue
+        full = os.path.join(mp_dir, file)
+        if os.path.abspath(full) in protected:
+            continue
         try:
-            os.remove(os.path.join(mp_dir, file))
+            os.remove(full)
         except Exception:
             pass
 

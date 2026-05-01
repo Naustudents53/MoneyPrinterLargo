@@ -60,6 +60,15 @@ def _trunc(s, n: int) -> str:
     return s if len(s) <= n else s[: max(1, n - 1)] + "…"
 
 
+def prompt_int(prompt: str) -> int:
+    while True:
+        raw = question(prompt).strip()
+        try:
+            return int(raw)
+        except ValueError:
+            print(f"Invalid input: {raw!r}. Please enter a number.")
+
+
 def _browse_movie_catalog(catalog: MovieCatalog, account_id: str, ms, tts) -> None:
     """
     Paginated picker over the archive.org catalog. Shows 10 entries per page,
@@ -255,7 +264,7 @@ def main():
         }
 
     # Get user input
-    # user_input = int(question("Select an option: "))
+    # user_input = prompt_int("Select an option: ")
     valid_input = False
     while not valid_input:
         try:
@@ -406,7 +415,7 @@ def main():
                     info("=================================\n", False)
 
                     # Get user input
-                    user_input = int(question("Select an option: "))
+                    user_input = prompt_int("Select an option: ")
                     tts = TTS()
 
                     if user_input == 1:
@@ -610,7 +619,7 @@ def main():
 
                         info("=================================\n", False)
 
-                        user_input = int(question("Select an Option: "))
+                        user_input = prompt_int("Select an Option: ")
 
                         cron_script_path = os.path.join(ROOT_DIR, "src", "cron.py")
                         command = ["python", cron_script_path, "youtube", selected_account['id'], get_active_model()]
@@ -712,7 +721,7 @@ def main():
                     info("=================================\n", False)
 
                     # Get user input
-                    user_input = int(question("Select an option: "))
+                    user_input = prompt_int("Select an option: ")
 
                     if user_input == 1:
                         twitter.post()
@@ -740,7 +749,7 @@ def main():
 
                         info("=================================\n", False)
 
-                        user_input = int(question("Select an Option: "))
+                        user_input = prompt_int("Select an Option: ")
 
                         cron_script_path = os.path.join(ROOT_DIR, "src", "cron.py")
                         command = ["python", cron_script_path, "twitter", selected_account['id'], get_active_model()]
@@ -931,7 +940,7 @@ def main():
                         print(colored(f" {idx + 1}. {opt}", "cyan"))
                     info("=================================\n", False)
 
-                    movie_choice = int(question("Select an option: "))
+                    movie_choice = prompt_int("Select an option: ")
                     tts = TTS()
 
                     if movie_choice == 1:
@@ -1054,7 +1063,7 @@ def main():
                         for idx, cron_opt in enumerate(MOVIE_CRON_OPTIONS):
                             print(colored(f" {idx + 1}. {cron_opt}", "cyan"))
                         info("=================================\n", False)
-                        cron_choice = int(question("Select an Option: "))
+                        cron_choice = prompt_int("Select an Option: ")
                         cron_script_path = os.path.join(ROOT_DIR, "src", "cron.py")
                         command = ["python", cron_script_path, "movies", selected_account["id"], get_active_model()]
 

@@ -19,6 +19,7 @@ from .Tts import TTS
 from llm_provider import generate_text
 from config import *
 from status import *
+import checkpoint as _ckpt
 from uuid import uuid4
 from constants import *
 from typing import List
@@ -326,6 +327,12 @@ class YouTube:
         self.word_timestamps = None
         self.thumbnail_path: str = ""
         self.active_series: dict = None
+        # Checkpoint run id. None outside an active generation. Set by
+        # generate_video / _generate_long_video_inner, or pre-populated by
+        # resume_video.py before invoking _resume_long_video / _resume_short.
+        self._run_id: str = None
+        # Stages already completed when resuming. Empty for fresh runs.
+        self._resume_skip: set = set()
 
         # Initialize the Firefox profile
         self.options: Options = Options()
@@ -4088,113 +4095,146 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         # Mark this as a long video so upload_video knows to wait longer for the upload to finish.
         self._is_long_video = True
 
-        # Step 1: Generate Topic (or use the user-provided one)
-        info("\n[1/7] Generating topic...")
-        if custom_topic and custom_topic.strip():
-            self.subject = custom_topic.strip()
-            info(f" => Using custom topic: {self.subject}")
-        else:
-            self.generate_topic()
-        if not self.subject or not self.subject.strip():
-            error(
-                "Aborting long video: no unique topic available. "
-                "No video will be generated or uploaded."
+        # Checkpoint: start a fresh run if not resuming. resume_video.py
+        # pre-populates self._run_id and self._resume_skip before calling.
+        skip = self._resume_skip
+        if not self._run_id:
+            self._run_id = _ckpt.start_run(
+                self._account_uuid, "long",
+                params={"custom_topic": custom_topic, "language": self._language},
             )
-            self.video_path = ""
-            return ""
 
-        # Series detection: if subject starts with "[series_id] ...", strip the
-        # prefix and remember which series this video belongs to. generate_long_metadata
-        # and generate_thumbnail use the series template/overlay instead of asking
-        # the LLM to invent a title or overlay text.
-        self.active_series, self.subject = resolve_series(self.subject)
-        if self.active_series:
-            info(f" => Series: {self.active_series.get('id', '')}")
-
-        success(f" Topic: {self.subject}")
-
-        # Step 2: Generate long script with chapters
-        info("\n[2/7] Generating long-form script...")
-        self.generate_long_script()
-
-        # Step 3: Generate metadata
-        info("\n[3/7] Generating title & description...")
-        self.generate_long_metadata()
-        success(f" Title: {self.metadata['title']}")
-
-        # Step 4: Generate clickbait thumbnail (1280x720)
-        info("\n[4/7] Generating thumbnail...")
         try:
-            self.generate_thumbnail()
-        except Exception as e:
-            warning(f"Thumbnail generation failed: {str(e)[:200]} (will upload without custom thumbnail)")
-            self.thumbnail_path = ""
+            current_stage = "topic"
 
-        # Step 5: Generate image prompts
-        info("\n[5/7] Generating image prompts...")
-        self.images = []  # Reset images
-        self.generate_long_prompts()
+            # Step 1: Generate Topic (or use the user-provided one)
+            if "topic" not in skip:
+                info("\n[1/7] Generating topic...")
+                if custom_topic and custom_topic.strip():
+                    self.subject = custom_topic.strip()
+                    info(f" => Using custom topic: {self.subject}")
+                else:
+                    self.generate_topic()
+                if not self.subject or not self.subject.strip():
+                    error(
+                        "Aborting long video: no unique topic available. "
+                        "No video will be generated or uploaded."
+                    )
+                    self.video_path = ""
+                    _ckpt.delete(self._run_id)
+                    self._run_id = None
+                    return ""
 
-        # Step 6: Generate images (landscape 1920x1080)
-        info("\n[6/7] Generating images...")
-        self.generate_long_images(self.image_prompts)
+                # Series detection: if subject starts with "[series_id] ...", strip the
+                # prefix and remember which series this video belongs to.
+                self.active_series, self.subject = resolve_series(self.subject)
+                if self.active_series:
+                    info(f" => Series: {self.active_series.get('id', '')}")
 
-        # Step 7: Generate TTS with natural voice
-        info("\n[7/7] Generating narration audio...")
-        path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".wav")
+                success(f" Topic: {self.subject}")
+                _ckpt.save_stage(self._run_id, "topic", {
+                    "subject": self.subject,
+                    "active_series": self.active_series,
+                })
 
-        # Clean script for TTS: remove ALL non-narration content
-        tts_script = self._clean_script_for_tts(self.script)
+            # Step 2: Generate long script with chapters
+            current_stage = "script"
+            if "script" not in skip:
+                info("\n[2/7] Generating long-form script...")
+                self.generate_long_script()
+                _ckpt.save_stage(self._run_id, "script", {"script": self.script})
 
-        # Fallback: if cleaning wiped everything, use the raw script
-        if not tts_script or len(tts_script.split()) < 50:
-            warning("TTS cleaning removed too much content, using raw script")
-            tts_script = re.sub(r'\[.*?\]', '', self.script).strip()
+            # Step 3: Generate metadata
+            current_stage = "metadata"
+            if "metadata" not in skip:
+                info("\n[3/7] Generating title & description...")
+                self.generate_long_metadata()
+                success(f" Title: {self.metadata['title']}")
+                _ckpt.save_stage(self._run_id, "metadata", {"metadata": self.metadata})
 
-        # Expand spoken symbols ("90%" -> "90 por ciento") so TTS verbalizes them.
-        tts_script = expand_spoken_symbols(tts_script)
+            # Step 4: Generate clickbait thumbnail (1280x720)
+            current_stage = "thumbnail"
+            if "thumbnail" not in skip:
+                info("\n[4/7] Generating thumbnail...")
+                try:
+                    self.generate_thumbnail()
+                except Exception as e:
+                    warning(f"Thumbnail generation failed: {str(e)[:200]} (will upload without custom thumbnail)")
+                    self.thumbnail_path = ""
+                _ckpt.save_stage(self._run_id, "thumbnail", {"thumbnail_path": self.thumbnail_path})
 
-        # Expand regnal numerals ("Luis XIV" -> "Luis catorce") for correct TTS pronunciation
-        tts_script = expand_regnal_numerals(tts_script)
+            # Step 5: Generate image prompts
+            current_stage = "prompts"
+            if "prompts" not in skip:
+                info("\n[5/7] Generating image prompts...")
+                self.images = []  # Reset images
+                self.generate_long_prompts()
+                _ckpt.save_stage(self._run_id, "prompts", {
+                    "image_prompts": self.image_prompts,
+                    "images": [],
+                })
 
-        # Expand digit numbers to Spanish words ("4.500" -> "cuatro mil quinientos",
-        # "1453" -> "mil cuatrocientos cincuenta y tres") so the TTS doesn't read
-        # them digit-by-digit ("4 punto 5 0 0").
-        tts_script = expand_spanish_numbers(tts_script)
+            # Step 6: Generate images (landscape 1920x1080)
+            current_stage = "images"
+            if "images" not in skip:
+                info("\n[6/7] Generating images...")
+                self.generate_long_images(self.image_prompts)
+                _ckpt.save_stage(self._run_id, "images", {"images": list(self.images)})
 
-        if get_verbose():
-            info(f" => TTS script preview (first 200 chars): {tts_script[:200]}")
+            # Step 7: Generate TTS with natural voice
+            current_stage = "tts"
+            if "tts" not in skip:
+                info("\n[7/7] Generating narration audio...")
+                path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".wav")
 
-        # Per-channel long-video voice (or fall back to the default deep narrator).
-        from .Tts import LONG_VIDEO_NARRATOR
-        long_vid = self._resolve_voice(self._long_voice) or LONG_VIDEO_NARRATOR
-        # Locale guard: Edge-TTS returns NoAudioReceived if you ship Spanish
-        # text to an English voice (e.g. "Bruno" -> en-US-DavisNeural). When
-        # the channel language is Spanish, force a Spanish narrator.
-        lang = (self._language or "").strip().lower()
-        is_spanish = lang.startswith("esp") or lang in {"es", "spanish"}
-        if is_spanish and not long_vid.lower().startswith("es-"):
-            warning(f"Voice '{long_vid}' is not Spanish but channel language is '{self._language}'. Falling back to {LONG_VIDEO_NARRATOR}.")
-            long_vid = LONG_VIDEO_NARRATOR
-        info(f" => Using long-video voice: {long_vid}")
-        tts_instance.synthesize_long(tts_script, path, voice_id=long_vid)
-        self.tts_path = path
+                # Clean script for TTS: remove ALL non-narration content
+                tts_script = self._clean_script_for_tts(self.script)
 
-        if os.path.exists(path) and os.path.getsize(path) > 1000:
-            audio_dur = AudioFileClip(path).duration
-            info(f" => Audio duration: {audio_dur:.0f} seconds ({audio_dur/60:.1f} min)")
-        else:
-            raise RuntimeError(f"TTS failed to generate audio file at {path}")
+                # Fallback: if cleaning wiped everything, use the raw script
+                if not tts_script or len(tts_script.split()) < 50:
+                    warning("TTS cleaning removed too much content, using raw script")
+                    tts_script = re.sub(r'\[.*?\]', '', self.script).strip()
 
-        # Step 7: Combine everything
-        info("\n[+] Assembling final video...")
-        video_path = self.combine_long()
+                tts_script = expand_spoken_symbols(tts_script)
+                tts_script = expand_regnal_numerals(tts_script)
+                tts_script = expand_spanish_numbers(tts_script)
 
-        self.video_path = os.path.abspath(video_path)
-        self._save_metadata_sidecar()
-        success(f"\n=> Long video generated: {video_path}")
+                if get_verbose():
+                    info(f" => TTS script preview (first 200 chars): {tts_script[:200]}")
 
-        return video_path
+                from .Tts import LONG_VIDEO_NARRATOR
+                long_vid = self._resolve_voice(self._long_voice) or LONG_VIDEO_NARRATOR
+                lang = (self._language or "").strip().lower()
+                is_spanish = lang.startswith("esp") or lang in {"es", "spanish"}
+                if is_spanish and not long_vid.lower().startswith("es-"):
+                    warning(f"Voice '{long_vid}' is not Spanish but channel language is '{self._language}'. Falling back to {LONG_VIDEO_NARRATOR}.")
+                    long_vid = LONG_VIDEO_NARRATOR
+                info(f" => Using long-video voice: {long_vid}")
+                tts_instance.synthesize_long(tts_script, path, voice_id=long_vid)
+                self.tts_path = path
+
+                if os.path.exists(path) and os.path.getsize(path) > 1000:
+                    audio_dur = AudioFileClip(path).duration
+                    info(f" => Audio duration: {audio_dur:.0f} seconds ({audio_dur/60:.1f} min)")
+                else:
+                    raise RuntimeError(f"TTS failed to generate audio file at {path}")
+                _ckpt.save_stage(self._run_id, "tts", {"tts_path": self.tts_path})
+
+            # Step 8: Combine everything
+            current_stage = "combine"
+            if "combine" not in skip:
+                info("\n[+] Assembling final video...")
+                video_path = self.combine_long()
+                self.video_path = os.path.abspath(video_path)
+                self._save_metadata_sidecar()
+                success(f"\n=> Long video generated: {video_path}")
+                _ckpt.save_stage(self._run_id, "combine", {"video_path": self.video_path})
+
+            return self.video_path
+
+        except BaseException as e:
+            _ckpt.mark_failed(self._run_id, current_stage, e)
+            raise
 
     def _verify_thumbnail_uploaded(self, driver) -> bool:
         """
@@ -5363,12 +5403,16 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     warning(" → Verify in YouTube Studio that the short shows as Public/Unlisted,")
                     warning("   then close Firefox manually.")
                     warning("=" * 60)
+            _ckpt.mark_completed(self._run_id)
+            self._run_id = None
+            self._resume_skip = set()
             return True
 
         except Exception as e:
             import traceback
             error(f"Upload failed: {e}")
             traceback.print_exc()
+            _ckpt.mark_failed(self._run_id, "uploaded", e)
             # DO NOT quit the driver on exception — the upload may still be in flight
             # in the background and closing Firefox would abort it. Keep the browser
             # open in BOTH long-video and short modes so the user can confirm what
