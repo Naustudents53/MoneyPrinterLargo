@@ -1,0 +1,60 @@
+# Optional neural TTS providers for ultra-natural Spanish narration.
+# These pull in PyTorch and large models (~3-5 GB total). Install only if you
+# set "tts_provider" to "xtts_v2" or "openvoice_v2" in config.json.
+#
+# Install order matters. Run these commands in sequence:
+#
+#   venv/Scripts/python.exe -m pip install coqui-tts torchaudio torchcodec
+#   venv/Scripts/python.exe -m pip install "transformers<5"
+#   venv/Scripts/python.exe -m pip install fugashi[unidic-lite] cn2an jieba pypinyin g2p_en \
+#       anyascii cached_path mecab-python3 unidic-lite num2words pykakasi langid \
+#       eng_to_ipa "gruut[de,es,fr]" unidecode jamo loguru pydub wavmark \
+#       whisper-timestamped
+#   venv/Scripts/python.exe -m pip install --no-deps git+https://github.com/myshell-ai/MeloTTS.git
+#   venv/Scripts/python.exe -m pip install --no-deps git+https://github.com/myshell-ai/OpenVoice.git
+#
+# Pre-fetch silero-vad (needed by OpenVoice's VAD-based speaker-embedding extractor):
+#   venv/Scripts/python.exe -c "import torch; torch.hub.load('snakers4/silero-vad', 'silero_vad', trust_repo=True)"
+#
+# Download OpenVoice v2 checkpoints (places base_speakers/ses/*.pth + converter/):
+#   venv/Scripts/python.exe -c "from huggingface_hub import snapshot_download; \
+#       snapshot_download('myshell-ai/OpenVoiceV2', local_dir='models/openvoice_v2')"
+#
+# FFmpeg shared DLLs (Windows): torchcodec on torch>=2.9 needs avcodec/avformat
+# DLLs reachable on PATH. Static-only FFmpeg builds (winget Gyan.FFmpeg full)
+# do NOT work. Place DLLs in models/ffmpeg/ — Tts.py registers that directory
+# automatically via os.add_dll_directory.
+#
+# Download from https://github.com/GyanD/codexffmpeg/releases (use the
+# "*-full_build-shared.zip" asset, FFmpeg 7.x), extract bin/*.dll into
+# models/ffmpeg/.
+
+# --- Coqui XTTS v2 ---
+# License: CPML (non-commercial unless you obtain a commercial license).
+coqui-tts>=0.27
+torchaudio>=2.1
+torchcodec>=0.10
+"transformers<5"
+
+# --- OpenVoice v2 + MeloTTS ---
+# License: MIT. MeloTTS / OpenVoice are NOT on PyPI — install from git above.
+fugashi[unidic-lite]
+cn2an
+jieba
+pypinyin
+g2p_en
+anyascii
+cached_path
+mecab-python3
+unidic-lite
+num2words
+pykakasi
+langid
+eng_to_ipa
+gruut[de,es,fr]
+unidecode
+jamo
+loguru
+pydub
+wavmark
+whisper-timestamped

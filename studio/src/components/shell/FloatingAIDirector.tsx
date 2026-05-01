@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, Send, Minimize2 } from "lucide-react";
+import { Sparkles, Send, Minimize2, Terminal } from "lucide-react";
 
 interface Message {
   id: string;
@@ -33,38 +33,156 @@ export function FloatingAIDirector() {
     setThinking(true);
     await new Promise((r) => setTimeout(r, 1200 + Math.random() * 800));
     setThinking(false);
-    setMessages((p) => [...p, { id: crypto.randomUUID(), role: "assistant", content: SAMPLE_RESPONSES[Math.floor(Math.random() * SAMPLE_RESPONSES.length)] }]);
+    setMessages((p) => [
+      ...p,
+      {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: SAMPLE_RESPONSES[Math.floor(Math.random() * SAMPLE_RESPONSES.length)],
+      },
+    ]);
   };
 
   if (minimized) {
-    return <motion.button className="fixed bottom-6 right-6 w-3 h-3 rounded-full bg-accent-purple shadow-glow-purple z-50" onClick={() => setMinimized(false)} whileHover={{ scale: 2 }} />;
+    return (
+      <motion.button
+        className="fixed bottom-6 right-6 w-3 h-3 rounded-full z-50"
+        style={{
+          background: "linear-gradient(135deg, #7C3AED, #3B82F6)",
+          boxShadow: "0 0 16px rgba(124,58,237,0.5)",
+        }}
+        onClick={() => setMinimized(false)}
+        whileHover={{ scale: 2.5 }}
+      />
+    );
   }
 
   return (
     <div className="fixed bottom-6 right-6 z-50">
       <AnimatePresence>
         {expanded && (
-          <motion.div className="absolute bottom-16 right-0 w-80 bg-surface-overlay border border-border-default rounded-2xl shadow-xl overflow-hidden" initial={{ opacity: 0, y: 20, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 20, scale: 0.95 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
-              <span className="text-sm font-medium text-text-primary flex items-center gap-2"><Sparkles size={14} className="text-accent-purple" />AI Director</span>
-              <button onClick={() => setMinimized(true)} className="text-text-tertiary hover:text-text-primary transition-colors"><Minimize2 size={14} /></button>
+          <motion.div
+            className="absolute bottom-16 right-0 w-[320px] overflow-hidden"
+            style={{
+              background: "linear-gradient(180deg, rgba(28,28,43,0.98), rgba(20,20,35,0.98))",
+              border: "1px solid rgba(124,58,237,0.2)",
+              borderRadius: "16px",
+              boxShadow: "0 24px 64px rgba(0,0,0,0.6), 0 0 40px rgba(124,58,237,0.1)",
+            }}
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b"
+              style={{ borderColor: "rgba(30,30,50,0.5)" }}
+            >
+              <span className="text-sm font-medium text-text-primary flex items-center gap-2">
+                <Sparkles size={14} className="text-accent-purple-soft" />
+                AI Director
+              </span>
+              <button
+                onClick={() => setMinimized(true)}
+                className="text-text-muted hover:text-text-primary transition-colors"
+              >
+                <Minimize2 size={14} />
+              </button>
             </div>
+
+            {/* Messages */}
             <div className="h-52 overflow-y-auto p-4 space-y-3">
               {messages.length === 0 && (
-                <div className="text-xs text-text-tertiary text-center py-8"><Sparkles size={20} className="mx-auto mb-2 text-accent-purple/50" /><p>Ask the director anything.</p></div>
+                <div className="text-xs text-text-muted text-center py-8">
+                  <Terminal size={20} className="mx-auto mb-2 text-text-muted/50" />
+                  <p>Ask the director anything.</p>
+                </div>
               )}
-              {messages.map((msg) => <motion.div key={msg.id} className={`text-xs px-3 py-2 rounded-xl max-w-[85%] ${msg.role === "user" ? "ml-auto bg-accent-purple/20 text-text-primary" : "bg-surface-raised text-text-secondary"}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>{msg.content}</motion.div>)}
-              {thinking && <div className="flex items-center gap-2 px-3 py-2 text-xs text-text-tertiary"><div className="w-4 h-4 rounded-full border-2 border-accent-purple/30 border-t-accent-purple animate-spin" />Working...</div>}
+              {messages.map((msg) => (
+                <motion.div
+                  key={msg.id}
+                  className={`text-xs px-3 py-2.5 rounded-xl max-w-[85%] leading-relaxed ${
+                    msg.role === "user"
+                      ? "ml-auto"
+                      : ""
+                  }`}
+                  style={
+                    msg.role === "user"
+                      ? {
+                          background: "linear-gradient(135deg, rgba(124,58,237,0.15), rgba(59,130,246,0.08))",
+                          border: "1px solid rgba(124,58,237,0.15)",
+                          color: "#E8E8F0",
+                        }
+                      : {
+                          background: "rgba(255,255,255,0.03)",
+                          border: "1px solid rgba(30,30,50,0.5)",
+                          color: "#9090B0",
+                        }
+                  }
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                >
+                  {msg.content}
+                </motion.div>
+              ))}
+              {thinking && (
+                <div className="flex items-center gap-2 px-3 py-2 text-xs text-text-muted">
+                  <div className="w-4 h-4 rounded-full border-2 border-accent-purple/20 border-t-accent-purple animate-spin" />
+                  Working...
+                </div>
+              )}
             </div>
-            <div className="flex items-center gap-2 px-4 py-3 border-t border-border-subtle">
-              <input ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSend()} placeholder="e.g., make scene 3 more dramatic" className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary outline-none" />
-              <motion.button onClick={handleSend} className="text-accent-purple hover:text-accent-purple-soft transition-colors disabled:opacity-30" whileTap={{ scale: 0.9 }} disabled={!input.trim()}><Send size={16} /></motion.button>
+
+            {/* Input */}
+            <div
+              className="flex items-center gap-2 px-4 py-3 border-t"
+              style={{ borderColor: "rgba(30,30,50,0.5)" }}
+            >
+              <input
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSend()}
+                placeholder="e.g., make scene 3 more dramatic"
+                className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-muted outline-none"
+              />
+              <motion.button
+                onClick={handleSend}
+                className="text-accent-purple-soft hover:text-accent-purple transition-colors disabled:opacity-30"
+                whileTap={{ scale: 0.9 }}
+                disabled={!input.trim()}
+              >
+                <Send size={16} />
+              </motion.button>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-      <motion.button className="w-12 h-12 rounded-full bg-gradient-to-br from-accent-purple to-accent-blue shadow-glow-purple flex items-center justify-center" onClick={() => setExpanded(!expanded)} whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.92 }}
-        animate={thinking ? { boxShadow: ["0 0 20px rgba(124,58,237,0.4)", "0 0 45px rgba(124,58,237,0.8)", "0 0 20px rgba(124,58,237,0.4)"] } : {}}
+
+      {/* FAB */}
+      <motion.button
+        className="w-12 h-12 rounded-full flex items-center justify-center relative overflow-hidden"
+        style={{
+          background: "linear-gradient(135deg, #7C3AED, #5B21B6)",
+          boxShadow: thinking
+            ? "0 0 30px rgba(124,58,237,0.5)"
+            : "0 0 20px rgba(124,58,237,0.3)",
+          border: "1px solid rgba(124,58,237,0.3)",
+        }}
+        onClick={() => setExpanded(!expanded)}
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.92 }}
+        animate={
+          thinking
+            ? {
+                boxShadow: [
+                  "0 0 20px rgba(124,58,237,0.3)",
+                  "0 0 45px rgba(124,58,237,0.6)",
+                  "0 0 20px rgba(124,58,237,0.3)",
+                ],
+              }
+            : {}
+        }
         transition={thinking ? { duration: 1.5, repeat: Infinity } : {}}
       >
         <Sparkles size={20} className="text-white" />

@@ -1,0 +1,265 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { motion } from "framer-motion";
+import { Loader2, Sparkles, Rocket, ChevronDown, Info } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+interface ConfigStageProps {
+  onComplete?: () => void;
+}
+
+interface SeriesItem {
+  id: string;
+  name: string;
+}
+
+interface AccountItem {
+  uuid: string;
+  nickname: string;
+}
+
+interface VoiceItem {
+  id: string;
+  alias: string;
+}
+
+interface PresetItem {
+  id: string;
+  name: string;
+}
+
+export function ConfigStage({ onComplete }: ConfigStageProps) {
+  const [topic, setTopic] = useState("");
+  const [seriesList, setSeriesList] = useState<SeriesItem[]>([]);
+  const [accounts, setAccounts] = useState<AccountItem[]>([]);
+  const [voices, setVoices] = useState<VoiceItem[]>([]);
+  const [presets, setPresets] = useState<PresetItem[]>([]);
+  const [selectedSeries, setSelectedSeries] = useState("");
+  const [selectedAccount, setSelectedAccount] = useState("");
+  const [selectedVoice, setSelectedVoice] = useState("");
+  const [imageStyle, setImageStyle] = useState("");
+  const [imageMode, setImageMode] = useState<"AI" | "Real photos">("AI");
+  const [selectedPreset, setSelectedPreset] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [savingPreset, setSavingPreset] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    Promise.all([
+      fetch("http://localhost:8000/api/config/series").catch(() => null),
+      fetch("http://localhost:8000/api/accounts").catch(() => null),
+      fetch("http://localhost:8000/api/config/voices").catch(() => null),
+      fetch("http://localhost:8000/api/presets").catch(() => null),
+    ]).then(async ([seriesRes, accountsRes, voicesRes, presetsRes]) => {
+      if (!mounted) return;
+      if (seriesRes?.ok) setSeriesList(await seriesRes.json());
+      if (accountsRes?.ok) setAccounts(await accountsRes.json());
+      if (voicesRes?.ok) setVoices(await voicesRes.json());
+      if (presetsRes?.ok) setPresets(await presetsRes.json());
+    }).catch(() => {
+      if (mounted) setError("Some configuration data failed to load.");
+    }).finally(() => {
+      if (mounted) setLoading(false);
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  const handleSavePreset = useCallback(async () => {
+    try {
+      setSavingPreset(true);
+      await fetch("http://localhost:8000/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: `Preset ${presets.length + 1}`,
+          topic,
+          series: selectedSeries,
+          account: selectedAccount,
+          voice: selectedVoice,
+          imageStyle,
+          imageMode,
+        }),
+      });
+    } catch {
+      // silent fail for now
+    } finally {
+      setSavingPreset(false);
+    }
+  }, [presets.length, topic, selectedSeries, selectedAccount, selectedVoice, imageStyle, imageMode]);
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-4 p-6">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <motion.div
+            key={i}
+            className="h-12 rounded-xl bg-surface-overlay animate-pulse"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0.4, 0.8, 0.4] }}
+            transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.1 }}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-6 p-6">
+      {error && (
+        <div className="rounded-lg border border-error/20 bg-error/10 px-4 py-3 text-sm text-error">
+          {error}
+        </div>
+      )}
+
+      {/* Topic */}
+      <div className="flex flex-col gap-2">
+        <label className="text-sm text-text-secondary">Topic</label>
+        <input
+          className="rounded-xl border border-border-subtle bg-surface-raised px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-accent-purple focus:ring-1 focus:ring-accent-purple/30"
+          placeholder="Enter video topic..."
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+        />
+      </div>
+
+      {/* Series */}
+      <div className="flex flex-col gap-2">
+        <label className="text-sm text-text-secondary">Series</label>
+        <div className="relative">
+          <select
+            className="w-full appearance-none rounded-xl border border-border-subtle bg-surface-raised px-4 py-3 pr-10 text-sm text-text-primary outline-none transition-colors focus:border-accent-purple focus:ring-1 focus:ring-accent-purple/30"
+            value={selectedSeries}
+            onChange={(e) => setSelectedSeries(e.target.value)}
+          >
+            <option value="">Select series</option>
+            {seriesList.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" size={16} />
+        </div>
+      </div>
+
+      {/* Account */}
+      <div className="flex flex-col gap-2">
+        <label className="text-sm text-text-secondary">Account</label>
+        <div className="relative">
+          <select
+            className="w-full appearance-none rounded-xl border border-border-subtle bg-surface-raised px-4 py-3 pr-10 text-sm text-text-primary outline-none transition-colors focus:border-accent-purple focus:ring-1 focus:ring-accent-purple/30"
+            value={selectedAccount}
+            onChange={(e) => setSelectedAccount(e.target.value)}
+          >
+            <option value="">Select account</option>
+            {accounts.map((a) => (
+              <option key={a.uuid} value={a.uuid}>{a.nickname}</option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" size={16} />
+        </div>
+      </div>
+
+      {/* Voice */}
+      <div className="flex flex-col gap-2">
+        <label className="text-sm text-text-secondary">Voice</label>
+        <div className="relative">
+          <select
+            className="w-full appearance-none rounded-xl border border-border-subtle bg-surface-raised px-4 py-3 pr-10 text-sm text-text-primary outline-none transition-colors focus:border-accent-purple focus:ring-1 focus:ring-accent-purple/30"
+            value={selectedVoice}
+            onChange={(e) => setSelectedVoice(e.target.value)}
+          >
+            <option value="">Select voice</option>
+            {voices.map((v) => (
+              <option key={v.id} value={v.id}>{v.alias}</option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" size={16} />
+        </div>
+      </div>
+
+      {/* Image Style */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-text-secondary">Image Style</label>
+          <div className="group relative">
+            <Info size={14} className="text-text-tertiary" />
+            <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-1 w-56 -translate-x-1/2 rounded-lg border border-border-subtle bg-surface-overlay p-2 text-xs text-text-tertiary opacity-0 shadow-float transition-opacity group-hover:opacity-100">
+              Examples: cinematic, neon cyberpunk, retro VHS, minimalist 3D
+            </div>
+          </div>
+        </div>
+        <input
+          className="rounded-xl border border-border-subtle bg-surface-raised px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-accent-purple focus:ring-1 focus:ring-accent-purple/30"
+          placeholder="e.g. cinematic neon cyberpunk"
+          value={imageStyle}
+          onChange={(e) => setImageStyle(e.target.value)}
+        />
+      </div>
+
+      {/* Image Mode */}
+      <div className="flex flex-col gap-2">
+        <label className="text-sm text-text-secondary">Image Mode</label>
+        <div className="relative">
+          <select
+            className="w-full appearance-none rounded-xl border border-border-subtle bg-surface-raised px-4 py-3 pr-10 text-sm text-text-primary outline-none transition-colors focus:border-accent-purple focus:ring-1 focus:ring-accent-purple/30"
+            value={imageMode}
+            onChange={(e) => setImageMode(e.target.value as "AI" | "Real photos")}
+          >
+            <option value="AI">AI Generated</option>
+            <option value="Real photos">Real Photos</option>
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" size={16} />
+        </div>
+      </div>
+
+      {/* Preset */}
+      <div className="flex flex-col gap-2">
+        <label className="text-sm text-text-secondary">Preset</label>
+        <div className="relative">
+          <select
+            className="w-full appearance-none rounded-xl border border-border-subtle bg-surface-raised px-4 py-3 pr-10 text-sm text-text-primary outline-none transition-colors focus:border-accent-purple focus:ring-1 focus:ring-accent-purple/30"
+            value={selectedPreset}
+            onChange={(e) => setSelectedPreset(e.target.value)}
+          >
+            <option value="">Select preset</option>
+            {presets.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" size={16} />
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-3 pt-2">
+        <motion.button
+          className={cn(
+            "flex items-center gap-2 rounded-xl border border-border-subtle px-4 py-2.5 text-sm text-text-secondary transition-colors",
+            "hover:bg-surface-overlay hover:text-text-primary"
+          )}
+          onClick={handleSavePreset}
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.97 }}
+          disabled={savingPreset}
+        >
+          {savingPreset ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+          Save as Preset
+        </motion.button>
+
+        <motion.button
+          className={cn(
+            "flex items-center gap-2 rounded-xl bg-accent-purple px-5 py-2.5 text-sm font-medium text-white shadow-glow-purple transition-colors",
+            "hover:bg-accent-purple-deep"
+          )}
+          onClick={onComplete}
+          whileHover={{ scale: 1.03 }}
+          whileTap={{ scale: 0.97 }}
+        >
+          <Rocket size={16} />
+          Start Generation
+        </motion.button>
+      </div>
+    </div>
+  );
+}

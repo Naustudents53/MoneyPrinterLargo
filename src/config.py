@@ -211,6 +211,38 @@ def get_tts_provider() -> str:
     return _load_config().get("tts_provider", "edge_tts")
 
 
+def get_tts_language() -> str:
+    return _load_config().get("tts_language", "es")
+
+
+def get_tts_speaker_wav() -> str:
+    """Reference audio (6-30s WAV/MP3) for voice cloning in XTTS/OpenVoice."""
+    configured = _load_config().get("tts_speaker_wav", "")
+    if configured and not os.path.isabs(configured):
+        return os.path.join(ROOT_DIR, configured)
+    return configured
+
+
+def get_xtts_model() -> str:
+    return _load_config().get("xtts_model", "tts_models/multilingual/multi-dataset/xtts_v2")
+
+
+def get_xtts_device() -> str:
+    return _load_config().get("xtts_device", "auto")
+
+
+def get_openvoice_base_speaker() -> str:
+    """ID of MeloTTS base speaker for OpenVoice v2 (e.g. 'ES', 'EN-Default')."""
+    return _load_config().get("openvoice_base_speaker", "ES")
+
+
+def get_openvoice_checkpoints_dir() -> str:
+    configured = _load_config().get("openvoice_checkpoints_dir", "")
+    if configured and not os.path.isabs(configured):
+        return os.path.join(ROOT_DIR, configured)
+    return configured or os.path.join(ROOT_DIR, "models", "openvoice_v2")
+
+
 def get_series() -> list:
     return _load_config().get("series", []) or []
 

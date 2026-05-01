@@ -1,94 +1,110 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-- `src/` contains the application code. Use `src/main.py` as the interactive entrypoint.
-- `src/classes/` holds provider-specific components (for example `YouTube.py`, `Twitter.py`, `Tts.py`, `AFM.py`, `Outreach.py`).
-- Shared utilities and configuration live in modules like `src/config.py`, `src/utils.py`, `src/cache.py`, and `src/constants.py`.
-- `scripts/` contains helper workflows such as setup, preflight checks, and upload helpers.
-- `docs/` contains feature documentation; `assets/` and `fonts/` contain static resources.
-- `studio/` is a Next.js 16 web dashboard (separate app with its own package.json and node_modules).
+## Project Structure
+- `src/` — Python CLI application code. **Run everything from repo root** (`python src/main.py`).
+- `src/classes/` — Provider-specific modules: `YouTube.py`, `Twitter.py`, `Tts.py`, `AFM.py`, `Outreach.py`, `MovieSummary.py`, `MovieCatalog.py`, `ImdbIndex.py`.
+- `src/compat.py` — **Must be imported first** in any entry-point script. Patches Pillow→MoviePy compatibility and discovers `ffmpeg` on Windows.
+- `src/config.py` — 30+ getter functions with lazy caching and env var fallbacks.
+- `src/llm_provider.py` — Unified LLM dispatcher (Ollama → Gemini → Pollinations cascading fallback).
+- `scripts/` — Helper workflows: `setup_local.sh`, `preflight_local.py`, `upload_video.sh`, `make_thumbnail.py`, etc.
+- `studio/` — Next.js 16 dashboard (separate app, own `package.json` and `node_modules`). Has its own `AGENTS.md` with breaking-change warnings.
+- `docs/` — Feature docs; `assets/` / `fonts/` — static resources.
+- `.mp/` — Runtime JSON cache and scratch space (WAV, PNG, SRT, MP4). Gitignored.
 
-## Specialized Agent Configuration
-This project has 5 purpose-built agents in `.claude/agents/`:
+## Specialized Agents
+Delegate complex work via the Task tool:
 
 | Agent | File | Role |
 |-------|------|------|
-| **QA Engineer** | `qa-engineer.md` | Testing (pytest, Playwright), code quality, coverage enforcement |
-| **DevOps Engineer** | `devops-engineer.md` | Docker, CI/CD, deployment, infrastructure |
-| **UX/UI Designer** | `ux-ui-designer.md` | Dashboard design, component aesthetics, accessibility, video thumbnails |
-| **Backend Developer** | `backend-developer.md` | Python CLI, YouTube/Twitter/Outreach pipelines, LLM providers, Selenium |
+| **QA Engineer** | `qa-engineer.md` | Testing strategy, pytest/Playwright, coverage |
+| **DevOps Engineer** | `devops-engineer.md` | Docker, CI/CD, deployment (none exist yet) |
+| **UX/UI Designer** | `ux-ui-designer.md` | Dashboard design, thumbnails, accessibility, video aesthetics |
+| **Backend Developer** | `backend-developer.md` | Python CLI, pipelines, LLM providers, Selenium |
 | **Frontend Developer** | `frontend-developer.md` | Next.js 16 dashboard, React 19, Tailwind CSS 4, Radix UI, Zustand |
 
-Use the Task tool to delegate work to the appropriate agent for complex, multi-step tasks.
-
-## Active Skills (loaded per session)
-- **python-patterns**: Python 3.12 idioms, type hints, PEP 8, data classes
-- **python-testing**: pytest, TDD, fixtures, mocking, coverage
-- **frontend-patterns**: React, Next.js, hooks, state, performance, animations
-- **frontend-design**: intentional visual systems, typography, motion
-- **backend-patterns**: service layers, repositories, caching, error handling
-- **api-design**: REST conventions, pagination, filtering, error responses
-- **e2e-testing**: Playwright patterns, POM, CI integration
-- **docker-patterns**: multi-stage builds, compose, security
-- **coding-standards**: naming, immutability, readability, KISS/DRY/YAGNI
-- **security-review**: secrets, input validation, SQL injection, XSS, CSRF, rate limiting
-- **tdd-workflow**: red-green-refactor, 80%+ coverage, git checkpoints
-- **verification-loop**: build → types → lint → tests → security → diff review
-- **strategic-compact**: context management at logical boundaries
-- **karpathy-guidelines**: think before coding, simplicity, surgical changes, goal-driven
-- **web-design-guidelines**: accessibility, semantic HTML, interaction patterns
+**Note for Frontend agent:** When improving UI, apply the `frontend-design` skill for visual direction, typography, and motion.
 
 ## Build, Test, and Development Commands
-- `bash scripts/setup_local.sh`: bootstrap local development (creates `venv`, installs deps, seeds `config.json`, runs preflight).
-- `source venv/bin/activate && pip install -r requirements.txt`: manual dependency install/update.
-- `python3 scripts/preflight_local.py`: validate local provider/config readiness before running tasks.
-- `python3 src/main.py`: start the CLI app.
-- `bash scripts/upload_video.sh`: run direct script-based upload flow from repo root.
-- `python -m pytest tests/ --cov=src --cov-report=term-missing`: run Python tests with coverage.
 
-## Frontend Commands (studio/)
-- `cd studio && npm run dev`: start Next.js dev server
-- `cd studio && npm run build`: production build
-- `cd studio && npm run lint`: ESLint check
+### Python Backend
+```bash
+# First-time setup (macOS/Linux)
+bash scripts/setup_local.sh
 
-## Coding Style & Naming Conventions
-- Target Python 3.12 (project requirement in `README.md`).
-- Use 4-space indentation and follow existing Python conventions:
-  - `snake_case` for functions/variables
-  - `PascalCase` for classes
-  - `UPPER_SNAKE_CASE` for constants
-- Keep new business logic in focused modules under `src/`; keep provider/integration code in `src/classes/`.
-- Prefer small, explicit functions and preserve existing CLI-first behavior.
-- TypeScript: strict mode, explicit return types on public APIs, `camelCase` for variables/functions, `PascalCase` for React components.
-- Use `interface` over `type` for object shapes unless unions/intersections are needed.
+# Manual setup (all platforms)
+cp config.example.json config.json
+python -m venv venv
+# Windows: venv\Scripts\activate
+# Unix:    source venv/bin/activate
+pip install -r requirements.txt
 
-## Testing Guidelines
-- Minimum 80% coverage on all new code
-- Write tests BEFORE implementation (TDD red-green-refactor)
-- Python: pytest with fixtures in `tests/conftest.py`
-- Frontend: Vitest for unit tests, Playwright for E2E
-- Place tests in a top-level `tests/` directory with names like `test_<module>.py`
-- Run `python3 scripts/preflight_local.py` as a smoke test after changes
-- Smoke-test impacted flows via `python3 src/main.py`
+# Validate local readiness
+python scripts/preflight_local.py
 
-## Commit & Pull Request Guidelines
-- Follow the existing commit style: imperative summaries like `Fix ...`, `Update ...`, optionally with issue refs (for example `(#128)`).
-- Open PRs against `main`.
-- Link each PR to an issue, keep scope to one feature/fix, and use a clear title + description.
-- Mark not-ready PRs with `WIP` and remove it when ready for review.
-- Create git checkpoints at each TDD stage (RED → GREEN → REFACTOR).
+# Run CLI (must be from repo root)
+python src/main.py
 
-## Pre-Commit Verification Checklist
-Before committing, ensure:
-- [ ] `python scripts/preflight_local.py` passes
-- [ ] All tests pass with 80%+ coverage
-- [ ] No hardcoded API keys or secrets in new code
-- [ ] No `console.log` statements in production frontend code
-- [ ] TypeScript compiles without errors
-- [ ] Git diff reviewed for unintended changes
+# Direct upload script
+bash scripts/upload_video.sh
+```
 
-## Security & Configuration Tips
-- Treat `config.json` as environment-specific; do not commit real API keys or private profile paths.
-- Start from `config.example.json` and prefer environment variables where supported (for example `GEMINI_API_KEY`).
+### Studio Dashboard
+```bash
+cd studio
+npm install
+npm run dev      # port 3000 (Next.js 16, heed deprecation notices)
+npm run build
+npm run lint     # ESLint via eslint.config.mjs
+```
+
+### API Backend (studio/api_server.py)
+```bash
+# Requires fastapi + uvicorn (install into same venv)
+pip install fastapi uvicorn
+
+# Windows
+venv\Scripts\activate && cd studio && python api_server.py
+# Unix
+source venv/bin/activate && cd studio && python api_server.py
+# → http://localhost:8000 (CORS allows localhost:3000)
+```
+
+## Architecture Quick Reference
+- **Entry points:** `src/main.py` (interactive menu), `src/cron.py <platform> <account_uuid> [model]` (headless scheduler subprocess).
+- **Import rule:** `main.py` prepends `src/` to `sys.path`. Use bare imports: `from config import *`, **never** `from src.config import *`.
+- **Provider dispatch:** LLM (`llm_provider`), Image (`nanobanana2`), STT (`stt_provider: local_whisper | assemblyai`).
+- **Browser automation:** Selenium with pre-authenticated Firefox profiles. Profile paths are stored per-account in `.mp/` JSON — **never commit profiles**.
+- **Data storage:** All persistent state is JSON in `.mp/` (accounts, videos, posts, products, catalog). Non-JSON temp files are cleaned per run.
+
+## Testing Reality
+- **No `tests/` directory exists yet.** The QA agent is responsible for bootstrapping it.
+- Target 80 %+ coverage on new code. Use `pytest` with fixtures in `tests/conftest.py` when created.
+- `scripts/preflight_local.py` is the current smoke test.
+
+## Coding Style
+- Python 3.12, 4-space indent.
+- `snake_case` functions/variables, `PascalCase` classes, `UPPER_SNAKE_CASE` constants.
+- TypeScript: strict mode, explicit public return types, `camelCase` vars/functions, `PascalCase` components, prefer `interface` over `type`.
+- New business logic → focused modules under `src/`. Provider/integration code → `src/classes/`.
+
+## Security & Configuration
+- `config.json` is environment-specific and gitignored. Seed from `config.example.json`.
+- Prefer env vars where supported (e.g. `GEMINI_API_KEY` for `nanobanana2_api_key`).
 - Never log API keys, tokens, or SMTP passwords.
-- Selenium Firefox profiles contain session cookies — never commit them.
+- Selenium Firefox profiles contain session cookies — **never commit them**.
+
+## Merge Policy & Protected Code
+This fork diverged significantly from upstream (`andrepichardo/MoneyPrinterV2`).
+- **Never run `git merge andre/main` blindly** — cherry-pick only.
+- **Do not let upstream merges delete these:**
+  - `scripts/peek_inspiration.py`
+  - `scripts/video_from_inspiration.py`
+  - `src/inspire.py`
+  - `src/config.py::get_long_video_llm_model()`
+  - Large chunks of `src/utils.py` and `src/llm_provider.py`
+  - Entire Movie Summary stack (`MovieSummary.py`, `MovieCatalog.py`, `ImdbIndex.py`)
+
+## Commit Style
+- Imperative summaries: `Fix ...`, `Update ...`, optionally with issue refs (e.g. `(#128)`).
+- PRs against `main`, one feature/fix per PR, clear title + description.
+- Mark WIP PRs explicitly; remove WIP when ready.
