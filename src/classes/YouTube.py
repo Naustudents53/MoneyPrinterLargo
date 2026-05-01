@@ -428,6 +428,96 @@ class YouTube:
         """
         return generate_text(prompt, model_name=model_name)
 
+    def is_topic_duplicate(self, candidate: str) -> tuple[bool, str]:
+        """
+        Check whether *candidate* collides with any previously uploaded video
+        on this channel.  Uses the same four detection layers as generate_topic():
+        entity match, token overlap, and sequence similarity.
+
+        Returns:
+            (is_dup, matched_topic)  — matched_topic is the past topic that
+            collided, or "" if no collision.
+        """
+        import re, unicodedata
+        from difflib import SequenceMatcher
+
+        ES_STOP = {
+            "el", "la", "los", "las", "de", "del", "que", "y", "en", "un", "una",
+            "por", "para", "con", "se", "su", "sus", "lo", "al", "como", "es",
+            "fue", "era", "ser", "son", "mas", "este", "esta", "esto", "estos",
+            "estas", "sobre", "entre", "pero", "si", "no", "ni", "cuando",
+            "donde", "quien", "que", "como", "cual", "cuales", "hacia", "desde",
+            "hasta", "sin", "ya", "muy", "mas", "menos", "todo", "toda", "todos",
+            "todas", "otro", "otra", "otros", "otras", "tambien", "solo",
+            "tras", "ante", "bajo",
+        }
+        EN_STOP = {
+            "the", "of", "a", "an", "and", "is", "was", "to", "in", "on", "who",
+            "why", "how", "what", "were", "are", "be", "been", "have", "has",
+            "had", "with", "from", "that", "this", "these", "those", "will",
+            "would", "can", "could", "should", "about", "into", "which", "where",
+            "when", "their", "its", "it", "by", "at", "as", "or", "but", "for",
+        }
+        STOP = ES_STOP | EN_STOP
+
+        def _strip_diacritics(s: str) -> str:
+            return "".join(
+                c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn"
+            )
+
+        def _normalize(s: str) -> str:
+            s = _strip_diacritics(s.lower())
+            s = re.sub(r"[^\w\s]", " ", s)
+            tokens = [t for t in s.split() if t and t not in STOP and len(t) > 1]
+            return " ".join(tokens)
+
+        def _extract_entities(text: str) -> set:
+            ents: set = set()
+            raw = re.findall(r"[A-Za-zÁÉÍÓÚÑÜáéíóúñü0-9']+", text)
+            for i, tok in enumerate(raw):
+                norm = _strip_diacritics(tok.lower())
+                if re.fullmatch(r"\d+", tok):
+                    continue
+                if re.fullmatch(r"[IVXLCDM]{2,}", tok):
+                    ents.add(norm)
+                    continue
+                if tok[0].isupper() and i > 0 and norm not in STOP and len(tok) >= 3 and not tok.isupper():
+                    ents.add(norm)
+            return ents
+
+        past_topics: list[str] = []
+        try:
+            for v in self.get_videos():
+                for key in ("subject", "title"):
+                    val = v.get(key)
+                    if val and isinstance(val, str):
+                        past_topics.append(val.strip())
+        except Exception:
+            pass
+
+        if not past_topics:
+            return False, ""
+
+        cand_norm = _normalize(candidate)
+        cand_ents = _extract_entities(candidate)
+
+        for original in past_topics:
+            p_norm = _normalize(original)
+            if not p_norm:
+                continue
+            if cand_norm == p_norm:
+                return True, original
+            shared = cand_ents & _extract_entities(original)
+            if shared:
+                return True, original
+            a, b = set(cand_norm.split()), set(p_norm.split())
+            if a and b and len(a & b) / max(len(a), len(b)) >= 0.55:
+                return True, original
+            if SequenceMatcher(None, cand_norm, p_norm).ratio() >= 0.7:
+                return True, original
+
+        return False, ""
+
     def generate_topic(self) -> str:
         """
         Generates a topic based on the YouTube Channel niche.
@@ -2632,6 +2722,13 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             self.subject = custom_topic.strip()
             if get_verbose():
                 info(f" => Using custom topic: {self.subject}")
+            # Duplicate guard for custom topics too
+            is_dup, matched = self.is_topic_duplicate(self.subject)
+            if is_dup:
+                warning(f"Topic already covered: \"{matched}\"")
+                warning("Skipping — pick a different topic.")
+                self.video_path = ""
+                return ""
         else:
             self.generate_topic()
 
@@ -4093,6 +4190,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         if custom_topic and custom_topic.strip():
             self.subject = custom_topic.strip()
             info(f" => Using custom topic: {self.subject}")
+            is_dup, matched = self.is_topic_duplicate(self.subject)
+            if is_dup:
+                warning(f"Topic already covered: \"{matched}\"")
+                warning("Skipping — pick a different topic.")
+                self.video_path = ""
+                return ""
         else:
             self.generate_topic()
         if not self.subject or not self.subject.strip():

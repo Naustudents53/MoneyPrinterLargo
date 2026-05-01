@@ -386,7 +386,7 @@ def main():
                 youtube = YouTube(
                     selected_account["id"],
                     selected_account["nickname"],
-                    selected_account["firefox_profile"],
+                    selected_account.get("firefox_profile") or get_firefox_profile_path(),
                     selected_account["niche"],
                     selected_account["language"],
                     image_style=selected_account.get("image_style", ""),
@@ -700,7 +700,7 @@ def main():
                 error("Invalid account selected. Please try again.", "red")
                 main()
             else:
-                twitter = Twitter(selected_account["id"], selected_account["nickname"], selected_account["firefox_profile"], selected_account["topic"])
+                twitter = Twitter(selected_account["id"], selected_account["nickname"], selected_account.get("firefox_profile") or get_firefox_profile_path(), selected_account["topic"])
 
                 while True:
                     
@@ -914,7 +914,7 @@ def main():
                 ms = MovieSummary(
                     selected_account["id"],
                     selected_account["nickname"],
-                    selected_account["firefox_profile"],
+                    selected_account.get("firefox_profile") or get_firefox_profile_path(),
                     selected_account["niche"],
                     selected_account["language"],
                     image_style=selected_account.get("image_style", ""),
