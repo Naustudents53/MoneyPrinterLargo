@@ -5044,6 +5044,15 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             time.sleep(0.5)
             driver.execute_script("arguments[0].click();", title_el)
             time.sleep(0.5)
+            # Clear the pre-filled title (YT Studio seeds it with the filename
+            # / video UUID). Use JS instead of Ctrl+A — Firefox raises a
+            # confirmEx alert when Ctrl+A fires inside this contenteditable.
+            driver.execute_script(
+                "arguments[0].innerText = '';"
+                "arguments[0].dispatchEvent(new InputEvent('input', {bubbles: true}));",
+                title_el,
+            )
+            time.sleep(0.3)
 
             # Type the new title character by character to avoid issues
             clean_title = self.metadata["title"].replace("\n", " ")[:100]
@@ -5065,6 +5074,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             time.sleep(0.5)
             driver.execute_script("arguments[0].click();", description_el)
             time.sleep(0.5)
+            driver.execute_script(
+                "arguments[0].innerText = '';"
+                "arguments[0].dispatchEvent(new InputEvent('input', {bubbles: true}));",
+                description_el,
+            )
+            time.sleep(0.3)
 
             clean_desc = self.metadata["description"].replace("\n", " ")[:5000]
             description_el.send_keys(clean_desc)
