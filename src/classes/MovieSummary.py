@@ -538,8 +538,8 @@ class MovieSummary(YouTube):
     def extract_thumbnail_frame(self, video_path: str, timestamp: float) -> str:
         """ffmpeg-extract a single frame, retrying nearby if the frame is near-black."""
         from PIL import Image
-
-        ffmpeg = TTS._find_ffmpeg() or "ffmpeg"
+        from compat import find_ffmpeg
+        ffmpeg = find_ffmpeg() or "ffmpeg"
         attempts = [0.0, 2.0, -2.0, 4.0]
         for delta in attempts:
             ts = max(0.5, timestamp + delta)
@@ -813,7 +813,7 @@ class MovieSummary(YouTube):
         for attempt in (1, 2):
             try:
                 raw_plan = self.plan_video(
-                    beats, runtime, self._language or "Spanish", segments, retry_reason
+                    beats, runtime, self.language or "Spanish", segments, retry_reason
                 )
                 validated_plan = self.validate_plan(raw_plan, runtime, segments)
                 break

@@ -3,416 +3,219 @@ import sys
 import json
 import srt_equalizer
 
+_CONFIG_CACHE = None
+_CONFIG_MTIME = None
+
+
+def _load_config() -> dict:
+    global _CONFIG_CACHE, _CONFIG_MTIME
+    config_path = os.path.join(ROOT_DIR, "config.json")
+    try:
+        mtime = os.path.getmtime(config_path)
+    except OSError:
+        return {}
+    if _CONFIG_CACHE is not None and _CONFIG_MTIME == mtime:
+        return _CONFIG_CACHE
+    with open(config_path, "r", encoding="utf-8") as file:
+        _CONFIG_CACHE = json.load(file)
+    _CONFIG_MTIME = mtime
+    return _CONFIG_CACHE
+
+
 from termcolor import colored
 
 ROOT_DIR = os.path.dirname(sys.path[0])
 
-def assert_folder_structure() -> None:
-    """
-    Make sure that the nessecary folder structure is present.
 
-    Returns:
-        None
-    """
-    # Create the .mp folder
-    if not os.path.exists(os.path.join(ROOT_DIR, ".mp")):
-        if get_verbose():
-            print(colored(f"=> Creating .mp folder at {os.path.join(ROOT_DIR, '.mp')}", "green"))
-        os.makedirs(os.path.join(ROOT_DIR, ".mp"))
+def assert_folder_structure() -> None:
+    mp_path = os.path.join(ROOT_DIR, ".mp")
+    if not os.path.exists(mp_path):
+        if _load_config().get("verbose", True):
+            print(colored(f"=> Creating .mp folder at {mp_path}", "green"))
+        os.makedirs(mp_path)
+
 
 def get_first_time_running() -> bool:
-    """
-    Checks if the program is running for the first time by checking if .mp folder exists.
-
-    Returns:
-        exists (bool): True if the program is running for the first time, False otherwise
-    """
     return not os.path.exists(os.path.join(ROOT_DIR, ".mp"))
 
-def get_email_credentials() -> dict:
-    """
-    Gets the email credentials from the config file.
 
-    Returns:
-        credentials (dict): The email credentials
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["email"]
+def get_email_credentials() -> dict:
+    return _load_config().get("email", {})
+
 
 def get_verbose() -> bool:
-    """
-    Gets the verbose flag from the config file.
+    return _load_config().get("verbose", True)
 
-    Returns:
-        verbose (bool): The verbose flag
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["verbose"]
 
 def get_firefox_profile_path() -> str:
-    """
-    Gets the path to the Firefox profile.
+    return _load_config().get("firefox_profile", "")
 
-    Returns:
-        path (str): The path to the Firefox profile
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["firefox_profile"]
 
 def get_headless() -> bool:
-    """
-    Gets the headless flag from the config file.
+    return _load_config().get("headless", False)
 
-    Returns:
-        headless (bool): The headless flag
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["headless"]
 
 def get_ollama_base_url() -> str:
-    """
-    Gets the Ollama base URL.
+    return _load_config().get("ollama_base_url", "http://127.0.0.1:11434")
 
-    Returns:
-        url (str): The Ollama base URL
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("ollama_base_url", "http://127.0.0.1:11434")
 
 def get_ollama_model() -> str:
-    """
-    Gets the Ollama model name from the config file.
+    return _load_config().get("ollama_model", "")
 
-    Returns:
-        model (str): The Ollama model name, or empty string if not set.
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("ollama_model", "")
 
 def get_long_video_llm_model() -> str:
-    """
-    Ollama model used exclusively by the long-video pipeline.
-    Defaults to DeepSeek V4 Pro on Ollama Cloud (`ollama signin` required).
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("long_video_llm_model", "deepseek-v4-pro:cloud")
+    return _load_config().get("long_video_llm_model", "deepseek-v4-pro:cloud")
+
 
 def get_twitter_language() -> str:
-    """
-    Gets the Twitter language from the config file.
+    return _load_config().get("twitter_language", "English")
 
-    Returns:
-        language (str): The Twitter language
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["twitter_language"]
 
 def get_nanobanana2_api_base_url() -> str:
-    """
-    Gets the Nano Banana 2 (Gemini image) API base URL.
+    return _load_config().get(
+        "nanobanana2_api_base_url",
+        "https://generativelanguage.googleapis.com/v1beta",
+    )
 
-    Returns:
-        url (str): API base URL
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get(
-            "nanobanana2_api_base_url",
-            "https://generativelanguage.googleapis.com/v1beta",
-        )
 
 def get_nanobanana2_api_key() -> str:
-    """
-    Gets the Nano Banana 2 API key.
+    configured = _load_config().get("nanobanana2_api_key", "")
+    return configured or os.environ.get("GEMINI_API_KEY", "")
 
-    Returns:
-        key (str): API key
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        configured = json.load(file).get("nanobanana2_api_key", "")
-        return configured or os.environ.get("GEMINI_API_KEY", "")
 
 def get_nanobanana2_model() -> str:
-    """
-    Gets the Nano Banana 2 model name.
+    return _load_config().get("nanobanana2_model", "gemini-3.1-flash-image-preview")
 
-    Returns:
-        model (str): Model name
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("nanobanana2_model", "gemini-3.1-flash-image-preview")
 
 def get_nanobanana2_aspect_ratio() -> str:
-    """
-    Gets the aspect ratio for Nano Banana 2 image generation.
+    return _load_config().get("nanobanana2_aspect_ratio", "9:16")
 
-    Returns:
-        ratio (str): Aspect ratio
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("nanobanana2_aspect_ratio", "9:16")
 
 def get_threads() -> int:
-    """
-    Gets the amount of threads to use for example when writing to a file with MoviePy.
+    return _load_config().get("threads", 2)
 
-    Returns:
-        threads (int): Amount of threads
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["threads"]
-    
+
 def get_zip_url() -> str:
-    """
-    Gets the URL to the zip file containing the songs.
+    return _load_config().get("zip_url", "")
 
-    Returns:
-        url (str): The URL to the zip file
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["zip_url"]
 
 def get_is_for_kids() -> bool:
-    """
-    Gets the is for kids flag from the config file.
+    return _load_config().get("is_for_kids", False)
 
-    Returns:
-        is_for_kids (bool): The is for kids flag
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["is_for_kids"]
 
 def get_google_maps_scraper_zip_url() -> str:
-    """
-    Gets the URL to the zip file containing the Google Maps scraper.
+    return _load_config().get("google_maps_scraper", "")
 
-    Returns:
-        url (str): The URL to the zip file
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["google_maps_scraper"]
 
 def get_google_maps_scraper_niche() -> str:
-    """
-    Gets the niche for the Google Maps scraper.
+    return _load_config().get("google_maps_scraper_niche", "")
 
-    Returns:
-        niche (str): The niche
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["google_maps_scraper_niche"]
 
 def get_scraper_timeout() -> int:
-    """
-    Gets the timeout for the scraper.
+    return _load_config().get("scraper_timeout", 300)
 
-    Returns:
-        timeout (int): The timeout
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["scraper_timeout"] or 300
 
 def get_outreach_message_subject() -> str:
-    """
-    Gets the outreach message subject.
+    return _load_config().get("outreach_message_subject", "")
 
-    Returns:
-        subject (str): The outreach message subject
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["outreach_message_subject"]
-    
+
 def get_outreach_message_body_file() -> str:
-    """
-    Gets the outreach message body file.
+    return _load_config().get("outreach_message_body_file", "")
 
-    Returns:
-        file (str): The outreach message body file
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["outreach_message_body_file"]
 
 def get_tts_voice() -> str:
-    """
-    Gets the TTS voice from the config file.
+    return _load_config().get("tts_voice", "Jasper")
 
-    Returns:
-        voice (str): The TTS voice
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("tts_voice", "Jasper")
 
 def get_assemblyai_api_key() -> str:
-    """
-    Gets the AssemblyAI API key.
+    return _load_config().get("assembly_ai_api_key", "")
 
-    Returns:
-        key (str): The AssemblyAI API key
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["assembly_ai_api_key"]
 
 def get_pexels_api_key() -> str:
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        configured = json.load(file).get("pexels_api_key", "")
-        return configured or os.environ.get("PEXELS_API_KEY", "")
+    configured = _load_config().get("pexels_api_key", "")
+    return configured or os.environ.get("PEXELS_API_KEY", "")
+
 
 def get_pixabay_api_key() -> str:
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        configured = json.load(file).get("pixabay_api_key", "")
-        return configured or os.environ.get("PIXABAY_API_KEY", "")
+    configured = _load_config().get("pixabay_api_key", "")
+    return configured or os.environ.get("PIXABAY_API_KEY", "")
+
 
 def get_ideogram_api_key() -> str:
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        configured = json.load(file).get("ideogram_api_key", "")
-        return configured or os.environ.get("IDEOGRAM_API_KEY", "")
+    configured = _load_config().get("ideogram_api_key", "")
+    return configured or os.environ.get("IDEOGRAM_API_KEY", "")
+
 
 def get_leonardo_api_key() -> str:
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        configured = json.load(file).get("leonardo_api_key", "")
-        return configured or os.environ.get("LEONARDO_API_KEY", "")
+    configured = _load_config().get("leonardo_api_key", "")
+    return configured or os.environ.get("LEONARDO_API_KEY", "")
+
 
 def get_hf_api_key() -> str:
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        configured = json.load(file).get("hf_api_key", "")
-        return configured or os.environ.get("HF_TOKEN", "")
+    configured = _load_config().get("hf_api_key", "")
+    return configured or os.environ.get("HF_TOKEN", "")
+
 
 def get_stt_provider() -> str:
-    """
-    Gets the configured STT provider.
+    return _load_config().get("stt_provider", "local_whisper")
 
-    Returns:
-        provider (str): The STT provider
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("stt_provider", "local_whisper")
 
 def get_whisper_model() -> str:
-    """
-    Gets the local Whisper model name.
+    return _load_config().get("whisper_model", "base")
 
-    Returns:
-        model (str): Whisper model name
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("whisper_model", "base")
 
 def get_whisper_device() -> str:
-    """
-    Gets the target device for Whisper inference.
+    return _load_config().get("whisper_device", "auto")
 
-    Returns:
-        device (str): Whisper device
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("whisper_device", "auto")
 
 def get_whisper_compute_type() -> str:
-    """
-    Gets the compute type for Whisper inference.
+    return _load_config().get("whisper_compute_type", "int8")
 
-    Returns:
-        compute_type (str): Whisper compute type
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("whisper_compute_type", "int8")
-    
+
 def equalize_subtitles(srt_path: str, max_chars: int = 10) -> None:
-    """
-    Equalizes the subtitles in a SRT file.
-
-    Args:
-        srt_path (str): The path to the SRT file
-        max_chars (int): The maximum amount of characters in a subtitle
-
-    Returns:
-        None
-    """
     srt_equalizer.equalize_srt_file(srt_path, srt_path, max_chars)
-    
-def get_font() -> str:
-    """
-    Gets the font from the config file.
 
-    Returns:
-        font (str): The font
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["font"]
+
+def get_font() -> str:
+    return _load_config().get("font", "bold_font.ttf")
+
 
 def get_fonts_dir() -> str:
-    """
-    Gets the fonts directory.
-
-    Returns:
-        dir (str): The fonts directory
-    """
     return os.path.join(ROOT_DIR, "fonts")
 
-def get_imagemagick_path() -> str:
-    """
-    Gets the path to ImageMagick.
 
-    Returns:
-        path (str): The path to ImageMagick
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file)["imagemagick_path"]
+def get_imagemagick_path() -> str:
+    return _load_config().get("imagemagick_path", "")
+
 
 def get_llm_provider() -> str:
-    """Gets the LLM provider (ollama, pollinations, or gemini)."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("llm_provider", "gemini")
+    return _load_config().get("llm_provider", "gemini")
+
 
 def get_gemini_model() -> str:
-    """Gets the primary Gemini model for text generation."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("gemini_model", "gemini-2.5-flash")
+    return _load_config().get("gemini_model", "gemini-2.5-flash")
+
 
 def get_gemini_models() -> list[str]:
-    """Gets the ordered list of Gemini models to try (best first)."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        models = json.load(file).get("gemini_models", [])
+    models = _load_config().get("gemini_models", [])
     if models:
         return models
-    # Fallback: just the single configured model
     return [get_gemini_model()]
 
+
 def get_pollinations_text_model() -> str:
-    """Gets the Pollinations text model name."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("pollinations_text_model", "openai")
+    return _load_config().get("pollinations_text_model", "openai")
+
 
 def get_tts_provider() -> str:
-    """Gets the TTS provider (edge_tts or kittentts)."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("tts_provider", "edge_tts")
+    return _load_config().get("tts_provider", "edge_tts")
+
 
 def get_series() -> list:
-    """
-    Gets the list of series defined in config.json. Each series is a dict with:
-      - id (str): unique identifier (e.g. "un_dia_en_la_historia")
-      - title_template (str): template with {placeholders} the LLM will fill
-      - thumbnail_overlay (str): exact text stamped on the thumbnail (no LLM)
-      - thumbnail_font (str, optional): font filename to look up in Windows Fonts
-
-    Returns:
-        series (list): list of series dicts, or [] if none configured.
-    """
-    # utf-8 here so users can paste accented chars (á, é, í, ó, ú, ñ) literally
-    # into title_template / thumbnail_overlay without re-encoding the file.
-    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
-        return json.load(file).get("series", []) or []
+    return _load_config().get("series", []) or []
 
 
 def resolve_series(subject: str):
-    """
-    If `subject` starts with a `[series_id]` prefix that matches a configured
-    series, return (series_dict, cleaned_subject). Otherwise return (None, subject).
-
-    Example:
-        "[un_dia_en_la_historia] samurai en el Japón feudal"
-        → ({"id": "un_dia_en_la_historia", ...}, "samurai en el Japón feudal")
-    """
     if not subject:
         return None, subject
     import re as _re
@@ -428,61 +231,36 @@ def resolve_series(subject: str):
 
 
 def get_movie_max_duration_seconds() -> int:
-    """Maximum total length of a movie summary video, including the hook."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return int(json.load(file).get("movie_max_duration_seconds", 1200))
+    return int(_load_config().get("movie_max_duration_seconds", 1200))
 
 
 def get_movie_min_clip_seconds() -> int:
-    """Minimum length of any single body clip in a movie summary."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return int(json.load(file).get("movie_min_clip_seconds", 12))
+    return int(_load_config().get("movie_min_clip_seconds", 12))
 
 
 def get_movie_max_clip_seconds() -> int:
-    """Maximum length of any single body clip in a movie summary."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return int(json.load(file).get("movie_max_clip_seconds", 45))
+    return int(_load_config().get("movie_max_clip_seconds", 45))
 
 
 def get_movie_hook_seconds() -> int:
-    """Length of the opening hook in a movie summary."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return int(json.load(file).get("movie_hook_seconds", 15))
+    return int(_load_config().get("movie_hook_seconds", 15))
 
 
 def get_movie_chunk_minutes() -> int:
-    """Transcript chunk size (minutes) for the Stage-1 beat-extraction LLM calls."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return int(json.load(file).get("movie_chunk_minutes", 25))
+    return int(_load_config().get("movie_chunk_minutes", 25))
 
 
 def get_movie_original_audio_volume() -> float:
-    """Volume multiplier for the source movie audio under the TTS narration (0.08 = 8%)."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return float(json.load(file).get("movie_original_audio_volume", 0.08))
+    return float(_load_config().get("movie_original_audio_volume", 0.08))
 
 
 def get_movie_download_format() -> str:
-    """yt-dlp format selector used when downloading the source movie."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get(
-            "movie_download_format",
-            "bestvideo[height<=720]+bestaudio/best[height<=720]",
-        )
+    return _load_config().get(
+        "movie_download_format",
+        "bestvideo[height<=720]+bestaudio/best[height<=720]",
+    )
 
 
 def get_script_sentence_length() -> int:
-    """
-    Gets the forced script's sentence length.
-    In case there is no sentence length in config, returns 4 when none
-
-    Returns:
-        length (int): Length of script's sentence
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        config_json = json.load(file)
-        if (config_json.get("script_sentence_length") is not None):
-            return config_json["script_sentence_length"]
-        else:
-            return 4
+    val = _load_config().get("script_sentence_length")
+    return val if val is not None else 4

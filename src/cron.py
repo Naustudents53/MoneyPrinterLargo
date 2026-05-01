@@ -1,35 +1,16 @@
-# RUN THIS N AMOUNT OF TIMES
 import sys
 
-from status import *
-from cache import get_accounts
-from config import get_verbose
+from status import info, success, error, warning
+from cache import get_accounts, add_account, remove_account
+from config import get_verbose, get_llm_provider, get_pollinations_text_model
 from classes.Tts import TTS
 from classes.Twitter import Twitter
 from classes.YouTube import YouTube
 from classes.MovieSummary import MovieSummary
-from cache import add_account, remove_account
-from config import get_llm_provider, get_pollinations_text_model
 from llm_provider import select_model, set_llm_provider
 
+
 def main():
-    """Main function to post content to Twitter or upload videos to YouTube.
-
-    This function determines its operation based on command-line arguments:
-    - If the purpose is "twitter", it initializes a Twitter account and posts a message.
-    - If the purpose is "youtube", it initializes a YouTube account, generates a video with TTS, and uploads it.
-
-    Command-line arguments:
-        sys.argv[1]: A string indicating the purpose, either "twitter" or "youtube".
-        sys.argv[2]: A string representing the account UUID.
-
-    The function also handles verbose output based on user settings and reports success or errors as appropriate.
-
-    Args:
-        None. The function uses command-line arguments accessed via sys.argv.
-
-    Returns:
-        None. The function performs operations based on the purpose and account UUID and does not return any value."""
     purpose = str(sys.argv[1])
     account_id = str(sys.argv[2])
     model = str(sys.argv[3]) if len(sys.argv) > 3 else None
@@ -49,7 +30,6 @@ def main():
 
     if purpose == "twitter":
         accounts = get_accounts("twitter")
-
         if not account_id:
             error("Account UUID cannot be empty.")
 
@@ -69,9 +49,7 @@ def main():
                 break
     elif purpose == "youtube":
         tts = TTS()
-
         accounts = get_accounts("youtube")
-
         if not account_id:
             error("Account UUID cannot be empty.")
 
@@ -93,7 +71,6 @@ def main():
                 )
                 video_path = youtube.generate_video(tts)
                 if not video_path:
-                    # Pipeline aborted (e.g. duplicate-topic guard): skip upload.
                     error("Skipping upload: video generation aborted.")
                     sys.exit(1)
                 youtube.upload_video()
@@ -102,9 +79,7 @@ def main():
                 break
     elif purpose == "movies":
         tts = TTS()
-
         accounts = get_accounts("movies")
-
         if not account_id:
             error("Account UUID cannot be empty.")
 
@@ -134,7 +109,6 @@ def main():
                     error("Skipping upload: movie summary aborted.")
                     sys.exit(1)
                 ms.upload_video()
-                # Persist the consumed-from-queue state by rewriting the account
                 acc["pending_titles"] = pending
                 remove_account("movies", acc["id"])
                 add_account("movies", acc)
@@ -144,6 +118,7 @@ def main():
     else:
         error("Invalid Purpose, exiting...")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

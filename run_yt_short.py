@@ -1,3 +1,4 @@
+
 """
 Run the full YouTube Shorts pipeline: generate video + upload.
 Uses the existing cached account "Mind Glitch".
@@ -7,8 +8,8 @@ import os
 import json
 import traceback
 
-# Log all output to file
 import io
+
 
 class TeeWriter:
     def __init__(self, *streams):
@@ -21,26 +22,12 @@ class TeeWriter:
         for s in self.streams:
             s.flush()
 
+
 _logfile = open("run_yt_short.log", "w", encoding="utf-8")
 sys.stdout = TeeWriter(sys.__stdout__, _logfile)
 sys.stderr = TeeWriter(sys.__stderr__, _logfile)
 
-sys.path.insert(0, "src")
-
-# Fix Pillow 10+ compat
-from PIL import Image as _PILImage
-if not hasattr(_PILImage, "ANTIALIAS"):
-    _PILImage.ANTIALIAS = _PILImage.LANCZOS
-
-# Setup ffmpeg
-import shutil
-if not shutil.which("ffmpeg"):
-    search = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages")
-    if os.path.isdir(search):
-        for root, dirs, files in os.walk(search):
-            if "ffmpeg.exe" in files:
-                os.environ["PATH"] = root + os.pathsep + os.environ.get("PATH", "")
-                break
+import compat  # noqa: E402
 
 from config import ROOT_DIR, assert_folder_structure
 from llm_provider import set_llm_provider, select_model
@@ -49,7 +36,6 @@ from classes.Tts import TTS
 from classes.YouTube import YouTube
 from cache import get_accounts
 
-# Setup
 assert_folder_structure()
 rem_temp_files()
 fetch_songs()
@@ -57,7 +43,6 @@ set_llm_provider("pollinations")
 select_model("openai")
 
 try:
-    # Get the cached YouTube account
     accounts = get_accounts("youtube")
     if not accounts:
         print("ERROR: No YouTube accounts found in cache!")
@@ -68,7 +53,6 @@ try:
     print(f"Niche: {account['niche']}, Language: {account['language']}")
     print(f"Firefox profile: {account['firefox_profile']}")
 
-    # Create YouTube instance and run
     print("\n=== Creating YouTube instance ===")
     yt = YouTube(
         account["id"],

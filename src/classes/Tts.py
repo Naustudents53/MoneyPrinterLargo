@@ -52,26 +52,21 @@ class TTS:
         return output_file
 
     def synthesize_long(self, text, output_file, voice_id=None):
-        """
-        Synthesize long-form text for documentary-style narration.
-        Uses a deep, slow voice with pauses between paragraphs.
-        """
         import edge_tts
         import subprocess
         import shutil
 
+        from compat import find_ffmpeg
+
         vid = voice_id or EDGE_TTS_VOICES.get(self._voice, self._voice)
         mp3_path = output_file.rsplit(".", 1)[0] + ".mp3"
 
-        # Add natural pauses between paragraphs for documentary feel
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         if not paragraphs:
             paragraphs = [text]
-        # Join with ellipsis pause markers — edge_tts treats these as natural pauses
         narration_text = " ... ".join(paragraphs)
 
         async def _generate():
-            # Deep narrator: slower rate, lower pitch for gravitas
             communicate = edge_tts.Communicate(
                 narration_text, vid,
                 rate="-8%", pitch="-15Hz"
@@ -81,7 +76,7 @@ class TTS:
         asyncio.run(_generate())
 
         if output_file.endswith(".wav"):
-            ffmpeg_path = self._find_ffmpeg()
+            ffmpeg_path = find_ffmpeg()
             if ffmpeg_path:
                 try:
                     subprocess.run(
@@ -151,9 +146,9 @@ class TTS:
 
         asyncio.run(_generate())
 
-        # Convert mp3 → wav
+        from compat import find_ffmpeg
         if output_file.endswith(".wav"):
-            ffmpeg_path = self._find_ffmpeg()
+            ffmpeg_path = find_ffmpeg()
             if ffmpeg_path:
                 try:
                     subprocess.run(
@@ -175,24 +170,4 @@ class TTS:
         path, _ = self._synthesize_edge_tts_with_timestamps(text, output_file, voice_id=voice_id)
         return path
 
-    @staticmethod
-    def _find_ffmpeg() -> str | None:
-        """Finds ffmpeg in common Windows locations."""
-        import shutil as sh
-        path = sh.which("ffmpeg")
-        if path:
-            return path
 
-        # Check common winget installation path
-        common_paths = [
-            os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages"),
-            r"C:\ffmpeg\bin",
-            r"C:\Program Files\ffmpeg\bin",
-        ]
-        for base in common_paths:
-            if not os.path.isdir(base):
-                continue
-            for root, dirs, files in os.walk(base):
-                if "ffmpeg.exe" in files:
-                    return os.path.join(root, "ffmpeg.exe")
-        return None

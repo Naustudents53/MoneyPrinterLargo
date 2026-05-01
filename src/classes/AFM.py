@@ -2,9 +2,9 @@ import os
 from urllib.parse import urlparse
 from typing import Any
 
-from status import *
-from config import *
-from constants import *
+from status import info, success, warning, error
+from config import ROOT_DIR, get_firefox_profile_path, get_headless, get_verbose
+from constants import AMAZON_PRODUCT_TITLE_ID, AMAZON_FEATURE_BULLETS_ID
 from llm_provider import generate_text
 from .Twitter import Twitter
 from selenium import webdriver
@@ -15,161 +15,102 @@ from webdriver_manager.firefox import GeckoDriverManager
 
 
 class AffiliateMarketing:
-    """
-    This class will be used to handle all the affiliate marketing related operations.
-    """
+    def __init__(self, affiliate_link: str, fp_profile_path: str, twitter_uuid: str, twitter_nickname: str = "", twitter_topic: str = ""):
+        self.affiliate_link = affiliate_link
+        self.fp_profile_path = fp_profile_path
+        self.twitter_uuid = twitter_uuid
+        self.twitter_nickname = twitter_nickname
+        self.twitter_topic = twitter_topic
+        self._driver = None
+        self.pitch = ""
 
-    def __init__(
-        self,
-        affiliate_link: str,
-        fp_profile_path: str,
-        twitter_account_uuid: str,
-        account_nickname: str,
-        topic: str,
-    ) -> None:
-        """
-        Initializes the Affiliate Marketing class.
-
-        Args:
-            affiliate_link (str): The affiliate link
-            fp_profile_path (str): The path to the Firefox profile
-            twitter_account_uuid (str): The Twitter account UUID
-            account_nickname (str): The account nickname
-            topic (str): The topic of the product
-
-        Returns:
-            None
-        """
-        self._fp_profile_path: str = fp_profile_path
-
-        # Initialize the Firefox profile
-        self.options: Options = Options()
-
-        # Set headless state of browser
+    def _start_driver(self):
+        options = Options()
+        options.add_argument("-profile")
+        options.add_argument(self.fp_profile_path)
         if get_headless():
-            self.options.add_argument("--headless")
+            options.add_argument("--headless")
+        service = Service(GeckoDriverManager().install())
+        self._driver = webdriver.Firefox(service=service, options=options)
 
-        if not os.path.isdir(fp_profile_path):
-            raise ValueError(
-                f"Firefox profile path does not exist or is not a directory: {fp_profile_path}"
-            )
+    def _scrape_product(self):
+        driver = self._driver
+        parsed = urlparse(self.affiliate_link)
+        domain = parsed.netloc.lower()
+        if "amazon" not in domain:
+            warning(f"URL does not appear to be Amazon: {self.affiliate_link}")
+        driver.get(self.affiliate_link)
+        info(f"Loaded: {self.affiliate_link}")
+        time = __import__("time")
+        time.sleep(3)
+        title = ""
+        try:
+            title_el = driver.find_element(By.ID, AMAZON_PRODUCT_TITLE_ID)
+            title = title_el.text.strip()
+        except Exception as e:
+            warning(f"Could not extract product title: {e}")
+        features = ""
+        try:
+            bullets = driver.find_element(By.ID, AMAZON_FEATURE_BULLETS_ID)
+            features = bullets.text.strip()
+        except Exception as e:
+            warning(f"Could not extract features: {e}")
+        return title, features
 
-        # Set the profile path
-        self.options.add_argument("-profile")
-        self.options.add_argument(fp_profile_path)
+    def generate_pitch(self):
+        try:
+            self._start_driver()
+            title, features = self._scrape_product()
+        finally:
+            if self._driver:
+                try:
+                    self._driver.quit()
+                except Exception:
+                    pass
 
-        # Set the service
-        self.service: Service = Service(GeckoDriverManager().install())
+        if not title:
+            error("No product info; aborting pitch.")
+            return
 
-        # Initialize the browser
-        self.browser: webdriver.Firefox = webdriver.Firefox(
-            service=self.service, options=self.options
+        prompt = (
+            f"Write a short, engaging affiliate marketing pitch for this product:\n\n"
+            f"Title: {title}\n"
+            f"Features: {features}\n\n"
+            f"Language: Spanish. 2-3 sentences. Direct. No markdown. Only the pitch text."
         )
+        self.pitch = generate_text(prompt).strip()
+        success(f"Pitch generated: {self.pitch[:120]}")
+        return self.pitch
 
-        # Set the affiliate link
-        self.affiliate_link: str = affiliate_link
-
-        parsed_link = urlparse(self.affiliate_link)
-        if parsed_link.scheme not in ["http", "https"] or not parsed_link.netloc:
-            raise ValueError(
-                f"Affiliate link is invalid. Expected a full URL, got: {self.affiliate_link}"
-            )
-
-        # Set the Twitter account UUID
-        self.account_uuid: str = twitter_account_uuid
-
-        # Set the Twitter account nickname
-        self.account_nickname: str = account_nickname
-
-        # Set the Twitter topic
-        self.topic: str = topic
-
-        # Scrape the product information
-        self.scrape_product_information()
-
-    def scrape_product_information(self) -> None:
-        """
-        This method will be used to scrape the product
-        information from the affiliate link.
-        """
-        # Open the affiliate link
-        self.browser.get(self.affiliate_link)
-
-        # Get the product name
-        product_title: str = self.browser.find_element(
-            By.ID, AMAZON_PRODUCT_TITLE_ID
-        ).text
-
-        # Get the features of the product
-        features: Any = self.browser.find_elements(By.ID, AMAZON_FEATURE_BULLETS_ID)
-
-        if get_verbose():
-            info(f"Product Title: {product_title}")
-
-        if get_verbose():
-            info(f"Features: {features}")
-
-        # Set the product title
-        self.product_title: str = product_title
-
-        # Set the features
-        self.features: Any = features
-
-    def generate_response(self, prompt: str) -> str:
-        """
-        This method will be used to generate the response for the user.
-
-        Args:
-            prompt (str): The prompt for the user.
-
-        Returns:
-            response (str): The response for the user.
-        """
-        return generate_text(prompt)
-
-    def generate_pitch(self) -> str:
-        """
-        This method will be used to generate a pitch for the product.
-
-        Returns:
-            pitch (str): The pitch for the product.
-        """
-        # Generate the response
-        pitch: str = (
-            self.generate_response(
-                f'I want to promote this product on my website. Generate a brief pitch about this product, return nothing else except the pitch. Information:\nTitle: "{self.product_title}"\nFeatures: "{str(self.features)}"'
-            )
-            + "\nYou can buy the product here: "
-            + self.affiliate_link
-        )
-
-        self.pitch: str = pitch
-
-        # Return the response
-        return pitch
-
-    def share_pitch(self, where: str) -> None:
-        """
-        This method will be used to share the pitch on the specified platform.
-
-        Args:
-            where (str): The platform where the pitch will be shared.
-        """
-        if where == "twitter":
-            # Initialize the Twitter class
-            twitter: Twitter = Twitter(
-                self.account_uuid,
-                self.account_nickname,
-                self._fp_profile_path,
-                self.topic,
-            )
-
-            # Share the pitch
-            twitter.post(self.pitch)
-
-    def quit(self) -> None:
-        """
-        This method will be used to quit the browser.
-        """
-        # Quit the browser
-        self.browser.quit()
+    def share_pitch(self, platform: str):
+        if not self.pitch:
+            error("No pitch to share.")
+            return
+        if platform == "twitter":
+            twitter = Twitter(self.twitter_uuid, self.twitter_nickname, self.fp_profile_path, self.twitter_topic)
+            info("Sharing pitch on Twitter...")
+            prompt = f"Post this as a tweet: {self.pitch}. Under 280 chars."
+            tweet_text = generate_text(prompt).strip()[:280]
+            try:
+                twitter._start_driver()
+                driver = twitter._driver
+                driver.get("https://x.com")
+                time_lib = __import__("time")
+                time_lib.sleep(3)
+                from constants import TWITTER_TEXTAREA_CLASS, TWITTER_POST_BUTTON_XPATH
+                textarea = driver.find_element(By.CLASS_NAME, TWITTER_TEXTAREA_CLASS)
+                textarea.click()
+                textarea.send_keys(tweet_text)
+                time_lib.sleep(1)
+                post_btn = driver.find_element(By.XPATH, TWITTER_POST_BUTTON_XPATH)
+                post_btn.click()
+                time_lib.sleep(3)
+                success("Pitch shared!")
+            except Exception as e:
+                error(f"Failed to share pitch: {e}")
+            finally:
+                if twitter._driver:
+                    try:
+                        twitter._driver.quit()
+                    except Exception:
+                        pass

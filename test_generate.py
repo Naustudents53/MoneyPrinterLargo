@@ -1,22 +1,12 @@
+
 """
 MoneyPrinterV2 - YouTube Short Generator (standalone test)
 Canal: Mind Glitch | Nicho: Science & Mystery Facts
 Voz: Carlos (es-MX) | 100% FREE tools
 """
 import sys, os, re, json, time, random, shutil, requests, urllib.parse
-sys.path.insert(0, "src")
 
-from PIL import Image as _PILImage
-if not hasattr(_PILImage, "ANTIALIAS"):
-    _PILImage.ANTIALIAS = _PILImage.LANCZOS
-
-if not shutil.which("ffmpeg"):
-    search = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages")
-    if os.path.isdir(search):
-        for root, dirs, files in os.walk(search):
-            if "ffmpeg.exe" in files:
-                os.environ["PATH"] = root + os.pathsep + os.environ.get("PATH", "")
-                break
+import compat  # noqa: E402
 
 from config import ROOT_DIR, get_fonts_dir, get_font, get_imagemagick_path
 from llm_provider import set_llm_provider, select_model, generate_text
@@ -33,7 +23,6 @@ print("  Canal: Mind Glitch | Voz: Carlos (es-MX)")
 print("  Imagenes: AI Horde (paralelo) + fallbacks")
 print("=" * 55)
 
-# ===== STEP 1: TOPIC =====
 print("\n[1/7] Generando tema...")
 topic = generate_text(
     "Genera una idea para un YouTube Short sobre un dato curioso de ciencia o misterio. "
@@ -44,7 +33,6 @@ if len(topic) > 200:
     topic = topic[:200]
 print(f"  >> {topic}")
 
-# ===== STEP 2: SCRIPT =====
 print("\n[2/7] Generando guion...")
 script = generate_text(
     f"Genera un guion de 4 oraciones cortas para YouTube Short sobre: {topic}. "
@@ -53,7 +41,6 @@ script = generate_text(
 script = re.sub(r"[*#\[\]{}]", "", script).strip()[:2000]
 print(f"  >> {script[:300]}")
 
-# ===== STEP 3: METADATA =====
 print("\n[3/7] Generando metadata...")
 title = generate_text(
     f"Titulo para YouTube Short sobre: {topic}. Espanol. 2 hashtags. Max 70 chars. Solo el titulo."
@@ -65,7 +52,6 @@ description = generate_text(
 print(f"  Titulo: {title}")
 print(f"  Desc: {description[:150]}")
 
-# ===== STEP 4: IMAGE PROMPTS =====
 print("\n[4/7] Generando prompts de imagen...")
 prompts_raw = generate_text(
     f'Generate 4 short image prompts about: {topic}. '
@@ -95,14 +81,12 @@ image_prompts = image_prompts[:4]
 for i, p in enumerate(image_prompts):
     print(f"  {i+1}. {p}")
 
-# ===== STEP 5: GENERATE IMAGES (PARALLEL AI HORDE) =====
 print("\n[5/7] Generando imagenes via AI Horde (PARALELO - 4 a la vez)...")
 print("  Submitting all 4 jobs at once to save time...")
 
 HORDE_URL = "https://stablehorde.net/api/v2"
 headers = {"apikey": "0000000000", "Content-Type": "application/json"}
 
-# Submit ALL jobs at once
 job_ids = []
 for i, prompt in enumerate(image_prompts):
     payload = {
@@ -123,13 +107,12 @@ for i, prompt in enumerate(image_prompts):
         job_ids.append("")
         print(f"  Job {i+1}: ERROR ({e})")
 
-# Wait for ALL jobs (parallel = only wait once)
 print("\n  Waiting for all images (they process in parallel)...")
 results = [None] * len(job_ids)
 pending = {i for i, jid in enumerate(job_ids) if jid}
 t0 = time.time()
 
-for tick in range(50):  # max ~4 min
+for tick in range(50):
     if not pending:
         break
     time.sleep(5)
@@ -154,7 +137,6 @@ for tick in range(50):  # max ~4 min
         elapsed = time.time() - t0
         print(f"  [{elapsed:.0f}s] Still waiting for {len(pending)} images...")
 
-# Save results + fallbacks
 images = []
 for i, (img_bytes, prompt) in enumerate(zip(results, image_prompts)):
     if img_bytes and len(img_bytes) > 1000:
@@ -162,7 +144,6 @@ for i, (img_bytes, prompt) in enumerate(zip(results, image_prompts)):
         with open(img_path, "wb") as f: f.write(img_bytes)
         images.append(img_path)
     else:
-        # Fallback: Picsum HD
         print(f"  Image {i+1}: Using Picsum fallback...")
         seed = abs(hash(prompt)) % 1000
         try:
@@ -175,7 +156,6 @@ for i, (img_bytes, prompt) in enumerate(zip(results, image_prompts)):
                 continue
         except Exception:
             pass
-        # Ultimate fallback: gradient
         from PIL import Image, ImageDraw, ImageFont
         img = Image.new("RGB", (1080, 1920), color=(25, 25, 80 + i*30))
         img_path = os.path.abspath(os.path.join(".mp", str(uuid4()) + ".png"))
@@ -186,7 +166,6 @@ for i, (img_bytes, prompt) in enumerate(zip(results, image_prompts)):
 total_time = time.time() - t0
 print(f"\n  All {len(images)} images ready in {total_time:.0f}s!")
 
-# ===== STEP 6: TTS ESPAÑOL =====
 print("\n[6/7] Generando voz en ESPANOL (Carlos, es-MX)...")
 tts = TTS()
 audio_path = os.path.abspath(os.path.join(".mp", str(uuid4()) + ".wav"))
@@ -194,7 +173,6 @@ clean_script = re.sub(r"[^\w\s.?!,]", "", script)
 tts.synthesize(clean_script, audio_path)
 print(f"  Audio: {os.path.getsize(audio_path)//1024}KB")
 
-# ===== STEP 7: COMBINE VIDEO =====
 print("\n[7/7] Combinando video final...")
 from moviepy.editor import ImageClip, AudioFileClip, CompositeAudioClip, concatenate_videoclips, afx
 from moviepy.video.fx.all import crop

@@ -4,13 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MoneyPrinterV2 (MPV2) is a Python 3.12 CLI tool that automates four online workflows:
-1. **YouTube Shorts** — generate video (LLM script → TTS → images → MoviePy composite) and upload via Selenium
+MoneyPrinterLargo is a Python 3.12 CLI tool that automates five online workflows:
+1. **YouTube Shorts & Long Video** — generate video (LLM script → TTS → images → MoviePy composite) and upload via Selenium
 2. **Twitter/X Bot** — generate and post tweets via Selenium
 3. **Affiliate Marketing** — scrape Amazon product info, generate pitch, share on Twitter
 4. **Local Business Outreach** — scrape Google Maps (Go binary), extract emails, send cold outreach via SMTP
+5. **Movie Summary** — download public-domain films, transcribe, cut clips, narrate, composite recap videos
 
-There is no web UI, no REST API, no test suite, no CI, and no linting config.
+There is also a **Next.js 16 web dashboard** in `studio/` with React 19, Tailwind CSS 4, Radix UI, Framer Motion, and Zustand.
+
+## Agent Configuration
+
+This project has 5 specialized agents in `.claude/agents/`. Delegate work to them via the Task tool:
+
+| Agent | Use for |
+|-------|---------|
+| **qa-engineer** | Writing tests (pytest, Playwright), code quality reviews, coverage checks |
+| **devops-engineer** | Docker, CI/CD, GitHub Actions, infrastructure setup |
+| **ux-ui-designer** | Dashboard design, component aesthetics, accessibility, video thumbnails |
+| **backend-developer** | Python CLI modules, YouTube/Twitter/Movie pipelines, LLM providers, Selenium |
+| **frontend-developer** | Next.js 16 dashboard with React 19, Radix UI, Zustand stores |
 
 ## Running the Application
 
@@ -20,7 +33,7 @@ cp config.example.json config.json   # then fill in values
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-# macOS quick setup (auto-configures Ollama, ImageMagick, Firefox profile)
+# macOS/Linux quick setup (auto-configures Ollama, ImageMagick, Firefox profile)
 bash scripts/setup_local.sh
 
 # Preflight check (validates services are reachable)
@@ -43,79 +56,77 @@ Two service categories use a string-based dispatch pattern configured in `config
 
 | Category | Config key | Options |
 |---|---|---|
-| LLM | `ollama_model` | Ollama (via `ollama` Python SDK). If empty, user picks from available models at startup. |
+| LLM | `llm_provider` | `gemini`, `ollama`, `pollinations` (cascading fallback) |
 | Image gen | — | `nanobanana2` (Gemini image API) |
-| STT | `stt_provider` | `local_whisper`, `third_party_assemblyai` |
-
-LLM always uses the local Ollama server. Image generation always uses Nano Banana 2.
+| STT | `stt_provider` | `local_whisper`, `assemblyai` |
 
 ### Key Modules
-- **`src/llm_provider.py`** — unified `generate_text(prompt)` function using the Ollama Python SDK
-- **`src/config.py`** — 30+ getter functions, each re-reads `config.json` on every call (no caching). `ROOT_DIR` = project root, computed as `os.path.dirname(sys.path[0])`
+- **`src/llm_provider.py`** — unified `generate_text(prompt)` with cascading fallback across 3 providers
+- **`src/config.py`** — 30+ getter functions with lazy-loaded caching, env var fallbacks. `ROOT_DIR` = project root
 - **`src/cache.py`** — JSON file persistence in `.mp/` directory (accounts, videos, posts, products)
 - **`src/constants.py`** — menu strings, Selenium selectors (YouTube Studio, X.com, Amazon)
-- **`src/classes/YouTube.py`** — most complex class; full pipeline: topic → script → metadata → image prompts → images → TTS → subtitles → MoviePy combine → Selenium upload
+- **`src/classes/YouTube.py`** — most complex class (~4365 lines); full pipeline: topic → script → metadata → image prompts → images → TTS → subtitles → MoviePy combine → Selenium upload
 - **`src/classes/Twitter.py`** — Selenium automation against x.com
 - **`src/classes/AFM.py`** — Amazon scraping + LLM pitch generation
 - **`src/classes/Outreach.py`** — Google Maps scraper (requires Go) + email sending via yagmail
-- **`src/classes/Tts.py`** — KittenTTS wrapper
+- **`src/classes/Tts.py`** — Edge-TTS / KittenTTS wrapper
+- **`src/classes/MovieSummary.py`** — end-to-end movie recap pipeline
+- **`src/classes/MovieCatalog.py`** — archive.org API catalog browser
+- **`src/classes/ImdbIndex.py`** — local IMDb index builder
 
 ### Data Storage
-All persistent state lives in `.mp/` at the project root as JSON files (`youtube.json`, `twitter.json`, `afm.json`). This directory also serves as scratch space for temporary WAV, PNG, SRT, and MP4 files — non-JSON files are cleaned on each run by `rem_temp_files()`.
+All persistent state lives in `.mp/` at the project root as JSON files. This directory also serves as scratch space for temporary WAV, PNG, SRT, and MP4 files — non-JSON files are cleaned on each run.
 
 ### Browser Automation
-Selenium uses pre-authenticated Firefox profiles (never handles login). The profile path is stored per-account in the cache JSON and also in `config.json` as a default.
+Selenium uses pre-authenticated Firefox profiles (never handles login). The profile path is stored per-account in the cache JSON.
 
 ### CRON Scheduling
-Uses Python's `schedule` library (in-process, not OS cron). The scheduled job spawns `subprocess.run(["python", "src/cron.py", platform, account_id])`.
+Uses Python's `schedule` library (in-process). The scheduled job spawns `subprocess.run(["python", "src/cron.py", platform, account_id])`.
 
 ## Configuration
 
-All config lives in `config.json` at the project root. See `config.example.json` for the full template and `docs/Configuration.md` for reference. Key external dependencies to configure:
+All config lives in `config.json` at the project root. See `config.example.json` for the full template and `docs/Configuration.md` for reference. Key external dependencies:
 - **ImageMagick** — required for MoviePy subtitle rendering (`imagemagick_path`)
-- **Firefox profile** — must be pre-logged-in to target platforms (`firefox_profile`)
-- **Ollama** — for LLM text generation (via `ollama` Python SDK)
-- **Nano Banana 2** — for image generation (Gemini image API)
+- **Firefox profile** — must be pre-authenticated to target platforms (`firefox_profile`)
+- **LLM** — Ollama server, Gemini API, or Pollinations.ai
+- **Image gen** — Gemini image API (Nano Banana 2)
 - **Go** — only needed for Outreach (Google Maps scraper)
 
-## Contributing
+## Testing
 
-PRs go against `main`. One feature/fix per PR. Open an issue first. Use `WIP` label for in-progress PRs.
+```bash
+# Run all tests with coverage
+python -m pytest tests/ --cov=src --cov-report=term-missing
+
+# Preflight check
+python scripts/preflight_local.py
+```
+
+Target 80%+ coverage on all new code. Follow TDD workflow (red → green → refactor with git checkpoints).
+
+## Studio Dashboard
+
+```bash
+cd studio
+npm run dev      # development server
+npm run build    # production build
+npm run lint     # ESLint check
+```
+
+The dashboard uses the Next.js 16 App Router. Read `studio/node_modules/next/dist/docs/` for API guidance as this version has breaking changes.
 
 ## Upstream merge policy (`andre` remote → `andrepichardo/MoneyPrinterV2`)
 
-This fork has diverged significantly. **Never run `git merge andre/main` blindly** — the upstream is on a simplification trajectory that deletes features we depend on. Cherry-pick only.
+This fork has diverged significantly. **Never run `git merge andre/main` blindly** — cherry-pick only.
 
-### Channel context (drives the policy)
+## Active channel context
 
-The active YouTube channel niche is **Universo / astronomía** (e.g. agujeros negros, supernovas, paradoja de Olbers). Movie Summary builds on top of that. There is no history-channel use case in this repo, so changes scoped to ancient civilizations are useless overhead here.
+The active YouTube channel niche is **Universo / astronomia** (black holes, supernovas, cosmos documentaries). Movie Summary builds on top of that.
 
 ### What we have that upstream is removing — DO NOT let a merge delete these
-
-- `scripts/peek_inspiration.py` — used to seed topics from external content
-- `scripts/video_from_inspiration.py` — full inspiration-driven pipeline
-- `src/inspire.py` — the inspiration module
-- `src/config.py::get_long_video_llm_model()` — required by Movie Summary; upstream deleted it
+- `scripts/peek_inspiration.py` — seeds topics from external content
+- `scripts/video_from_inspiration.py` — inspiration-driven pipeline
+- `src/inspire.py` — inspiration module
+- `src/config.py::get_long_video_llm_model()` — required by Movie Summary
 - Large chunks of `src/utils.py` and `src/llm_provider.py` (we have the more complete versions)
-- The entire Movie Summary stack we built locally (`MovieSummary.py`, `MovieCatalog.py`, `ImdbIndex.py`) — upstream doesn't know about these
-
-### What's safe to cherry-pick from upstream
-
-As of the last audit (commits `e321e5f` and earlier), **nothing**. Every change in those 7 commits is one of:
-- History-niche specific (era anchoring via `name`/`era_brief` fields on `CIVILIZATION_ART_STYLES`, the era-clause injection in `generate_long_prompts`, the 3 historical example scenes in the prompt) — irrelevant for the Universo niche, and the historical examples actively bias the LLM toward the wrong visuals
-- Already in our code in a more complete form (`SONG_KEYWORDS`, `choose_random_song`, song history) — our `utils.py` has these plus extras
-- A subset of forbidden-words lists we already have (we have the bigger list)
-
-### When we WOULD cherry-pick
-
-Re-audit the upstream only if one of:
-- We start a history channel (era anchoring becomes valuable)
-- Upstream lands a substantively new feature that's not in this list of "already have / not applicable"
-
-To audit safely:
-```bash
-git fetch andre
-git log HEAD..andre/main --oneline
-git diff HEAD..andre/main -- src/classes/YouTube.py
-```
-Apply changes by hand, never `git cherry-pick` the whole commit (their commits are titled "Update YouTube.py" with no body and bundle multiple unrelated edits).
+- The entire Movie Summary stack (`MovieSummary.py`, `MovieCatalog.py`, `ImdbIndex.py`)

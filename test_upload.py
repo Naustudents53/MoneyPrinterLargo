@@ -1,19 +1,15 @@
+
 """
 Test: Upload an existing video to YouTube via Selenium.
 This tests ONLY the upload flow, no video generation.
 """
 import sys, os, time, json, traceback
 
-sys.path.insert(0, "src")
-
-from PIL import Image as _PILImage
-if not hasattr(_PILImage, "ANTIALIAS"):
-    _PILImage.ANTIALIAS = _PILImage.LANCZOS
+import compat  # noqa: E402
 
 from config import get_verbose, get_headless
 from status import info, success, warning, error
 
-# Load account from cache
 with open(".mp/youtube.json", "r") as f:
     data = json.load(f)
 
@@ -30,7 +26,6 @@ if not os.path.exists(video_path):
     print("ERROR: No video found!")
     sys.exit(1)
 
-# Create YouTube instance
 print("\n[1] Initializing YouTube class (opens Firefox)...")
 from classes.YouTube import YouTube
 
@@ -42,7 +37,6 @@ yt = YouTube(
     language=account.get("language", "Spanish"),
 )
 
-# Set video path and metadata manually
 yt.video_path = video_path
 yt.metadata = {
     "title": "Agujeros negros: datos que no sabias #ciencia #shorts",
@@ -52,7 +46,6 @@ yt.metadata = {
 print(f"[2] Title: {yt.metadata['title']}")
 print(f"[3] Description: {yt.metadata['description']}")
 
-# Upload
 print("\n[4] Starting upload to YouTube...")
 print("    (Firefox should open and navigate to YouTube Studio)")
 print("    (Watch the browser to see the automation in action)")
