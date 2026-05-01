@@ -253,6 +253,12 @@ def get_pixabay_api_key() -> str:
         configured = json.load(file).get("pixabay_api_key", "")
         return configured or os.environ.get("PIXABAY_API_KEY", "")
 
+def get_europeana_api_key() -> str:
+    """Europeana cultural-heritage archive (free key from https://pro.europeana.eu)."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        configured = json.load(file).get("europeana_api_key", "")
+        return configured or os.environ.get("EUROPEANA_API_KEY", "")
+
 def get_ideogram_api_key() -> str:
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         configured = json.load(file).get("ideogram_api_key", "")

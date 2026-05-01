@@ -40,6 +40,47 @@ _PHOTO_STOPWORDS = {
 }
 
 
+# Generic historical/topic words that are NOT distinctive enough to anchor a
+# search result on the right subject. A result whose title only matches these
+# is considered off-topic — e.g. a video about Nero must NOT accept any photo
+# whose only overlap is "roman" or "emperor". The relevance filter requires
+# at least one truly distinctive token (proper noun / unique term) on top of
+# these. Keep this list conservative — adding a real proper noun here would
+# silently disable relevance checks for that subject.
+_GENERIC_TOPIC_TOKENS = {
+    # Eras / civilizations / generic adjectives
+    "ancient", "antiguo", "antigua", "antiguos", "antiguas",
+    "old", "viejo", "vieja", "modern", "moderno", "moderna",
+    "history", "historia", "historical", "historic", "historico", "historica",
+    "story", "tale", "cuento", "relato",
+    "civilization", "civilizacion", "culture", "cultura", "era", "epoca", "period", "periodo",
+    # Civilizations / nationalities (won't disambiguate one figure from another)
+    "roman", "romano", "romana", "romanos", "romanas",
+    "greek", "griego", "griega", "griegos", "griegas",
+    "egyptian", "egipcio", "egipcia", "egipcios", "egipcias",
+    "chinese", "chino", "china", "chinos", "chinas",
+    "japanese", "japones", "japonesa", "japoneses", "japonesas",
+    "indian", "indio", "india", "indios", "indias",
+    "european", "europeo", "europea", "asian", "asiatico", "asiatica",
+    "african", "africano", "africana", "american", "americano", "americana",
+    # Common roles
+    "emperor", "emperador", "emperatriz", "empress",
+    "king", "rey", "queen", "reina",
+    "prince", "principe", "princess", "princesa",
+    "soldier", "soldado", "warrior", "guerrero", "guerrera",
+    "priest", "sacerdote", "priestess", "sacerdotisa",
+    "people", "gente", "person", "persona", "man", "hombre", "woman", "mujer",
+    # Generic places / objects
+    "city", "ciudad", "town", "village", "pueblo", "place", "lugar",
+    "world", "mundo", "earth", "tierra", "land", "country", "pais",
+    "war", "guerra", "battle", "batalla", "fight", "combate",
+    "great", "grande", "famous", "famoso", "famosa", "important", "importante",
+    "life", "vida", "death", "muerte",
+    "scene", "escena", "view", "vista", "image", "imagen", "photo", "foto",
+    "art", "arte", "painting", "pintura", "statue", "estatua",
+}
+
+
 # Per-channel hook style presets used by `generate_script`. Each entry is
 # (style_name, hook_example). One style is picked at random per script so
 # every short doesn't open the same way. Configure on the account JSON via
@@ -965,26 +1006,32 @@ CRITICAL RULES:
         if image_mode == "photos":
             prompt = f"""Generate exactly {n_prompts} short SEARCH QUERIES to find REAL historical/documentary/educational images for a video about: {self.subject}
 
-These queries will be searched against Wikipedia articles + Wikimedia Commons + Met Museum + Library of Congress. Tailor the wording for those archives.
+These queries will be searched against Wikidata + Wikipedia + Wikimedia Commons + Europeana + Met Museum + Library of Congress. Tailor the wording for those archives.
 
-CRITICAL: use the CANONICAL ENGLISH NAME (the form Wikipedia uses for the article title) for every person, place, event, or work. Examples:
+ABSOLUTE RULE — SUBJECT ANCHORING:
+Every single query MUST contain the canonical English name of the subject (or, if the section is about a specific historical event/place/person tied to the subject, that proper noun directly — e.g. "Domus Aurea" or "Great Fire of Rome" for a Nero video). NEVER write a query that is just a generic concept ("ancient Roman temple", "imperial banquet", "Roman senator portrait") — the search will return random unrelated results. The subject's proper noun, or a proper noun strictly identifying the same exact thing/event/person, MUST be present in every query.
+
+CRITICAL — use the CANONICAL ENGLISH NAME (the form Wikipedia uses for the article title) for every person, place, event, or work:
   - WRONG: "Hipparchus the astronomer of stars"   →   RIGHT: "Hipparchus of Nicaea"
   - WRONG: "Marco Aurelio philosophy book"        →   RIGHT: "Marcus Aurelius" or "Meditations Marcus Aurelius"
   - WRONG: "Roman vestal virgin priestess fire"   →   RIGHT: "Vestal Virgins" or "Temple of Vesta"
   - WRONG: "Alexander conquering Persians battle" →   RIGHT: "Battle of Gaugamela"
-  - WRONG: "ancient Egypt cat goddess statue"     →   RIGHT: "Bastet" or "Egyptian cat goddess"
-A Wikipedia article should EXIST for the subject of every query. If unsure, prefer the proper noun on its own.
+  - WRONG: "ancient Egypt cat goddess statue"     →   RIGHT: "Bastet" (specific deity, not a generic "Egyptian cat goddess")
+A Wikipedia article should EXIST for the subject of every query.
+
+ANCHORING EXAMPLES — for a video about "Nero":
+  - GOOD: "Nero portrait bust", "Nero Domus Aurea", "Great Fire of Rome 64 AD", "Nero Capitoline Museum", "Nero coin denarius", "Tacitus Annals Nero".
+  - BAD:  "Roman emperor toga", "ancient Rome fire", "imperial palace Rome", "Roman bust marble". (None mentions Nero or a proper noun strictly tied to him.)
 
 The script has been divided into {n_prompts} sections. Each query must match its section:
 {sections_text}
 INSTRUCTIONS:
 - Query 1 finds a photo for SECTION 1, Query 2 for SECTION 2, etc.
-- Use PROPER NOUNS: real names of people, places, buildings, objects, events.
+- Each query MUST contain at least one PROPER NOUN strictly identifying the subject (e.g. "Nero", "Domus Aurea", "Great Fire of Rome").
 - 3 to 7 words per query. No full sentences.
 - FORBIDDEN words: cinematic, dramatic, lighting, 8K, 4K, photorealistic, HD, macro, bokeh, shot, close-up, aerial, style, composition, render, aesthetic. No adjectives describing mood or camera.
-- Good examples: "Cosimo I de Medici portrait", "Torre dei Mannelli Florence", "Ponte Vecchio historical engraving", "Giorgio Vasari self-portrait".
-- Bad examples: "a dramatic portrait of a duke", "beautiful Italian architecture at golden hour".
-- Write in English (Wikimedia/stock sites index in English).
+- FORBIDDEN as the ONLY proper noun in a query: civilization adjectives ("Roman", "Greek", "Egyptian"), generic roles ("emperor", "king", "soldier"), or generic places ("city", "temple"). They may appear, but never alone.
+- Write in English (most archives index in English).
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         else:
@@ -1468,6 +1515,49 @@ No markdown. No explanation. Just the JSON array."""
         tokens = re.findall(r"[a-zà-ÿ]+", combined)
         return {t for t in tokens if len(t) > 2 and t not in _PHOTO_STOPWORDS}
 
+    def _strict_anchor_tokens(self) -> set:
+        """Distinctive tokens from the subject — generic words like 'roman' or
+        'emperor' are dropped. These act as the must-match anchor when
+        validating that a result is actually on-topic."""
+        return set(self._topic_keywords()) - _GENERIC_TOPIC_TOKENS
+
+    def _query_proper_nouns(self, query: str) -> set:
+        """Capitalized words from the query — usually identify a specific
+        person/place/event we want to actually appear in the result.
+        Generic tokens (e.g. 'Roman') are stripped so they don't satisfy the
+        anchor check on their own."""
+        if not query:
+            return set()
+        nouns = re.findall(r"\b[A-ZÁ-ÚÑ][\wÀ-ſ]{2,}\b", query)
+        out = set()
+        for n in nouns:
+            t = n.lower()
+            if t in _PHOTO_STOPWORDS or t in _GENERIC_TOPIC_TOKENS:
+                continue
+            out.add(t)
+        return out
+
+    def _is_relevant(self, query: str, *result_texts: str) -> bool:
+        """Strict relevance check used by every photo provider.
+
+        A result counts as on-topic if it contains AT LEAST ONE distinctive
+        anchor token — either from the subject itself or from the query's
+        proper nouns. Generic words ('roman', 'emperor', 'history') are NOT
+        sufficient on their own. If we can't derive any anchor (rare — e.g.
+        the subject is a generic phrase), we fall back to the previous
+        any-token overlap so the pipeline doesn't deadlock.
+        """
+        result_tokens = self._query_tokens(*result_texts)
+        if not result_tokens:
+            return False
+        anchors = self._strict_anchor_tokens() | self._query_proper_nouns(query)
+        if anchors:
+            return bool(anchors & result_tokens)
+        # No anchors at all → fall back to the loose any-token check so we
+        # still trim obvious off-topic results.
+        loose = self._query_tokens(query, self.subject)
+        return bool(loose & result_tokens) if loose else True
+
     def _extract_search_query(self, prompt: str) -> str:
         """Extract clean search keywords from an AI image prompt for stock photo search."""
         import re
@@ -1511,13 +1601,13 @@ No markdown. No explanation. Just the JSON array."""
         if not photos:
             raise RuntimeError("Pexels: no photos found")
 
-        # Relevance filter: alt text must share a keyword with the subject/query.
-        relevance_tokens = self._query_tokens(query, self.subject)
-        if relevance_tokens:
-            relevant = [p for p in photos if relevance_tokens & self._query_tokens(p.get("alt") or "")]
-            if not relevant:
-                raise RuntimeError("Pexels: no relevant photos (all off-topic)")
-            photos = relevant
+        # Relevance filter: alt text must contain a distinctive anchor token
+        # from the subject or one of the query's proper nouns. Generic words
+        # ('roman', 'emperor', etc.) alone are NOT enough — see _is_relevant.
+        relevant = [p for p in photos if self._is_relevant(query, p.get("alt") or "")]
+        if not relevant:
+            raise RuntimeError("Pexels: no relevant photos (all off-topic)")
+        photos = relevant
 
         # Filter out already-used images
         available = [p for p in photos if p["src"]["large2x"] not in self._used_stock_urls]
@@ -1560,13 +1650,12 @@ No markdown. No explanation. Just the JSON array."""
         if not hits:
             raise RuntimeError("Pixabay: no photos found")
 
-        # Relevance filter: Pixabay `tags` is a comma-separated list — require keyword overlap.
-        relevance_tokens = self._query_tokens(query, self.subject)
-        if relevance_tokens:
-            relevant = [h for h in hits if relevance_tokens & self._query_tokens(h.get("tags") or "")]
-            if not relevant:
-                raise RuntimeError("Pixabay: no relevant photos (all off-topic)")
-            hits = relevant
+        # Relevance filter: Pixabay `tags` is a comma-separated list — require
+        # a distinctive anchor token (proper noun) overlap, not just any word.
+        relevant = [h for h in hits if self._is_relevant(query, h.get("tags") or "")]
+        if not relevant:
+            raise RuntimeError("Pixabay: no relevant photos (all off-topic)")
+        hits = relevant
 
         # Filter out already-used images
         available = [h for h in hits if h.get("largeImageURL", "") not in self._used_stock_urls]
@@ -1608,7 +1697,6 @@ No markdown. No explanation. Just the JSON array."""
         wikis = [ch_lang, "en"] if ch_lang != "en" else ["en"]
 
         headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
-        relevance_tokens = self._query_tokens(query, self.subject)
 
         for wiki in wikis:
             print(colored(f"    [Wikipedia/{wiki}] Searching: {query[:60]}...", "cyan"), flush=True)
@@ -1635,10 +1723,11 @@ No markdown. No explanation. Just the JSON array."""
                     img_url = self._wikipedia_main_image(wiki, title, headers)
                     if not img_url or img_url in self._used_stock_urls:
                         continue
-                    # Optional relevance check using the article title.
-                    if relevance_tokens:
-                        if not (relevance_tokens & self._query_tokens(title)):
-                            continue
+                    # Strict relevance check: the article title must contain
+                    # at least one distinctive anchor token from the subject
+                    # or query's proper nouns.
+                    if not self._is_relevant(query, title):
+                        continue
                     try:
                         img_resp = requests.get(img_url, headers=headers, timeout=60)
                         if img_resp.status_code == 200 and len(img_resp.content) > 10000:
@@ -1702,7 +1791,6 @@ No markdown. No explanation. Just the JSON array."""
                 seen.add(v.lower())
 
         headers = {"User-Agent": "MoneyPrinterV2/1.0 (https://github.com/; research use)"}
-        relevance_tokens = self._query_tokens(query, self.subject)
 
         for variant in variants:
             print(colored(f"    [Wikimedia] Searching: {variant[:60]}...", "cyan"), flush=True)
@@ -1735,11 +1823,11 @@ No markdown. No explanation. Just the JSON array."""
                         continue
                     if min(w, h) < 600:
                         continue
-                    # Relevance check: the file's title (e.g. "File:Hipparchus.jpg") should
-                    # share at least one significant token with the query/subject.
-                    if relevance_tokens:
-                        if not (relevance_tokens & self._query_tokens(title)):
-                            continue
+                    # Strict relevance check: file title (e.g. "File:Hipparchus.jpg")
+                    # must contain a distinctive anchor token from the subject
+                    # or query's proper nouns. Generic adjectives don't count.
+                    if not self._is_relevant(variant, title):
+                        continue
                     candidates.append(url)
 
                 if not candidates:
@@ -1786,7 +1874,6 @@ No markdown. No explanation. Just the JSON array."""
             raise RuntimeError("Met Museum: no results")
 
         random.shuffle(obj_ids)
-        relevance_tokens = self._query_tokens(query, self.subject)
 
         for obj_id in obj_ids[:8]:
             try:
@@ -1799,16 +1886,16 @@ No markdown. No explanation. Just the JSON array."""
                 img_url = obj.get("primaryImage") or ""
                 if not img_url or img_url in self._used_stock_urls:
                     continue
-                # Relevance check against the object's metadata.
+                # Strict relevance check against the object's metadata —
+                # generic culture/period words ("Roman", "Imperial") on their
+                # own do not satisfy _is_relevant.
                 metadata_blob = " ".join(
                     str(obj.get(k, "")) for k in
                     ("title", "culture", "period", "objectName", "department",
                      "classification", "artistDisplayName", "country", "region")
                 )
-                if relevance_tokens:
-                    blob_tokens = self._query_tokens(metadata_blob)
-                    if not (relevance_tokens & blob_tokens):
-                        continue
+                if not self._is_relevant(query, metadata_blob):
+                    continue
                 img_resp = requests.get(img_url, headers=headers, timeout=60)
                 if img_resp.status_code == 200 and len(img_resp.content) > 10000:
                     self._used_stock_urls.add(img_url)
@@ -1842,7 +1929,6 @@ No markdown. No explanation. Just the JSON array."""
         if not results:
             raise RuntimeError("LoC: no results")
 
-        relevance_tokens = self._query_tokens(query, self.subject)
         candidates = []
         for r in results:
             urls = r.get("image_url") or []
@@ -1858,10 +1944,10 @@ No markdown. No explanation. Just the JSON array."""
                 descr = " ".join(str(d) for d in descr)
             subj = r.get("subject") or []
             subj_text = " ".join(subj) if isinstance(subj, list) else str(subj)
-            if relevance_tokens:
-                blob_tokens = self._query_tokens(title, str(descr), subj_text)
-                if not (relevance_tokens & blob_tokens):
-                    continue
+            # Strict relevance: at least one distinctive anchor token must
+            # appear in title/description/subject metadata.
+            if not self._is_relevant(query, title, str(descr), subj_text):
+                continue
             candidates.append(img_url)
 
         if not candidates:
@@ -1878,6 +1964,251 @@ No markdown. No explanation. Just the JSON array."""
             except Exception:
                 continue
         raise RuntimeError("LoC: failed to download any candidate")
+
+    def _try_wikidata(self, prompt: str) -> bytes:
+        """
+        Wikidata-driven image lookup. The flow is:
+          1. Search Wikidata entities for the query in the channel language
+             (es/en) — returns a Q-id whose label most closely matches.
+          2. Fetch that entity's claims:
+             * P18 (image) → curated lead image used by every Wikipedia entry.
+             * P373 (Commons category) → curated category of related images
+               about that exact entity (statues, coins, frescoes, etc.).
+          3. Verify the entity's labels actually contain a distinctive anchor
+             token from the subject — protects against Q-id collisions
+             (e.g. "Nero" → musician vs. emperor).
+
+        Why this works better than fuzzy article search: Wikidata returns a
+        deterministic entity ID, not a free-text article match. The image we
+        get back is the canonical one Wikipedia uses everywhere — so for
+        "Nero", we get the bust from the Capitoline Museums, not a generic
+        Roman ruin.
+        """
+        import urllib.parse
+        import random
+
+        query = prompt.strip()
+        if len(query) > 60 or any(w in query.lower() for w in ("cinematic", "8k", "lighting", "photorealistic")):
+            query = self._extract_search_query(prompt)
+
+        lang_map = {"spanish": "es", "english": "en", "portuguese": "pt", "french": "fr",
+                    "german": "de", "italian": "it"}
+        ch_lang = lang_map.get((self._language or "").lower(), "en")
+        languages = [ch_lang, "en"] if ch_lang != "en" else ["en"]
+
+        headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
+
+        for lang in languages:
+            print(colored(f"    [Wikidata/{lang}] Searching: {query[:60]}...", "cyan"), flush=True)
+            try:
+                search_url = (
+                    "https://www.wikidata.org/w/api.php"
+                    "?action=wbsearchentities&format=json&type=item"
+                    f"&language={lang}&uselang={lang}"
+                    f"&search={urllib.parse.quote(query)}&limit=8"
+                )
+                resp = requests.get(search_url, headers=headers, timeout=20)
+                resp.raise_for_status()
+                entities = resp.json().get("search") or []
+                if not entities:
+                    continue
+
+                for ent in entities[:5]:
+                    qid = ent.get("id") or ""
+                    label = ent.get("label") or ""
+                    desc = ent.get("description") or ""
+                    if not qid:
+                        continue
+
+                    # Anchor check: the entity label/description must contain a
+                    # distinctive token from the subject or the query's proper
+                    # nouns. Filters out unrelated Q-ids that happen to share
+                    # a generic word.
+                    if not self._is_relevant(query, label, desc):
+                        continue
+
+                    # Fetch the entity's claims.
+                    ent_url = f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json"
+                    try:
+                        ent_resp = requests.get(ent_url, headers=headers, timeout=20)
+                        ent_resp.raise_for_status()
+                        claims = (
+                            ent_resp.json()
+                            .get("entities", {})
+                            .get(qid, {})
+                            .get("claims", {})
+                        )
+                    except Exception:
+                        continue
+
+                    # Collect candidate Commons filenames.
+                    candidates: List[str] = []
+
+                    # P18 = primary image. Curated, single best image.
+                    p18 = claims.get("P18") or []
+                    for c in p18:
+                        try:
+                            fname = c["mainsnak"]["datavalue"]["value"]
+                            if fname:
+                                candidates.append(fname)
+                        except Exception:
+                            continue
+
+                    # P373 = Commons category. Pull a sample of files from it
+                    # so we get variety (busts, coins, paintings, etc.).
+                    p373 = claims.get("P373") or []
+                    for c in p373[:1]:
+                        try:
+                            cat_name = c["mainsnak"]["datavalue"]["value"]
+                        except Exception:
+                            continue
+                        if not cat_name:
+                            continue
+                        try:
+                            cat_url = (
+                                "https://commons.wikimedia.org/w/api.php"
+                                "?action=query&format=json&list=categorymembers"
+                                f"&cmtitle=Category:{urllib.parse.quote(cat_name)}"
+                                "&cmtype=file&cmlimit=20"
+                            )
+                            cat_resp = requests.get(cat_url, headers=headers, timeout=20)
+                            cat_resp.raise_for_status()
+                            members = (
+                                cat_resp.json()
+                                .get("query", {})
+                                .get("categorymembers", [])
+                            )
+                            for m in members:
+                                title = m.get("title") or ""
+                                if title.startswith("File:"):
+                                    fname = title[5:]
+                                    # Skip non-image / generic logos.
+                                    if any(fname.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
+                                        candidates.append(fname)
+                        except Exception:
+                            continue
+
+                    if not candidates:
+                        continue
+
+                    # Resolve filenames to full-resolution URLs via Special:FilePath.
+                    random.shuffle(candidates)
+                    for fname in candidates[:8]:
+                        img_url = (
+                            "https://commons.wikimedia.org/wiki/Special:FilePath/"
+                            + urllib.parse.quote(fname.replace(" ", "_"))
+                        )
+                        if img_url in self._used_stock_urls:
+                            continue
+                        try:
+                            img_resp = requests.get(img_url, headers=headers, timeout=60, allow_redirects=True)
+                            if img_resp.status_code == 200 and len(img_resp.content) > 10000:
+                                self._used_stock_urls.add(img_url)
+                                print(colored(f"OK ({label[:40]} / {qid})", "green"))
+                                return img_resp.content
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+
+        raise RuntimeError("Wikidata: no suitable entity image found")
+
+    def _try_europeana(self, prompt: str) -> bytes:
+        """
+        Europeana — aggregator of European cultural-heritage institutions
+        (museums, libraries, archives). Free API key required.
+        Coverage is similar in quality to Wikipedia for historical/art topics
+        and often surfaces material that isn't on Commons (museum scans,
+        digitized prints, period engravings).
+
+        Docs: https://pro.europeana.eu/page/intro
+        """
+        from config import get_europeana_api_key
+        api_key = get_europeana_api_key()
+        if not api_key:
+            raise RuntimeError("Europeana API key not configured")
+
+        import urllib.parse
+        import random
+
+        query = prompt.strip()
+        if len(query) > 60 or any(w in query.lower() for w in ("cinematic", "8k", "lighting", "photorealistic")):
+            query = self._extract_search_query(prompt)
+
+        print(colored(f"    [Europeana] Searching: {query[:60]}...", "cyan"), flush=True)
+        headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
+
+        # `media=true` → only items with a real media URL we can download.
+        # `type=IMAGE` → drops audio/video/text. `reusability=open` would be
+        # safer for licensing but excludes too much; we keep results broad
+        # since the videos are not commercial in nature.
+        search_url = (
+            "https://api.europeana.eu/record/v2/search.json"
+            f"?wskey={urllib.parse.quote(api_key)}"
+            f"&query={urllib.parse.quote(query)}"
+            "&type=IMAGE&media=true&thumbnail=true&rows=20&profile=rich"
+        )
+        resp = requests.get(search_url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        items = resp.json().get("items") or []
+        if not items:
+            raise RuntimeError("Europeana: no results")
+
+        candidates = []
+        for it in items:
+            # Strict relevance: title + dcSubject + dcDescription must contain
+            # a distinctive anchor token. Each field can be a list of strings
+            # (Europeana returns localised variants), so flatten to a blob.
+            def _flat(field) -> str:
+                v = it.get(field)
+                if not v:
+                    return ""
+                if isinstance(v, list):
+                    return " ".join(str(x) for x in v)
+                return str(v)
+
+            blob = " ".join(_flat(f) for f in (
+                "title", "dcTitle", "dcSubject", "dcDescription",
+                "dcCreator", "edmConceptPrefLabel", "dataProvider",
+            ))
+            if not self._is_relevant(query, blob):
+                continue
+
+            # Prefer the full-resolution media; fall back to the preview.
+            img_url = ""
+            for k in ("edmIsShownBy", "edmIsShownAt", "edmPreview"):
+                v = it.get(k)
+                if isinstance(v, list) and v:
+                    img_url = str(v[0])
+                    break
+                if isinstance(v, str) and v:
+                    img_url = v
+                    break
+            if not img_url or img_url in self._used_stock_urls:
+                continue
+            candidates.append(img_url)
+
+        if not candidates:
+            raise RuntimeError("Europeana: no relevant images")
+
+        random.shuffle(candidates)
+        for img_url in candidates[:6]:
+            try:
+                img_resp = requests.get(img_url, headers=headers, timeout=60, allow_redirects=True)
+                # Europeana sometimes proxies through HTML pages; require a
+                # real image content-type AND a reasonable size.
+                ctype = img_resp.headers.get("Content-Type", "").lower()
+                if (
+                    img_resp.status_code == 200
+                    and len(img_resp.content) > 10000
+                    and ("image/" in ctype or img_url.lower().endswith((".jpg", ".jpeg", ".png", ".webp")))
+                ):
+                    self._used_stock_urls.add(img_url)
+                    print(colored("OK", "green"))
+                    return img_resp.content
+            except Exception:
+                continue
+        raise RuntimeError("Europeana: failed to download any candidate")
 
     def _try_picsum_stock(self, prompt: str) -> bytes:
         """Fallback: HD stock photo from Picsum (fast, always works)."""
@@ -1968,17 +2299,28 @@ No markdown. No explanation. Just the JSON array."""
         if image_mode == "photos":
             print(colored(f"\n  [Images] Fetching {len(prompts)} real photos...", "blue"))
             providers = [
-                # Tier 1: curated, attribution-friendly historical/educational sources
-                # (Wikipedia-style — factual, on-topic). Wikipedia article first because
-                # it returns the curated infobox image (more reliable than Commons file search).
+                # Tier 1: deterministic entity-based lookup. Wikidata maps the
+                # query to a concrete entity (Q-id) and returns the curated
+                # lead image (P18) plus a sample of files from its Commons
+                # category (P373). Far more precise than fuzzy article search,
+                # so it goes first.
+                ("Wikidata", self._try_wikidata, "stock"),
+                # Tier 2: fuzzy Wikipedia article search (handles redirects,
+                # spelling variants) → curated infobox image.
                 ("Wikipedia article", self._try_wikipedia_article, "stock"),
+                # Tier 3: free-text search across other curated heritage
+                # archives. Europeana aggregates European museums/libraries,
+                # Wikimedia Commons covers everything else, Met Museum and
+                # Library of Congress cover art and historical photos.
+                ("Europeana", self._try_europeana, "stock"),
                 ("Wikimedia Commons", self._try_wikimedia, "stock"),
                 ("Met Museum", self._try_met_museum, "stock"),
                 ("Library of Congress", self._try_loc, "stock"),
-                # Tier 2: modern stock (filtered by relevance) — useful for non-historical topics
+                # Tier 4: modern stock (filtered by relevance) — useful for
+                # non-historical topics where heritage archives are sparse.
                 ("Pexels", self._try_pexels, "stock"),
                 ("Pixabay", self._try_pixabay, "stock"),
-                # Tier 3: AI fallback when no real photo matches the topic
+                # Tier 5: AI fallback when no real photo matches the topic.
                 ("Nano Banana 2", self._try_nanobanana2, "ai"),
                 ("Leonardo AI", self._try_leonardo, "ai"),
                 ("Pollinations FLUX", self._try_pollinations, "ai"),
