@@ -1313,6 +1313,10 @@ No markdown. No explanation. Just the JSON array."""
         model = get_nanobanana2_model() or "gemini-3.1-flash-image-preview"
         url = f"{base_url}/models/{model}:generateContent?key={api_key}"
 
+        # Final defensive sanitization — strip collage triggers in case the
+        # prompt arrived without going through _apply_channel_style.
+        prompt = self._sanitize_image_prompt(prompt)
+
         print(colored(f"    [Nano Banana 2 {aspect_ratio}] Generating...", "cyan"), flush=True)
         payload = {
             "contents": [{"parts": [{"text": prompt[:1900]}]}],
@@ -1410,24 +1414,58 @@ No markdown. No explanation. Just the JSON array."""
         return self._apply_channel_style(out)
 
     # Default visual baseline applied when a channel has NO `image_style`
-    # configured. Goal: keep all images of a single video uniform (same look,
-    # same realism level) and let the scene description itself carry the
-    # period-accurate clothing / setting / objects. We deliberately avoid any
-    # "art style" cue (no "cinematic", "painting", "cartoon", "illustration").
+    # configured. Goal: keep all images uniform (same realism level) and let
+    # the scene description itself carry the period-accurate clothing / setting
+    # / objects. We deliberately avoid any "art style" cue (no "cinematic",
+    # "painting", "cartoon", "illustration").
     #
-    # CRITICAL: never use the word "series", "sequence", "frames", "scenes"
-    # (plural), "panels", or anything that hints at multiple images. Gemini /
-    # Nano Banana 2 read those as "give me a comic-strip storyboard" and
-    # return a vertical collage of stacked panels instead of one clean image.
-    # Same reason for the explicit "single frame, one image" anchor.
+    # PROMPTING NOTES:
+    # - Lead with strong POSITIVE single-frame phrasing ("one full-bleed
+    #   photograph filling the entire frame edge to edge"). Gemini / Nano
+    #   Banana 2 respond much better to positive composition anchors than to
+    #   "no panels / no collage" negatives, which can backfire via priming.
+    # - Include explicit face/skin/hands realism cues so portraits stop looking
+    #   plasticky and AI-glossy.
     DEFAULT_BASE_STYLE = (
-        "photorealistic image, true-to-life realism, natural realistic lighting, "
+        "one full-bleed photograph filling the entire frame edge to edge, "
+        "one continuous uninterrupted scene captured in a single exposure, "
+        "photorealistic, true-to-life realism, natural ambient lighting, "
         "period-accurate clothing architecture weapons and everyday objects, "
         "authentic materials and textures, neutral documentary tone, "
-        "single frame, one image, full uncropped composition, "
-        "no panels, no collage, no comic strip, no storyboard, no split screen, no grid, "
-        "no cartoon, no illustration, no painting, no anime, no stylization"
+        "anatomically correct human faces with realistic skin texture, visible pores, subtle imperfections, "
+        "natural facial proportions, sharp detailed eyes with realistic iris, "
+        "accurate hands with five fingers, correct anatomy, "
+        "subtle film grain, shallow depth of field, "
+        "no cartoon, no illustration, no painting, no anime, no stylization, no plastic skin, no waxy skin"
     )
+
+    # Words that frequently push Gemini / Nano Banana 2 toward producing a
+    # multi-panel collage instead of a single image. Stripped from any LLM
+    # prompt before it's sent to the image generator. Word-boundary regex.
+    _COLLAGE_TRIGGERS = re.compile(
+        r"\b("
+        r"collage|montage|storyboard|comic[- ]?strip|panels?|grid|split[- ]?screen|"
+        r"diptych|triptych|polyptych|side[- ]?by[- ]?side|before[- ]?and[- ]?after|"
+        r"sequences?|series of|set of \d+|multiple (?:images|scenes|frames)|"
+        r"frames?|stills?|tiled|stacked"
+        r")\b",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _sanitize_image_prompt(cls, text: str) -> str:
+        """Remove multi-image trigger words from a prompt. Image generators
+        (especially Gemini) interpret words like "panels", "sequence",
+        "storyboard" as a request for a collage even when context says "one
+        image" — so we strip them defensively before sending."""
+        if not text:
+            return text
+        cleaned = cls._COLLAGE_TRIGGERS.sub("", text)
+        # Collapse double spaces and stray punctuation left after substitution.
+        cleaned = re.sub(r"\s{2,}", " ", cleaned)
+        cleaned = re.sub(r"\s+,", ",", cleaned)
+        cleaned = re.sub(r",\s*,", ",", cleaned)
+        return cleaned.strip(" ,")
 
     def _apply_channel_style(self, prompt: str) -> str:
         """
@@ -1437,28 +1475,58 @@ No markdown. No explanation. Just the JSON array."""
         same video shares the same look — instead of each provider/prompt
         rendering in its own random aesthetic.
 
-        The style suffix never contains civilization-specific art cues; period
-        accuracy is enforced inside the SCENE description (clothing, objects,
-        setting) by the LLM, not by the style suffix.
+        ALSO injects a guaranteed civilization/era anchor (period clothing,
+        architecture, weapons) when the topic matches a known civilization.
+        Without this, when the LLM writes a vague scene like "soldier walking
+        through a battlefield" Gemini renders a 20th-century soldier instead
+        of, say, an ancient Greek hoplite — even though the LLM was told the
+        era. We inject the anchor directly into the image-gen prompt so the
+        period markers can't be forgotten.
         """
+        clean_prompt = self._sanitize_image_prompt(prompt)
+
+        civ_info = self._get_civilization_info()
+        era_anchor = ""
+        if civ_info and civ_info.get("era_brief"):
+            era_anchor = (
+                f"Setting: {civ_info['name']}. "
+                f"Period-accurate visual anchors that MUST appear when relevant — "
+                f"{civ_info['era_brief']}. "
+                f"Any clothing, armor, weapons, architecture and objects strictly from this era only. "
+                f"No modern military uniforms, no industrial-era clothing, no anachronistic items."
+            )
+
         suffix = self._image_style.strip() if self._image_style else self.DEFAULT_BASE_STYLE
-        combined = f"{prompt.rstrip(', .')}, {suffix}"
-        # Hard cap to ~1000 chars so we don't blow past provider input limits.
-        return combined[:1000]
+        parts = [clean_prompt.rstrip(', .')]
+        if era_anchor:
+            parts.append(era_anchor)
+        parts.append(suffix)
+        combined = ". ".join(p for p in parts if p)
+        # Hard cap to ~1500 chars — Gemini accepts up to ~1900 in our payload
+        # cap, so this leaves headroom while preventing prompt explosion.
+        return combined[:1500]
 
     def _detect_civilization(self) -> str:
         """
-        Match self.subject against CIVILIZATIONS keyword lists and return the
-        winning civ key (or "" if none). Matching is accent- and case-insensitive;
-        highest keyword-hit count wins. Cached per subject.
+        Match the topic + script against CIVILIZATIONS keyword lists and return
+        the winning civ key (or "" if none). Matching is accent- and
+        case-insensitive; highest keyword-hit count wins. Subject keywords
+        weigh 3x because the title is a stronger signal than the body. Cached
+        per (subject, script) pair.
+
+        Looking at the script too matters because abstract titles like "El
+        código de honor más extremo" don't carry civ keywords, but the body
+        of the script will mention Sparta, hoplites, etc.
         """
         import unicodedata
 
         subject = (getattr(self, "subject", "") or "").strip()
-        if not subject:
+        script = (getattr(self, "script", "") or "").strip()
+        if not subject and not script:
             return ""
 
-        if getattr(self, "_civ_subject_cached", None) == subject:
+        cache_key = (subject, len(script))
+        if getattr(self, "_civ_cache_key", None) == cache_key:
             return getattr(self, "_civ_key_cached", "") or ""
 
         def _norm(s: str) -> str:
@@ -1469,18 +1537,26 @@ No markdown. No explanation. Just the JSON array."""
             )
 
         norm_subject = _norm(subject)
+        norm_script = _norm(script[:4000])  # cap so huge scripts don't dominate
+
         best_civ = ""
         best_score = 0
         for civ, data in CIVILIZATIONS.items():
-            score = sum(1 for kw in data["keywords"] if _norm(kw) in norm_subject)
+            score = 0
+            for kw in data["keywords"]:
+                k = _norm(kw)
+                if k in norm_subject:
+                    score += 3
+                if k in norm_script:
+                    score += 1
             if score > best_score:
                 best_score = score
                 best_civ = civ
 
-        self._civ_subject_cached = subject
+        self._civ_cache_key = cache_key
         self._civ_key_cached = best_civ
         if best_civ and get_verbose():
-            info(f" => Detected civilization: {best_civ}")
+            info(f" => Detected civilization: {best_civ} (score {best_score})")
         return best_civ
 
     def _get_civilization_info(self) -> dict:

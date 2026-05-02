@@ -108,10 +108,27 @@ def terminate(proc: subprocess.Popen) -> None:
     except Exception:
         pass
     try:
-        proc.wait(timeout=5)
+        proc.wait(timeout=3)
     except Exception:
+        pass
+    # On Windows the uvicorn reloader sometimes ignores Ctrl+Break and leaves
+    # the child server bound to the port — kill the whole tree to be safe.
+    if proc.poll() is None:
+        if IS_WIN:
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    capture_output=True, timeout=5,
+                )
+            except Exception:
+                pass
+        else:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except Exception:
+                pass
         try:
-            proc.kill()
+            proc.wait(timeout=3)
         except Exception:
             pass
 
@@ -149,7 +166,15 @@ def main() -> int:
             "--host", "127.0.0.1", "--port", str(args.api_port),
         ]
         if not args.no_reload:
-            api_cmd.append("--reload")
+            # Scope the watcher to ONLY the API + the project src/ that the API
+            # imports. Watching the project root saturates WatchFiles on
+            # Windows (node_modules, venv, .mp/, thumbnails/) and hangs the
+            # event loop so requests never return.
+            api_cmd += [
+                "--reload",
+                "--reload-dir", str(ROOT / "webapp" / "api"),
+                "--reload-dir", str(ROOT / "src"),
+            ]
         print(color("sys", f"[sys] API → http://127.0.0.1:{args.api_port}"))
         api_proc = spawn(api_cmd, cwd=ROOT, env={"PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"})
         procs.append(("api", api_proc))
