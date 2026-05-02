@@ -1,26 +1,4 @@
 
-
-An Application that automates the process of making money online.
-MPV2 (MoneyPrinter Version 2) is, as the name suggests, the second version of the MoneyPrinter project. It is a complete rewrite of the original project, with a focus on a wider range of features and a more modular architecture.
-
-> **Note:** MPV2 needs Python 3.12 to function effectively.
-> Watch the YouTube video [here](https://youtu.be/wAZ_ZSuIqfk)
-
-## Features
-
-- [x] Twitter Bot (with CRON Jobs => `scheduler`)
-- [x] YouTube Shorts Automater (with CRON Jobs => `scheduler`)
-- [x] Affiliate Marketing (Amazon + Twitter)
-- [x] Find local businesses & cold outreach
-
-## Versions
-
-MoneyPrinter has different versions for multiple languages developed by the community for the community. Here are some known versions:
-
-- Chinese: [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo)
-
-If you would like to submit your own version/fork of MoneyPrinter, please open an issue describing the changes you made to the fork.
-
 ## Installation
 
 > ⚠️ If you are planning to reach out to scraped businesses per E-Mail, please first install the [Go Programming Language](https://golang.org/).
