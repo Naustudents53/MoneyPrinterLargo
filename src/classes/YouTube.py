@@ -1073,7 +1073,8 @@ Examples of BAD prompts (DO NOT WRITE THESE):
 - "Symbolic image of a Byzantine ship." (no concrete moment)
 
 {sections_text}
-Forbidden words: cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, ukiyo-e, sketch.
+Forbidden words (art-style / camera jargon): cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, ukiyo-e, sketch.
+Forbidden words (multi-image triggers — these make image generators output collages instead of one image): series, sequence, scenes (plural), panels, panel, storyboard, comic strip, montage, collage, grid, split screen, frames, multiple, diptych, triptych, before-and-after, side by side.
 
 Return ONLY a JSON array of {n_prompts} strings (one prompt per section, in order). Example format:
 ["scene 1 description...", "scene 2 description...", ...]
@@ -1128,13 +1129,16 @@ No markdown. No explanation. Just the JSON array."""
         if image_mode == "photos":
             fallback_prompts = [self.subject] * n_prompts
         else:
+            # Single-image, scene-only fallback prompts. No "illustrated", no
+            # "series" / "sequence" / "panels" — those words make Gemini /
+            # Nano Banana 2 produce a stacked collage instead of one image.
             fallback_prompts = [
-                f"{self.subject}, full scene with the central subject visible, period-accurate setting and clothing, vivid mood",
-                f"{self.subject}, detail of the central object or person, period-accurate textures and materials",
-                f"{self.subject}, panoramic view of the environment, period-accurate landscape and architecture",
-                f"{self.subject}, illustrated historical scene with period-accurate clothing and architecture",
-                f"{self.subject}, group composition showing several figures interacting in period-accurate context",
-                f"{self.subject}, atmospheric scene with depth and storytelling, period-accurate mood and palette",
+                f"{self.subject}, the central subject in full view, period-accurate setting and clothing, single image",
+                f"{self.subject}, detail of the central object or person, period-accurate textures and materials, single image",
+                f"{self.subject}, panoramic view of the environment, period-accurate landscape and architecture, single image",
+                f"{self.subject}, the historical moment shown directly, period-accurate clothing and architecture, single image",
+                f"{self.subject}, several figures interacting in period-accurate context, single image",
+                f"{self.subject}, atmospheric historical moment with depth, period-accurate mood and palette, single image",
             ]
 
         if not image_prompts or not isinstance(image_prompts, list):
@@ -1409,14 +1413,19 @@ No markdown. No explanation. Just the JSON array."""
     # configured. Goal: keep all images of a single video uniform (same look,
     # same realism level) and let the scene description itself carry the
     # period-accurate clothing / setting / objects. We deliberately avoid any
-    # "art style" cue (no "cinematic", "painting", "cartoon", "illustration"):
-    # it must be neutral documentary realism so a Roman scene, an Inca scene
-    # and a Japanese scene all feel like they belong to the same series.
+    # "art style" cue (no "cinematic", "painting", "cartoon", "illustration").
+    #
+    # CRITICAL: never use the word "series", "sequence", "frames", "scenes"
+    # (plural), "panels", or anything that hints at multiple images. Gemini /
+    # Nano Banana 2 read those as "give me a comic-strip storyboard" and
+    # return a vertical collage of stacked panels instead of one clean image.
+    # Same reason for the explicit "single frame, one image" anchor.
     DEFAULT_BASE_STYLE = (
         "photorealistic image, true-to-life realism, natural realistic lighting, "
         "period-accurate clothing architecture weapons and everyday objects, "
         "authentic materials and textures, neutral documentary tone, "
-        "consistent realistic look across the series, "
+        "single frame, one image, full uncropped composition, "
+        "no panels, no collage, no comic strip, no storyboard, no split screen, no grid, "
         "no cartoon, no illustration, no painting, no anime, no stylization"
     )
 
@@ -3987,7 +3996,9 @@ Examples of BAD prompts (DO NOT WRITE THESE):
 - "Symbolic image of Byzantine power." (no concrete moment)
 
 {sections_text}
-Forbidden words: cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, ukiyo-e, sketch. Also forbidden unless the topic itself demands it: cosmic/space/nebula imagery, microscopic diagrams, futuristic/sci-fi visuals.
+Forbidden words (art-style / camera jargon): cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, ukiyo-e, sketch.
+Forbidden words (multi-image triggers — these make image generators output collages instead of one image): series, sequence, scenes (plural), panels, panel, storyboard, comic strip, montage, collage, grid, split screen, frames, multiple, diptych, triptych, before-and-after, side by side.
+Also forbidden unless the topic itself demands it: cosmic/space/nebula imagery, microscopic diagrams, futuristic/sci-fi visuals.
 
 Return ONLY a JSON array of {n_prompts} strings (one prompt per section, in order). Example format:
 ["scene 1 description...", "scene 2 description...", ...]
