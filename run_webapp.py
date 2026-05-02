@@ -29,6 +29,16 @@ ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "webapp" / "web"
 IS_WIN = os.name == "nt"
 
+# Force UTF-8 on stdout/stderr so the box-drawing chars and color codes
+# print cleanly even when the launcher is run from a non-UTF8 terminal or
+# detached (e.g. via Start-Process). Without this, cp1252 chokes on `═`.
+if IS_WIN:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # ANSI colors — Windows 10+ terminals support these.
 COLORS = {
     "api": "\033[36m",   # cyan

@@ -1046,17 +1046,34 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             # Local LLMs (Ollama) drift into modern visuals if the era isn't named
             # explicitly inside the prompt.
             civ_info = self._get_civilization_info()
-            era_clause = ""
+            era_block = ""
+            era_rule = "PERIOD ACCURACY. If a person appears, describe their clothing in concrete detail (fabric, cut, color, footwear, headwear). Do the same for architecture, weapons, tools, transport, and 2-3 supporting objects in the scene. If the section names a specific real person, place or event, use that proper noun."
             if civ_info:
-                era_clause = f" Era: {civ_info['name']}. Period markers: {civ_info['era_brief']}. All clothing, architecture, weapons and objects MUST be from this era."
+                era_block = (
+                    f"\n\n=== HISTORICAL ERA — NON-NEGOTIABLE ===\n"
+                    f"This video is set in: **{civ_info['name']}**.\n"
+                    f"Every prompt MUST stay in this era. Period visual anchors: {civ_info['era_brief']}.\n"
+                    f"FORBIDDEN in every prompt: modern military uniforms, industrial-era clothing, "
+                    f"firearms, tanks, cars, modern architecture, electricity, anachronistic objects of any kind.\n"
+                    f"REQUIRED in every prompt that includes a person: at least 2 specific period clothing/armor terms "
+                    f"from the era markers above (e.g. for Ancient Greece — 'bronze hoplite cuirass', 'crested Corinthian helmet', "
+                    f"'round aspis shield', 'long dory spear', 'red cloak', 'leather sandals', 'white chiton tunic').\n"
+                    f"=========================================="
+                )
+                era_rule = (
+                    f"PERIOD ACCURACY — STRICT. Era is **{civ_info['name']}**. "
+                    f"Every prompt with a person MUST name at least 2 specific period clothing/armor items from "
+                    f"this era's anchors. Architecture, weapons, tools and objects must also be strictly from this era. "
+                    f"NO modern military uniforms, NO firearms, NO industrial-era visuals — ever."
+                )
 
-            prompt = f"""Task: write {n_prompts} image prompts for a video about "{self.subject}".{era_clause}
+            prompt = f"""Task: write {n_prompts} image prompts for a video about "{self.subject}".{era_block}
 
 You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section says "the priest opens the temple gate at dawn", the image is exactly that.
 
 ABSOLUTE RULES (every prompt):
 1. SCENE FIDELITY. Open with a concrete action (subject + verb). Whatever the script section says is happening, that is what the image shows.
-2. PERIOD ACCURACY. If a person appears, describe their clothing exactly as it would be in the right historical period/place/culture (fabric, cut, color, footwear, headwear). Do the same for architecture, weapons, tools, transport, and 2-3 supporting objects in the scene. If the section names a specific real person, place or event, use that proper noun.
+2. {era_rule}
 3. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe, same level of detail. No image should look like it belongs to a different show.
 4. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The look is decided by the suffix appended later — your job is the content.
 5. LENGTH. 35-60 English words per prompt. No camera or lens jargon.
@@ -4047,7 +4064,16 @@ Return ONLY the JSON. No markdown, no explanation."""
         civ_info = self._get_civilization_info()
         era_clause = ""
         if civ_info:
-            era_clause = f" Era: {civ_info['name']}. Period markers: {civ_info['era_brief']}. All clothing, architecture, weapons and objects MUST be from this era."
+            era_clause = (
+                f"\n\n=== HISTORICAL ERA — NON-NEGOTIABLE ===\n"
+                f"This documentary is set in: **{civ_info['name']}**.\n"
+                f"Period visual anchors: {civ_info['era_brief']}.\n"
+                f"FORBIDDEN: modern military uniforms, industrial-era clothing, firearms, tanks, cars, "
+                f"modern architecture, electricity, anachronistic objects of any kind.\n"
+                f"REQUIRED in every prompt with a person: at least 2 specific period clothing/armor terms "
+                f"from the era markers above.\n"
+                f"=========================================="
+            )
 
         prompt = f"""Task: write {n_prompts} image prompts for a long-form documentary about "{self.subject}".{era_clause}
 
@@ -4055,7 +4081,7 @@ You receive {n_prompts} script sections below. Each prompt MUST illustrate the L
 
 ABSOLUTE RULES (every prompt):
 1. SCENE FIDELITY. Open with a concrete action (subject + verb) drawn from the section text. Whatever the section is talking about, that is what the image shows.
-2. PERIOD ACCURACY. If a person appears, describe their clothing exactly as it would be in the right historical period/place/culture (fabric, cut, color, footwear, headwear). Same for architecture, weapons, tools, transport, and 2-3 supporting objects. If the section names a real person, place or event, use that proper noun.
+2. PERIOD ACCURACY — STRICT. {("Era is **" + civ_info['name'] + "**. Every prompt with a person MUST name at least 2 specific period clothing/armor items from this era. No modern military uniforms, no firearms, no industrial-era visuals — ever. ") if civ_info else ""}If a person appears, describe their clothing exactly as it would be in the right historical period/place/culture (fabric, cut, color, footwear, headwear). Same for architecture, weapons, tools, transport, and 2-3 supporting objects. If the section names a real person, place or event, use that proper noun.
 3. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing — but never the level of realism.
 4. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later — your job is content only.
 5. LENGTH. 35-60 English words per prompt. No camera or lens jargon.

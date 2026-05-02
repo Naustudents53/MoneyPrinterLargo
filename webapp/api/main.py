@@ -542,7 +542,7 @@ _FINISHED_TTL = 600  # keep finished jobs queryable for 10 minutes
 class JobState:
     __slots__ = (
         "id", "title", "proc", "started_at", "finished_at", "status", "rc",
-        "lines", "lock", "cv",
+        "lines", "lock",
     )
 
     def __init__(self, job_id: str, title: str, proc: subprocess.Popen):
@@ -554,8 +554,11 @@ class JobState:
         self.status: str = "running"  # "running" | "done" | "error"
         self.rc: Optional[int] = None
         self.lines: list[str] = []
+        # Plain lock — SSE consumers poll the buffer rather than wait on a
+        # condition. Polling keeps the asyncio loop unblocked: no executor
+        # thread is held idle, so /api/health and other endpoints stay
+        # responsive while a job streams.
         self.lock = threading.Lock()
-        self.cv = threading.Condition(self.lock)
 
     @property
     def elapsed(self) -> float:
@@ -563,34 +566,41 @@ class JobState:
         return round(end - self.started_at, 1)
 
     def append(self, line: str) -> None:
-        with self.cv:
+        with self.lock:
             self.lines.append(line)
             if len(self.lines) > _MAX_JOB_LINES:
-                # Trim head — keep latest 80% to free memory.
                 drop = len(self.lines) - int(_MAX_JOB_LINES * 0.8)
                 self.lines = self.lines[drop:]
-            self.cv.notify_all()
 
     def finish(self, rc: int) -> None:
-        with self.cv:
+        with self.lock:
             self.rc = rc
             self.status = "done" if rc == 0 else "error"
             self.finished_at = time.time()
-            self.cv.notify_all()
+
+    def snapshot(self, since: int):
+        with self.lock:
+            new_lines = self.lines[since:]
+            return new_lines, len(self.lines), self.status, self.rc
 
 
 _JOBS: dict[str, JobState] = {}
-_JOBS_LOCK = threading.Lock()
+# RLock so methods that already hold the lock can call helpers that take it
+# again. With a plain Lock, _spawn_job (which holds _JOBS_LOCK) calling
+# _gc_finished_jobs (which takes it again) produced a deadlock — the thread
+# waited on itself, the worker process became unresponsive, and every
+# subsequent request that touched _JOBS_LOCK also hung.
+_JOBS_LOCK = threading.RLock()
 
 
-def _gc_finished_jobs() -> None:
-    """Drop jobs that finished more than _FINISHED_TTL seconds ago."""
+def _gc_finished_jobs_locked() -> None:
+    """Drop jobs that finished more than _FINISHED_TTL seconds ago.
+    Caller must hold _JOBS_LOCK."""
     cutoff = time.time() - _FINISHED_TTL
-    with _JOBS_LOCK:
-        for jid in list(_JOBS.keys()):
-            j = _JOBS[jid]
-            if j.finished_at and j.finished_at < cutoff:
-                _JOBS.pop(jid, None)
+    for jid in list(_JOBS.keys()):
+        j = _JOBS[jid]
+        if j.finished_at and j.finished_at < cutoff:
+            _JOBS.pop(jid, None)
 
 
 def _spawn_job(args: list[str], title: str = "") -> JobState:
@@ -611,7 +621,7 @@ def _spawn_job(args: list[str], title: str = "") -> JobState:
     job_id = uuid.uuid4().hex[:12]
     job = JobState(job_id, title or args[0], proc)
     with _JOBS_LOCK:
-        _gc_finished_jobs()
+        _gc_finished_jobs_locked()
         _JOBS[job_id] = job
 
     def reader():
@@ -629,32 +639,31 @@ def _spawn_job(args: list[str], title: str = "") -> JobState:
 
 async def _stream_job(job: JobState) -> AsyncIterator[dict]:
     """SSE generator that replays buffered log lines and tails new ones until
-    the job reaches a terminal state. Safe for multiple concurrent subscribers."""
-    loop = asyncio.get_event_loop()
+    the job reaches a terminal state. Safe for multiple concurrent subscribers.
 
+    Uses asyncio polling rather than executor-bound condition waits so the
+    loop stays responsive — no thread is held idle per consumer.
+    """
     yield {"event": "start", "data": json.dumps({
         "pid": job.proc.pid, "job_id": job.id, "title": job.title, "ts": job.started_at,
     })}
 
     sent = 0
-
-    def wait_for_more(current_sent: int):
-        with job.cv:
-            while current_sent >= len(job.lines) and job.status == "running":
-                job.cv.wait(timeout=1.0)
-            return list(job.lines[current_sent:]), job.status, job.rc
-
     while True:
-        new_lines, status, rc = await loop.run_in_executor(None, wait_for_more, sent)
+        new_lines, total, status, rc = job.snapshot(sent)
         for line in new_lines:
             yield {"event": "log", "data": json.dumps({
                 "line": line, "elapsed": job.elapsed,
             })}
-        sent += len(new_lines)
+        sent = total
         if status != "running":
             payload = json.dumps({"rc": rc or 0, "elapsed": job.elapsed})
             yield {"event": "done" if status == "done" else "error", "data": payload}
             return
+        # Idle poll. 250ms is fast enough for a live tail and slow enough to
+        # be cheap. The job's reader thread fills the buffer continuously
+        # whether anyone is listening or not.
+        await asyncio.sleep(0.25)
 
 
 def _job_summary(j: JobState) -> dict:
@@ -674,8 +683,8 @@ def _job_summary(j: JobState) -> dict:
 
 @app.get("/api/jobs")
 def list_jobs(include_finished: bool = True):
-    _gc_finished_jobs()
     with _JOBS_LOCK:
+        _gc_finished_jobs_locked()
         jobs = list(_JOBS.values())
     if not include_finished:
         jobs = [j for j in jobs if j.status == "running"]
