@@ -338,9 +338,11 @@ export function Generate() {
         description={
           autoUpload
             ? "Render + upload automático al terminar."
-            : "Solo render — la subida la lanzas manualmente luego."
+            : "Solo render — al terminar puedes revisar y subir desde aquí."
         }
         sseUrl={sseUrl}
+        channelId={autoUpload ? undefined : channelId}
+        kind={kind}
       />
     </>
   );

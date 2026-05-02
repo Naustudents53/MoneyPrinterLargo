@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Trash2, Eraser, HardDrive, FileVideo } from "lucide-react";
+import { Trash2, Eraser, HardDrive, FileVideo, Play } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +8,13 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { api, type Mp4FileEntry } from "@/lib/api";
 import { toast } from "sonner";
 import { formatDate, relativeTime } from "@/lib/utils";
@@ -17,6 +24,7 @@ export function Storage() {
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [clearAll, setClearAll] = useState(false);
+  const [previewing, setPreviewing] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -117,8 +125,18 @@ export function Storage() {
                     <Button
                       variant="ghost"
                       size="icon"
+                      onClick={() => setPreviewing(f.name)}
+                      className="text-muted-foreground hover:text-primary"
+                      title="Reproducir"
+                    >
+                      <Play className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       onClick={() => setDeleting(f.name)}
                       className="text-muted-foreground hover:text-destructive"
+                      title="Eliminar"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -149,6 +167,27 @@ export function Storage() {
         variant="destructive"
         onConfirm={handleClearAll}
       />
+
+      <Dialog open={!!previewing} onOpenChange={(o) => !o && setPreviewing(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm break-all">{previewing}</DialogTitle>
+          </DialogHeader>
+          {previewing && (
+            <video
+              controls
+              autoPlay
+              className="w-full rounded-md bg-black max-h-[70vh]"
+              src={api.mp4RawUrl(previewing)}
+            />
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPreviewing(null)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

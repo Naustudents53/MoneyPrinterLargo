@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import queue
 import subprocess
 import sys
 import threading
@@ -27,6 +26,7 @@ from typing import Any, AsyncIterator, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -38,6 +38,7 @@ API_DIR = Path(__file__).resolve().parent
 ROOT_DIR = API_DIR.parent.parent
 SRC_DIR = ROOT_DIR / "src"
 MP_DIR = ROOT_DIR / ".mp"
+THUMB_DIR = ROOT_DIR / "thumbnails"
 CONFIG_PATH = ROOT_DIR / "config.json"
 
 # Make MoneyPrinterV2 importable. The original config.py computes ROOT_DIR as
@@ -532,12 +533,71 @@ def update_config(payload: ConfigPatch):
 
 _JOB_RUNNER = API_DIR / "run_job.py"
 
+# Job registry — keeps state for active and recently-finished jobs so UI can
+# reattach (re-stream logs, see status) after the user closes the dialog.
+_MAX_JOB_LINES = 5000
+_FINISHED_TTL = 600  # keep finished jobs queryable for 10 minutes
 
-def _spawn_job(args: list[str]) -> subprocess.Popen:
+
+class JobState:
+    __slots__ = (
+        "id", "title", "proc", "started_at", "finished_at", "status", "rc",
+        "lines", "lock", "cv",
+    )
+
+    def __init__(self, job_id: str, title: str, proc: subprocess.Popen):
+        self.id = job_id
+        self.title = title
+        self.proc = proc
+        self.started_at = time.time()
+        self.finished_at: Optional[float] = None
+        self.status: str = "running"  # "running" | "done" | "error"
+        self.rc: Optional[int] = None
+        self.lines: list[str] = []
+        self.lock = threading.Lock()
+        self.cv = threading.Condition(self.lock)
+
+    @property
+    def elapsed(self) -> float:
+        end = self.finished_at if self.finished_at else time.time()
+        return round(end - self.started_at, 1)
+
+    def append(self, line: str) -> None:
+        with self.cv:
+            self.lines.append(line)
+            if len(self.lines) > _MAX_JOB_LINES:
+                # Trim head — keep latest 80% to free memory.
+                drop = len(self.lines) - int(_MAX_JOB_LINES * 0.8)
+                self.lines = self.lines[drop:]
+            self.cv.notify_all()
+
+    def finish(self, rc: int) -> None:
+        with self.cv:
+            self.rc = rc
+            self.status = "done" if rc == 0 else "error"
+            self.finished_at = time.time()
+            self.cv.notify_all()
+
+
+_JOBS: dict[str, JobState] = {}
+_JOBS_LOCK = threading.Lock()
+
+
+def _gc_finished_jobs() -> None:
+    """Drop jobs that finished more than _FINISHED_TTL seconds ago."""
+    cutoff = time.time() - _FINISHED_TTL
+    with _JOBS_LOCK:
+        for jid in list(_JOBS.keys()):
+            j = _JOBS[jid]
+            if j.finished_at and j.finished_at < cutoff:
+                _JOBS.pop(jid, None)
+
+
+def _spawn_job(args: list[str], title: str = "") -> JobState:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         [sys.executable, str(_JOB_RUNNER), *args],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -548,37 +608,122 @@ def _spawn_job(args: list[str]) -> subprocess.Popen:
         encoding="utf-8",
         errors="replace",
     )
-
-
-async def _stream_subprocess(proc: subprocess.Popen) -> AsyncIterator[dict]:
-    """Yield SSE events as the subprocess emits stdout lines."""
-    loop = asyncio.get_event_loop()
-    q: queue.Queue[Optional[str]] = queue.Queue()
+    job_id = uuid.uuid4().hex[:12]
+    job = JobState(job_id, title or args[0], proc)
+    with _JOBS_LOCK:
+        _gc_finished_jobs()
+        _JOBS[job_id] = job
 
     def reader():
         try:
             assert proc.stdout is not None
             for line in proc.stdout:
-                q.put(line.rstrip("\n"))
+                job.append(line.rstrip("\n"))
         finally:
-            q.put(None)
+            rc = proc.wait()
+            job.finish(rc)
 
     threading.Thread(target=reader, daemon=True).start()
+    return job
 
-    started = time.time()
-    yield {"event": "start", "data": json.dumps({"pid": proc.pid, "ts": started})}
+
+async def _stream_job(job: JobState) -> AsyncIterator[dict]:
+    """SSE generator that replays buffered log lines and tails new ones until
+    the job reaches a terminal state. Safe for multiple concurrent subscribers."""
+    loop = asyncio.get_event_loop()
+
+    yield {"event": "start", "data": json.dumps({
+        "pid": job.proc.pid, "job_id": job.id, "title": job.title, "ts": job.started_at,
+    })}
+
+    sent = 0
+
+    def wait_for_more(current_sent: int):
+        with job.cv:
+            while current_sent >= len(job.lines) and job.status == "running":
+                job.cv.wait(timeout=1.0)
+            return list(job.lines[current_sent:]), job.status, job.rc
 
     while True:
-        line = await loop.run_in_executor(None, q.get)
-        if line is None:
-            break
-        yield {"event": "log", "data": json.dumps({"line": line, "elapsed": round(time.time() - started, 1)})}
+        new_lines, status, rc = await loop.run_in_executor(None, wait_for_more, sent)
+        for line in new_lines:
+            yield {"event": "log", "data": json.dumps({
+                "line": line, "elapsed": job.elapsed,
+            })}
+        sent += len(new_lines)
+        if status != "running":
+            payload = json.dumps({"rc": rc or 0, "elapsed": job.elapsed})
+            yield {"event": "done" if status == "done" else "error", "data": payload}
+            return
 
-    rc = proc.wait()
-    if rc == 0:
-        yield {"event": "done", "data": json.dumps({"rc": rc, "elapsed": round(time.time() - started, 1)})}
-    else:
-        yield {"event": "error", "data": json.dumps({"rc": rc, "elapsed": round(time.time() - started, 1)})}
+
+def _job_summary(j: JobState) -> dict:
+    last_line = j.lines[-1] if j.lines else ""
+    return {
+        "id": j.id,
+        "title": j.title,
+        "status": j.status,
+        "started_at": datetime.fromtimestamp(j.started_at).isoformat(),
+        "finished_at": datetime.fromtimestamp(j.finished_at).isoformat() if j.finished_at else None,
+        "elapsed": j.elapsed,
+        "rc": j.rc,
+        "last_line": last_line,
+        "log_lines": len(j.lines),
+    }
+
+
+@app.get("/api/jobs")
+def list_jobs(include_finished: bool = True):
+    _gc_finished_jobs()
+    with _JOBS_LOCK:
+        jobs = list(_JOBS.values())
+    if not include_finished:
+        jobs = [j for j in jobs if j.status == "running"]
+    jobs.sort(key=lambda j: j.started_at, reverse=True)
+    return [_job_summary(j) for j in jobs]
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str):
+    with _JOBS_LOCK:
+        j = _JOBS.get(job_id)
+    if not j:
+        raise HTTPException(404, "Job not found")
+    return _job_summary(j)
+
+
+@app.get("/api/jobs/{job_id}/stream")
+async def stream_job_endpoint(job_id: str):
+    """Re-attach to a running or recently-finished job. Replays logs from start."""
+    with _JOBS_LOCK:
+        j = _JOBS.get(job_id)
+    if not j:
+        raise HTTPException(404, "Job not found")
+    return EventSourceResponse(_stream_job(j))
+
+
+@app.post("/api/jobs/{job_id}/stop")
+def stop_job(job_id: str):
+    with _JOBS_LOCK:
+        j = _JOBS.get(job_id)
+    if not j:
+        raise HTTPException(404, "Job not found or already finished")
+    proc = j.proc
+    if proc.poll() is None:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        def _ensure_killed():
+            try:
+                proc.wait(timeout=3)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        threading.Thread(target=_ensure_killed, daemon=True).start()
+    return {"ok": True}
 
 
 @app.get("/api/channels/{channel_id}/generate")
@@ -590,7 +735,8 @@ async def generate_video(
     auto_upload: bool = False,
     series_id: str = "",
 ):
-    if not any(a.get("id") == channel_id for a in get_accounts("youtube")):
+    ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
+    if not ch:
         raise HTTPException(404, "Channel not found")
     if kind not in ("short", "long"):
         raise HTTPException(400, "kind must be 'short' or 'long'")
@@ -608,25 +754,33 @@ async def generate_video(
     if series_id:
         args += ["--series-id", series_id]
 
-    proc = _spawn_job(args)
-    return EventSourceResponse(_stream_subprocess(proc))
+    label = "Short" if kind == "short" else "Long video"
+    title = f"Generando {label} — {ch.get('nickname', channel_id)}"
+    job = _spawn_job(args, title=title)
+    return EventSourceResponse(_stream_job(job))
 
 
 @app.get("/api/channels/{channel_id}/upload-last")
-async def upload_last(channel_id: str):
+async def upload_last(channel_id: str, kind: str = "short"):
     """Upload the most recently generated video for this channel (post-generation)."""
-    if not any(a.get("id") == channel_id for a in get_accounts("youtube")):
+    ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
+    if not ch:
         raise HTTPException(404, "Channel not found")
-    proc = _spawn_job(["upload-last", "--channel-id", channel_id])
-    return EventSourceResponse(_stream_subprocess(proc))
+    if kind not in ("short", "long"):
+        raise HTTPException(400, "kind must be 'short' or 'long'")
+    title = f"Subiendo {kind} — {ch.get('nickname', channel_id)}"
+    job = _spawn_job(["upload-last", "--channel-id", channel_id, "--kind", kind], title=title)
+    return EventSourceResponse(_stream_job(job))
 
 
 @app.get("/api/twitter/accounts/{account_id}/post")
 async def post_tweet(account_id: str):
-    if not any(a.get("id") == account_id for a in get_accounts("twitter")):
+    acc = next((a for a in get_accounts("twitter") if a.get("id") == account_id), None)
+    if not acc:
         raise HTTPException(404, "Account not found")
-    proc = _spawn_job(["tweet", "--account-id", account_id])
-    return EventSourceResponse(_stream_subprocess(proc))
+    title = f"Posteando tweet — {acc.get('nickname', account_id)}"
+    job = _spawn_job(["tweet", "--account-id", account_id], title=title)
+    return EventSourceResponse(_stream_job(job))
 
 
 # ---------------------------------------------------------------------------
@@ -651,6 +805,16 @@ def list_mp4():
                 pass
     out.sort(key=lambda x: x["mtime"], reverse=True)
     return out
+
+
+@app.get("/api/storage/mp4/{filename}/raw")
+def stream_mp4(filename: str):
+    target = MP_DIR / filename
+    if target.parent != MP_DIR or not target.exists():
+        raise HTTPException(404, "File not found")
+    if target.suffix.lower() != ".mp4":
+        raise HTTPException(400, "Only .mp4 files allowed")
+    return FileResponse(str(target), media_type="video/mp4", filename=filename)
 
 
 @app.delete("/api/storage/mp4/{filename}")
@@ -678,6 +842,94 @@ def clear_mp4():
             except OSError:
                 pass
     return {"ok": True, "deleted": deleted}
+
+
+# ---------------------------------------------------------------------------
+# Thumbnails
+# ---------------------------------------------------------------------------
+
+class ThumbnailRequest(BaseModel):
+    topic: str
+    text: str
+    visual: str = ""
+
+
+def _safe_thumb_path(filename: str) -> Path:
+    """Resolve filename inside THUMB_DIR, refusing path traversal."""
+    target = (THUMB_DIR / filename).resolve()
+    if THUMB_DIR.resolve() not in target.parents and target != THUMB_DIR.resolve():
+        raise HTTPException(400, "Invalid filename")
+    if target.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+        raise HTTPException(400, "Only image files allowed")
+    return target
+
+
+@app.get("/api/thumbnails")
+def list_thumbnails():
+    if not THUMB_DIR.exists():
+        return []
+    out = []
+    for p in THUMB_DIR.iterdir():
+        if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+            try:
+                stat = p.stat()
+                out.append({
+                    "name": p.name,
+                    "size_kb": round(stat.st_size / 1024, 1),
+                    "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                })
+            except OSError:
+                pass
+    out.sort(key=lambda x: x["mtime"], reverse=True)
+    return out
+
+
+@app.get("/api/thumbnails/{filename}/raw")
+def get_thumbnail_raw(filename: str):
+    target = _safe_thumb_path(filename)
+    if not target.exists():
+        raise HTTPException(404, "Thumbnail not found")
+    media = "image/png" if target.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(str(target), media_type=media, filename=filename)
+
+
+@app.delete("/api/thumbnails/{filename}")
+def delete_thumbnail(filename: str):
+    target = _safe_thumb_path(filename)
+    if not target.exists():
+        raise HTTPException(404, "Thumbnail not found")
+    target.unlink()
+    return {"ok": True}
+
+
+@app.post("/api/thumbnails/clear")
+def clear_thumbnails():
+    if not THUMB_DIR.exists():
+        return {"ok": True, "deleted": 0}
+    deleted = 0
+    for p in THUMB_DIR.iterdir():
+        if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+            try:
+                p.unlink()
+                deleted += 1
+            except OSError:
+                pass
+    return {"ok": True, "deleted": deleted}
+
+
+@app.get("/api/thumbnails/generate")
+async def generate_thumbnail(topic: str, text: str, visual: str = ""):
+    """Run scripts/make_thumbnail.py as a streaming subprocess. Output goes to thumbnails/."""
+    if not topic.strip() or not text.strip():
+        raise HTTPException(400, "topic and text are required")
+    THUMB_DIR.mkdir(exist_ok=True)
+    out_name = f"thumb_{uuid.uuid4()}.png"
+    out_path = THUMB_DIR / out_name
+    args = ["thumbnail", "--topic", topic, "--text", text, "--out", str(out_path)]
+    if visual.strip():
+        args += ["--visual", visual]
+    job = _spawn_job(args, title=f"Thumbnail — {text[:40]}")
+    return EventSourceResponse(_stream_job(job))
 
 
 # ---------------------------------------------------------------------------

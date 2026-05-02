@@ -9,6 +9,7 @@ import {
   Settings,
   Film,
   BookOpen,
+  Image as ImageIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { WordMark } from "../Logo";
@@ -35,6 +36,7 @@ const NAV = [
       { to: "/affiliate", label: "Affiliate Marketing", icon: ShoppingBag },
       { to: "/outreach", label: "Outreach Local", icon: Mail },
       { to: "/storage", label: "Archivos de video", icon: Film },
+      { to: "/thumbnails", label: "Thumbnails", icon: ImageIcon },
     ],
   },
   {

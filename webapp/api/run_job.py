@@ -99,6 +99,28 @@ def _select_llm_provider():
         print("[runner] WARNING: no Ollama model selected", flush=True)
 
 
+def _cleanup_after_upload(is_long: bool):
+    """Remove scratch files in .mp/. Preserves long-video .mp4s so they can be
+    re-uploaded or kept locally; shorts get fully wiped."""
+    try:
+        from utils import rem_temp_files
+        rem_temp_files()
+        if not is_long:
+            mp_dir = os.path.join(str(ROOT_DIR), ".mp")
+            if os.path.isdir(mp_dir):
+                for name in os.listdir(mp_dir):
+                    if name.lower().endswith(".mp4"):
+                        try:
+                            os.remove(os.path.join(mp_dir, name))
+                        except Exception:
+                            pass
+            print("[runner] .mp cleaned after upload", flush=True)
+        else:
+            print("[runner] .mp scratch cleaned (long .mp4 preserved)", flush=True)
+    except Exception as e:
+        print(f"[runner] WARN: cleanup failed: {e}", flush=True)
+
+
 def cmd_generate(args):
     from cache import get_accounts
     from classes.YouTube import YouTube
@@ -146,6 +168,7 @@ def cmd_generate(args):
         print(f"[runner] Upload result: {ok}", flush=True)
         if not ok:
             sys.exit(4)
+        _cleanup_after_upload(is_long=(args.kind == "long"))
 
     print("[runner] DONE", flush=True)
 
@@ -167,10 +190,69 @@ def cmd_upload_last(args):
         hook_profile=acc.get("hook_profile", ""),
         voice_drama=acc.get("voice_drama", False),
     )
+
+    # Recover the most recent .mp4 from .mp/ (cmd_generate left it there).
+    mp_dir = os.path.join(str(ROOT_DIR), ".mp")
+    candidates = []
+    if os.path.isdir(mp_dir):
+        for name in os.listdir(mp_dir):
+            if name.lower().endswith(".mp4"):
+                p = os.path.join(mp_dir, name)
+                try:
+                    candidates.append((os.path.getmtime(p), p))
+                except OSError:
+                    pass
+    if not candidates:
+        print("[runner] ERROR: no .mp4 found in .mp/ to upload", flush=True)
+        sys.exit(5)
+    candidates.sort(reverse=True)
+    youtube.video_path = candidates[0][1]
+    youtube._is_long_video = (args.kind == "long")
+    print(f"[runner] Uploading {'LONG' if args.kind == 'long' else 'SHORT'}: {youtube.video_path}", flush=True)
+
     ok = youtube.upload_video()
     print(f"[runner] Upload result: {ok}", flush=True)
     if not ok:
         sys.exit(4)
+
+    _cleanup_after_upload(is_long=(args.kind == "long"))
+
+
+def cmd_thumbnail(args):
+    """Generate a thumbnail PNG via scripts/make_thumbnail.py (Leonardo + Pillow)."""
+    script = os.path.join(str(ROOT_DIR), "scripts", "make_thumbnail.py")
+    if not os.path.isfile(script):
+        print(f"[runner] ERROR: thumbnail script not found at {script}", flush=True)
+        sys.exit(2)
+
+    cmd = [sys.executable, script, "--topic", args.topic, "--text", args.text, "--out", args.out]
+    if args.visual:
+        cmd += ["--visual", args.visual]
+
+    print(f"[runner] Generating thumbnail → {args.out}", flush=True)
+    import subprocess
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(ROOT_DIR),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+    rc = proc.wait()
+    if rc != 0:
+        print(f"[runner] Thumbnail generation failed (rc={rc})", flush=True)
+        sys.exit(rc)
+    if not os.path.isfile(args.out):
+        print(f"[runner] ERROR: expected output file missing: {args.out}", flush=True)
+        sys.exit(6)
+    print(f"[runner] Thumbnail saved: {args.out}", flush=True)
 
 
 def cmd_tweet(args):
@@ -200,14 +282,22 @@ def main():
 
     p_ul = sub.add_parser("upload-last")
     p_ul.add_argument("--channel-id", required=True)
+    p_ul.add_argument("--kind", choices=["short", "long"], default="short")
 
     p_tw = sub.add_parser("tweet")
     p_tw.add_argument("--account-id", required=True)
 
+    p_th = sub.add_parser("thumbnail")
+    p_th.add_argument("--topic", required=True)
+    p_th.add_argument("--text", required=True)
+    p_th.add_argument("--out", required=True)
+    p_th.add_argument("--visual", default="")
+
     args = parser.parse_args()
 
     _setup_paths()
-    _select_llm_provider()
+    if args.cmd != "thumbnail":
+        _select_llm_provider()
 
     if args.cmd == "generate":
         cmd_generate(args)
@@ -215,6 +305,8 @@ def main():
         cmd_upload_last(args)
     elif args.cmd == "tweet":
         cmd_tweet(args)
+    elif args.cmd == "thumbnail":
+        cmd_thumbnail(args)
     else:
         parser.error(f"unknown command {args.cmd}")
 

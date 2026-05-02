@@ -135,6 +135,24 @@ export interface Mp4FileEntry {
   mtime: string;
 }
 
+export interface ThumbnailEntry {
+  name: string;
+  size_kb: number;
+  mtime: string;
+}
+
+export interface JobSummary {
+  id: string;
+  title: string;
+  status: "running" | "done" | "error";
+  started_at: string;
+  finished_at: string | null;
+  elapsed: number;
+  rc: number | null;
+  last_line: string;
+  log_lines: number;
+}
+
 // ---------- Endpoints ----------
 
 export const api = {
@@ -218,6 +236,33 @@ export const api = {
     if (params.series_id) qs.set("series_id", params.series_id);
     return `${BASE}/api/channels/${id}/generate?${qs.toString()}`;
   },
-  uploadLastUrl: (id: string) => `${BASE}/api/channels/${id}/upload-last`,
+  uploadLastUrl: (id: string, kind: "short" | "long" = "short") =>
+    `${BASE}/api/channels/${id}/upload-last?kind=${kind}`,
   postTweetUrl: (id: string) => `${BASE}/api/twitter/accounts/${id}/post`,
+
+  // Job control / monitoring
+  stopJob: (jobId: string) =>
+    request<{ ok: boolean }>(`/api/jobs/${jobId}/stop`, { method: "POST" }),
+  listJobs: (includeFinished = false) =>
+    request<JobSummary[]>(`/api/jobs?include_finished=${includeFinished}`),
+  getJob: (id: string) => request<JobSummary>(`/api/jobs/${id}`),
+  jobStreamUrl: (id: string) => `${BASE}/api/jobs/${id}/stream`,
+
+  // Raw video stream (for <video> player)
+  mp4RawUrl: (name: string) => `${BASE}/api/storage/mp4/${encodeURIComponent(name)}/raw`,
+
+  // Thumbnails
+  listThumbnails: () => request<ThumbnailEntry[]>("/api/thumbnails"),
+  deleteThumbnail: (name: string) =>
+    request<{ ok: boolean }>(`/api/thumbnails/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  clearThumbnails: () =>
+    request<{ ok: boolean; deleted: number }>("/api/thumbnails/clear", { method: "POST" }),
+  thumbnailRawUrl: (name: string) => `${BASE}/api/thumbnails/${encodeURIComponent(name)}/raw`,
+  thumbnailGenerateUrl: (params: { topic: string; text: string; visual?: string }) => {
+    const qs = new URLSearchParams();
+    qs.set("topic", params.topic);
+    qs.set("text", params.text);
+    if (params.visual) qs.set("visual", params.visual);
+    return `${BASE}/api/thumbnails/generate?${qs.toString()}`;
+  },
 };

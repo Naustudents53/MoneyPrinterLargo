@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useTheme } from "../ThemeProvider";
+import { BackgroundJobs } from "../BackgroundJobs";
 import { api, type SystemInfo } from "@/lib/api";
 
 interface HeaderProps {
@@ -54,6 +55,8 @@ export function Header({ title, description, actions }: HeaderProps) {
 
         <div className="flex items-center gap-2">
           {actions}
+
+          <BackgroundJobs />
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

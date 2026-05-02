@@ -8,6 +8,7 @@ import { Series } from "./pages/Series";
 import { Settings } from "./pages/Settings";
 import { Generate } from "./pages/Generate";
 import { Storage } from "./pages/Storage";
+import { Thumbnails } from "./pages/Thumbnails";
 import { Affiliate } from "./pages/Affiliate";
 import { Outreach } from "./pages/Outreach";
 import { NotFound } from "./pages/NotFound";
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="series" element={<Series />} />
         <Route path="settings" element={<Settings />} />
         <Route path="storage" element={<Storage />} />
+        <Route path="thumbnails" element={<Thumbnails />} />
         <Route path="affiliate" element={<Affiliate />} />
         <Route path="outreach" element={<Outreach />} />
         <Route path="*" element={<NotFound />} />
