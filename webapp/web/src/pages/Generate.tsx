@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Sparkles,
   Image as ImageIcon,
@@ -10,46 +10,46 @@ import {
   BookOpen,
   Hash,
   Clapperboard,
-} from "lucide-react";
-import { Header } from "@/components/layout/Header";
-import { PageShell } from "@/components/layout/AppShell";
+} from 'lucide-react';
+import { Header } from '@/components/layout/Header';
+import { PageShell } from '@/components/layout/AppShell';
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
+} from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
+import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { ProgressDialog } from "@/components/ProgressDialog";
-import { api, type Channel, type SeriesEntry } from "@/lib/api";
-import { cn } from "@/lib/utils";
-import { toast } from "sonner";
+} from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { ProgressDialog } from '@/components/ProgressDialog';
+import { api, type Channel, type SeriesEntry } from '@/lib/api';
+import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 export function Generate() {
   const [params] = useSearchParams();
-  const presetChannel = params.get("channel") || "";
+  const presetChannel = params.get('channel') || '';
 
   const [channels, setChannels] = useState<Channel[]>([]);
   const [series, setSeries] = useState<SeriesEntry[]>([]);
   const [channelId, setChannelId] = useState(presetChannel);
-  const [kind, setKind] = useState<"short" | "long">("short");
-  const [topic, setTopic] = useState("");
-  const [imageMode, setImageMode] = useState<"ai" | "photos">("ai");
-  const [seriesId, setSeriesId] = useState("");
+  const [kind, setKind] = useState<'short' | 'long'>('short');
+  const [topic, setTopic] = useState('');
+  const [imageMode, setImageMode] = useState<'ai' | 'photos'>('ai');
+  const [seriesId, setSeriesId] = useState('');
   const [autoUpload, setAutoUpload] = useState(false);
 
   const [progressOpen, setProgressOpen] = useState(false);
@@ -63,18 +63,21 @@ export function Generate() {
         if (!channelId && d.length > 0) setChannelId(d[0].id);
       })
       .catch(() => {});
-    api.listSeries().then(setSeries).catch(() => {});
+    api
+      .listSeries()
+      .then(setSeries)
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const selectedChannel = useMemo(
     () => channels.find((c) => c.id === channelId),
-    [channels, channelId]
+    [channels, channelId],
   );
 
   const start = () => {
     if (!channelId) {
-      toast.error("Selecciona un canal");
+      toast.error('Selecciona un canal');
       return;
     }
     const url = api.generateUrl(channelId, {
@@ -105,7 +108,8 @@ export function Generate() {
                   Configuración del job
                 </CardTitle>
                 <CardDescription>
-                  Elige canal, formato y opciones. Después dale a "Iniciar generación".
+                  Elige canal, formato y opciones. Después dale a "Iniciar
+                  generación".
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -134,7 +138,10 @@ export function Generate() {
                 {/* Kind tabs */}
                 <div className="space-y-2">
                   <Label>Tipo de contenido</Label>
-                  <Tabs value={kind} onValueChange={(v) => setKind(v as "short" | "long")}>
+                  <Tabs
+                    value={kind}
+                    onValueChange={(v) => setKind(v as 'short' | 'long')}
+                  >
                     <TabsList className="grid grid-cols-2 w-full max-w-md">
                       <TabsTrigger value="short" className="gap-2">
                         <Sparkles className="h-3.5 w-3.5" /> Short
@@ -143,11 +150,18 @@ export function Generate() {
                         <Clapperboard className="h-3.5 w-3.5" /> Long video
                       </TabsTrigger>
                     </TabsList>
-                    <TabsContent value="short" className="text-xs text-muted-foreground">
+                    <TabsContent
+                      value="short"
+                      className="text-xs text-muted-foreground"
+                    >
                       Video vertical 9:16, 30–60s. Pipeline rápido (~2–4 min).
                     </TabsContent>
-                    <TabsContent value="long" className="text-xs text-muted-foreground">
-                      Video largo 5–20 min con narración extendida. Toma ~15–25 min.
+                    <TabsContent
+                      value="long"
+                      className="text-xs text-muted-foreground"
+                    >
+                      Video largo 5–20 min con narración extendida. Toma ~15–25
+                      min.
                     </TabsContent>
                   </Tabs>
                 </div>
@@ -155,7 +169,8 @@ export function Generate() {
                 {/* Topic */}
                 <div className="space-y-2">
                   <Label htmlFor="topic">
-                    Tema personalizado <span className="text-muted-foreground">(opcional)</span>
+                    Tema personalizado{' '}
+                    <span className="text-muted-foreground">(opcional)</span>
                   </Label>
                   <Textarea
                     id="topic"
@@ -167,20 +182,20 @@ export function Generate() {
                 </div>
 
                 {/* Image mode (only for shorts) */}
-                {kind === "short" && (
+                {kind === 'short' && (
                   <div className="space-y-2">
                     <Label>Fuente de imágenes</Label>
                     <div className="grid grid-cols-2 gap-3">
                       <ModeCard
-                        active={imageMode === "ai"}
-                        onClick={() => setImageMode("ai")}
+                        active={imageMode === 'ai'}
+                        onClick={() => setImageMode('ai')}
                         icon={ImageIcon}
                         title="AI generado"
-                        description="Nano Banana 2 / fallback. Más control de estética."
+                        description="Leonardo AI / fallback. Más control de estética."
                       />
                       <ModeCard
-                        active={imageMode === "photos"}
-                        onClick={() => setImageMode("photos")}
+                        active={imageMode === 'photos'}
+                        onClick={() => setImageMode('photos')}
                         icon={Camera}
                         title="Fotos stock"
                         description="Pexels/Pixabay/Europeana. Cae a AI si no hay match."
@@ -190,12 +205,14 @@ export function Generate() {
                 )}
 
                 {/* Series (only for long) */}
-                {kind === "long" && series.length > 0 && (
+                {kind === 'long' && series.length > 0 && (
                   <div className="space-y-2">
                     <Label>Serie</Label>
                     <Select
-                      value={seriesId || "__none__"}
-                      onValueChange={(v) => setSeriesId(v === "__none__" ? "" : v)}
+                      value={seriesId || '__none__'}
+                      onValueChange={(v) =>
+                        setSeriesId(v === '__none__' ? '' : v)
+                      }
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="(ninguna)" />
@@ -219,13 +236,18 @@ export function Generate() {
                 <div className="flex items-center justify-between rounded-lg border border-border p-3">
                   <div className="space-y-0.5">
                     <Label className="flex items-center gap-1.5">
-                      <UploadCloud className="h-4 w-4" /> Subir automáticamente al terminar
+                      <UploadCloud className="h-4 w-4" /> Subir automáticamente
+                      al terminar
                     </Label>
                     <p className="text-xs text-muted-foreground">
-                      Lanza Selenium con el perfil Firefox del canal cuando el render termine.
+                      Lanza Selenium con el perfil Firefox del canal cuando el
+                      render termine.
                     </p>
                   </div>
-                  <Switch checked={autoUpload} onCheckedChange={setAutoUpload} />
+                  <Switch
+                    checked={autoUpload}
+                    onCheckedChange={setAutoUpload}
+                  />
                 </div>
 
                 <div className="flex items-center gap-3 pt-2">
@@ -251,31 +273,37 @@ export function Generate() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <Youtube className="h-4 w-4 text-primary" /> Canal seleccionado
+                  <Youtube className="h-4 w-4 text-primary" /> Canal
+                  seleccionado
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 {selectedChannel ? (
                   <div className="space-y-3 text-sm">
                     <div>
-                      <div className="font-semibold">{selectedChannel.nickname}</div>
+                      <div className="font-semibold">
+                        {selectedChannel.nickname}
+                      </div>
                       <div className="text-xs text-muted-foreground line-clamp-2">
-                        {selectedChannel.niche || "(sin niche)"}
+                        {selectedChannel.niche || '(sin niche)'}
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                      <Mini label="Idioma" value={selectedChannel.language || "es"} />
+                      <Mini
+                        label="Idioma"
+                        value={selectedChannel.language || 'es'}
+                      />
                       <Mini
                         label="Videos"
                         value={String(selectedChannel.videos_count)}
                       />
                       <Mini
                         label="Voz short"
-                        value={selectedChannel.short_voice || "default"}
+                        value={selectedChannel.short_voice || 'default'}
                       />
                       <Mini
                         label="Voz long"
-                        value={selectedChannel.long_voice || "default"}
+                        value={selectedChannel.long_voice || 'default'}
                       />
                     </div>
                   </div>
@@ -295,20 +323,20 @@ export function Generate() {
               </CardHeader>
               <CardContent className="space-y-2 text-xs text-muted-foreground">
                 <Tip>
-                  Si el canal tiene un image_style configurado, se aplica a cada prompt
-                  automáticamente.
+                  Si el canal tiene un image_style configurado, se aplica a cada
+                  prompt automáticamente.
                 </Tip>
                 <Tip>
-                  Para shorts en serie sobre un mismo personaje, escribe el nombre exacto
-                  en el tema.
+                  Para shorts en serie sobre un mismo personaje, escribe el
+                  nombre exacto en el tema.
                 </Tip>
                 <Tip>
-                  El modo "fotos stock" cae a AI cuando no encuentra match relevante —
-                  útil para niches actuales.
+                  El modo "fotos stock" cae a AI cuando no encuentra match
+                  relevante — útil para niches actuales.
                 </Tip>
                 <Tip>
-                  La subida usa Selenium contra YouTube Studio. El perfil Firefox debe
-                  estar pre-loggeado.
+                  La subida usa Selenium contra YouTube Studio. El perfil
+                  Firefox debe estar pre-loggeado.
                 </Tip>
               </CardContent>
             </Card>
@@ -322,7 +350,8 @@ export function Generate() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-xs font-mono whitespace-pre-wrap text-muted-foreground bg-muted/40 rounded-md p-3 max-h-40 overflow-auto scrollbar-thin">
-                    {selectedChannel.image_style || "(default — no se inyecta estilo)"}
+                    {selectedChannel.image_style ||
+                      '(default — no se inyecta estilo)'}
                   </div>
                 </CardContent>
               </Card>
@@ -334,11 +363,11 @@ export function Generate() {
       <ProgressDialog
         open={progressOpen}
         onOpenChange={setProgressOpen}
-        title={kind === "short" ? "Generando short" : "Generando video largo"}
+        title={kind === 'short' ? 'Generando short' : 'Generando video largo'}
         description={
           autoUpload
-            ? "Render + upload automático al terminar."
-            : "Solo render — al terminar puedes revisar y subir desde aquí."
+            ? 'Render + upload automático al terminar.'
+            : 'Solo render — al terminar puedes revisar y subir desde aquí.'
         }
         sseUrl={sseUrl}
         channelId={autoUpload ? undefined : channelId}
@@ -366,17 +395,19 @@ function ModeCard({
       type="button"
       onClick={onClick}
       className={cn(
-        "text-left rounded-lg border p-3 transition-all",
+        'text-left rounded-lg border p-3 transition-all',
         active
-          ? "border-primary bg-primary/5 shadow-sm"
-          : "border-border hover:border-border/80 hover:bg-muted/30"
+          ? 'border-primary bg-primary/5 shadow-sm'
+          : 'border-border hover:border-border/80 hover:bg-muted/30',
       )}
     >
       <div className="flex items-center gap-2">
         <div
           className={cn(
-            "rounded-md p-1.5",
-            active ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+            'rounded-md p-1.5',
+            active
+              ? 'bg-primary/15 text-primary'
+              : 'bg-muted text-muted-foreground',
           )}
         >
           <Icon className="h-4 w-4" />

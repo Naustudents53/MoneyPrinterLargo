@@ -99,49 +99,6 @@ def get_twitter_language() -> str:
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         return json.load(file)["twitter_language"]
 
-def get_nanobanana2_api_base_url() -> str:
-    """
-    Gets the Nano Banana 2 (Gemini image) API base URL.
-
-    Returns:
-        url (str): API base URL
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get(
-            "nanobanana2_api_base_url",
-            "https://generativelanguage.googleapis.com/v1beta",
-        )
-
-def get_nanobanana2_api_key() -> str:
-    """
-    Gets the Nano Banana 2 API key.
-
-    Returns:
-        key (str): API key
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        configured = json.load(file).get("nanobanana2_api_key", "")
-        return configured or os.environ.get("GEMINI_API_KEY", "")
-
-def get_nanobanana2_model() -> str:
-    """
-    Gets the Nano Banana 2 model name.
-
-    Returns:
-        model (str): Model name
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("nanobanana2_model", "gemini-3.1-flash-image-preview")
-
-def get_nanobanana2_aspect_ratio() -> str:
-    """
-    Gets the aspect ratio for Nano Banana 2 image generation.
-
-    Returns:
-        ratio (str): Aspect ratio
-    """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
-        return json.load(file).get("nanobanana2_aspect_ratio", "9:16")
 
 def get_threads() -> int:
     """
@@ -374,6 +331,11 @@ def get_gemini_models() -> list[str]:
         return models
     # Fallback: just the single configured model
     return [get_gemini_model()]
+
+def get_gemini_api_key() -> str:
+    """Gets the Gemini API key for LLM text generation."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return json.load(file).get("gemini_api_key", "")
 
 def get_pollinations_text_model() -> str:
     """Gets the Pollinations text model name."""

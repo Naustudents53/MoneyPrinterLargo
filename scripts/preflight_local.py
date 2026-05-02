@@ -81,25 +81,13 @@ def main() -> int:
         except Exception as exc:
             warn(f"Could not validate Ollama model list: {exc}")
 
-    # Nano Banana 2 (image generation)
-    api_key = cfg.get("nanobanana2_api_key", "") or os.environ.get("GEMINI_API_KEY", "")
-    nb2_base = str(
-        cfg.get(
-            "nanobanana2_api_base_url",
-            "https://generativelanguage.googleapis.com/v1beta",
-        )
-    ).rstrip("/")
-    if api_key:
-        ok("nanobanana2_api_key is set")
+    # Leonardo AI (image generation)
+    leonardo_key = cfg.get("leonardo_api_key", "")
+    if leonardo_key:
+        ok("leonardo_api_key is set")
     else:
-        fail("nanobanana2_api_key is empty (and GEMINI_API_KEY is not set)")
+        fail("leonardo_api_key is empty")
         failures += 1
-
-    reachable, detail = check_url(nb2_base, timeout=8)
-    if not reachable:
-        warn(f"Nano Banana 2 base URL could not be reached: {detail}")
-    else:
-        ok(f"Nano Banana 2 base URL reachable: {nb2_base}")
 
     if stt_provider == "local_whisper":
         try:

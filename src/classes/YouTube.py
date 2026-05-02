@@ -1311,69 +1311,6 @@ No markdown. No explanation. Just the JSON array."""
             return img_resp.content
         raise RuntimeError("Ideogram: failed to download image")
 
-    def _call_nanobanana2(self, prompt: str, aspect_ratio: str) -> bytes:
-        """
-        Call Google's Nano Banana 2 (Gemini image API) with the given prompt and
-        aspect ratio. Returns raw image bytes (PNG/JPEG). Used by both the
-        portrait (9:16) and landscape (16:9) wrappers below.
-        """
-        from config import (
-            get_nanobanana2_api_key,
-            get_nanobanana2_api_base_url,
-            get_nanobanana2_model,
-        )
-        api_key = get_nanobanana2_api_key()
-        if not api_key:
-            raise RuntimeError("Nano Banana 2 API key not configured (nanobanana2_api_key)")
-
-        base_url = (get_nanobanana2_api_base_url() or "").rstrip("/")
-        model = get_nanobanana2_model() or "gemini-3.1-flash-image-preview"
-        url = f"{base_url}/models/{model}:generateContent?key={api_key}"
-
-        # Final defensive sanitization — strip collage triggers in case the
-        # prompt arrived without going through _apply_channel_style.
-        prompt = self._sanitize_image_prompt(prompt)
-
-        print(colored(f"    [Nano Banana 2 {aspect_ratio}] Generating...", "cyan"), flush=True)
-        payload = {
-            "contents": [{"parts": [{"text": prompt[:1900]}]}],
-            "generationConfig": {
-                "responseModalities": ["IMAGE"],
-                "imageConfig": {"aspectRatio": aspect_ratio},
-            },
-        }
-        resp = requests.post(
-            url,
-            headers={"Content-Type": "application/json"},
-            json=payload,
-            timeout=120,
-        )
-        if resp.status_code != 200:
-            raise RuntimeError(f"Nano Banana 2: HTTP {resp.status_code} — {resp.text[:200]}")
-
-        data = resp.json()
-        candidates = data.get("candidates") or []
-        for cand in candidates:
-            for part in (cand.get("content") or {}).get("parts") or []:
-                inline = part.get("inlineData") or part.get("inline_data") or {}
-                b64 = inline.get("data")
-                if b64:
-                    img_bytes = base64.b64decode(b64)
-                    if len(img_bytes) > 5000:
-                        print(colored("OK", "green"))
-                        return img_bytes
-        raise RuntimeError(f"Nano Banana 2: no image in response — {str(data)[:200]}")
-
-    def _try_nanobanana2(self, prompt: str) -> bytes:
-        """Nano Banana 2 in the configured aspect ratio (defaults to 9:16 for Shorts)."""
-        from config import get_nanobanana2_aspect_ratio
-        ratio = get_nanobanana2_aspect_ratio() or "9:16"
-        return self._call_nanobanana2(prompt, ratio)
-
-    def _try_nanobanana2_landscape(self, prompt: str) -> bytes:
-        """Nano Banana 2 in 16:9 for long-form videos."""
-        return self._call_nanobanana2(prompt, "16:9")
-
     def _try_leonardo(self, prompt: str) -> bytes:
         """Try Leonardo AI API (excellent quality, $5 free credit)."""
         from config import get_leonardo_api_key
@@ -2483,7 +2420,6 @@ No markdown. No explanation. Just the JSON array."""
                 ("Pexels", self._try_pexels, "stock"),
                 ("Pixabay", self._try_pixabay, "stock"),
                 # Tier 5: AI fallback when no real photo matches the topic.
-                ("Nano Banana 2", self._try_nanobanana2, "ai"),
                 ("Leonardo AI", self._try_leonardo, "ai"),
                 ("Pollinations FLUX", self._try_pollinations, "ai"),
                 ("Pollinations turbo", self._try_pollinations_turbo, "ai"),
@@ -2491,16 +2427,14 @@ No markdown. No explanation. Just the JSON array."""
         else:
             print(colored(f"\n  [Images] Generating {len(prompts)} images...", "blue"))
             providers = [
-                # Tier 1: Nano Banana 2 (Gemini 3 image preview) — primary AI generator
-                ("Nano Banana 2", self._try_nanobanana2, "ai"),
-                # Tier 2: High-quality AI generator
+                # Tier 1: High-quality AI generator
                 ("Leonardo AI", self._try_leonardo, "ai"),
-                # Tier 3: Free unlimited AI generators (no daily limits)
+                # Tier 2: Free unlimited AI generators (no daily limits)
                 ("Pollinations FLUX", self._try_pollinations, "ai"),
                 ("Pollinations turbo", self._try_pollinations_turbo, "ai"),
                 ("Pollinations flux-realism", self._try_pollinations_realism, "ai"),
                 ("HuggingFace", self._try_huggingface, "ai"),
-                # Tier 4: Stock photos (reliable, always available)
+                # Tier 3: Stock photos (reliable, always available)
                 ("Pexels", self._try_pexels, "stock"),
                 ("Pixabay", self._try_pixabay, "stock"),
             ]
@@ -3892,7 +3826,7 @@ Return ONLY the JSON. No markdown, no explanation."""
             overlay_words = " ".join(topic_words).upper() if topic_words else "DESCUBRE LA VERDAD"
             warning(f"Thumbnail: using topic-derived overlay text: {overlay_words}")
 
-        # Step 2: render the background image (Nano Banana 2 first, then Leonardo, then Pollinations).
+        # Step 2: render the background image (Leonardo AI first, then Pollinations).
         # Append the channel's image_style suffix so the thumbnail matches the video's look.
         styled_visual_prompt = self._apply_channel_style(visual_prompt)
         if get_verbose() and styled_visual_prompt != visual_prompt:
@@ -3900,7 +3834,6 @@ Return ONLY the JSON. No markdown, no explanation."""
 
         bg_bytes = None
         for name, fn in (
-            ("Nano Banana 2 16:9", self._try_nanobanana2_landscape),
             ("Leonardo AI", self._try_leonardo_landscape),
             ("Pollinations FLUX 16:9", self._try_pollinations_landscape),
         ):
@@ -4238,7 +4171,6 @@ No markdown. No explanation. Just the JSON array."""
             styled_prompt = self._apply_channel_style(prompt)
 
             for name, fn in [
-                ("Nano Banana 2 16:9", lambda p: self._try_nanobanana2_landscape(p)),
                 ("Leonardo AI", lambda p: self._try_leonardo_landscape(p)),
                 ("Pollinations.ai FLUX", lambda p: self._try_pollinations_landscape(p)),
                 ("HuggingFace", self._try_huggingface),
