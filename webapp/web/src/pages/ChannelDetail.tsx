@@ -11,6 +11,7 @@ import {
   Search,
   Film,
   Calendar,
+  Clapperboard,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
@@ -18,8 +19,33 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { api, type Channel, type ChannelVideo } from "@/lib/api";
 import { ChannelFormDialog } from "./ChannelFormDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -33,10 +59,58 @@ export function ChannelDetail() {
   const [videos, setVideos] = useState<ChannelVideo[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [kindFilter, setKindFilter] = useState<"all" | "short" | "long">("all");
   const [editing, setEditing] = useState(false);
   const [deletingVideo, setDeletingVideo] = useState<ChannelVideo | null>(null);
+  const [editingVideo, setEditingVideo] = useState<ChannelVideo | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editSubject, setEditSubject] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editIsShort, setEditIsShort] = useState(false);
+  const [savingVideo, setSavingVideo] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+
+  const openEditVideo = (v: ChannelVideo) => {
+    setEditingVideo(v);
+    setEditTitle(v.title || "");
+    setEditSubject(v.subject || "");
+    setEditDescription(v.description || "");
+    setEditIsShort(v.is_short);
+  };
+
+  const saveVideoEdits = async () => {
+    if (!id || !editingVideo) return;
+    setSavingVideo(true);
+    try {
+      await api.editVideo(id, {
+        url: editingVideo.url,
+        date: editingVideo.date,
+        title: editTitle,
+        subject: editSubject,
+        description: editDescription,
+        is_short: editIsShort,
+      });
+      toast.success("Video actualizado");
+      setEditingVideo(null);
+      load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSavingVideo(false);
+    }
+  };
+
+  const markAllAs = async (kind: "short" | "long") => {
+    if (!id) return;
+    try {
+      const r = await api.markAllVideosKind(id, kind);
+      toast.success(`${r.updated} marcado(s) como ${kind === "short" ? "Short" : "Long"}`);
+      load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
 
   const load = async () => {
     if (!id) return;
@@ -57,12 +131,20 @@ export function ChannelDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  const filtered = videos.filter(
-    (v) =>
-      !search ||
-      v.title.toLowerCase().includes(search.toLowerCase()) ||
-      v.subject.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = videos.filter((v) => {
+    if (kindFilter === "short" && !v.is_short) return false;
+    if (kindFilter === "long" && v.is_short) return false;
+    if (
+      search &&
+      !v.title.toLowerCase().includes(search.toLowerCase()) &&
+      !v.subject.toLowerCase().includes(search.toLowerCase())
+    )
+      return false;
+    return true;
+  });
+
+  const shortCount = videos.filter((v) => v.is_short).length;
+  const longCount = videos.length - shortCount;
 
   const handleDeleteVideo = async () => {
     if (!id || !deletingVideo) return;
@@ -155,7 +237,29 @@ export function ChannelDetail() {
                 Lista de videos generados y registrados en el caché.
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="inline-flex rounded-lg border border-border/60 p-0.5 bg-muted/30">
+                <KindTab
+                  active={kindFilter === "all"}
+                  onClick={() => setKindFilter("all")}
+                  label="Todos"
+                  count={videos.length}
+                />
+                <KindTab
+                  active={kindFilter === "short"}
+                  onClick={() => setKindFilter("short")}
+                  icon={Sparkles}
+                  label="Shorts"
+                  count={shortCount}
+                />
+                <KindTab
+                  active={kindFilter === "long"}
+                  onClick={() => setKindFilter("long")}
+                  icon={Clapperboard}
+                  label="Largos"
+                  count={longCount}
+                />
+              </div>
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -206,6 +310,7 @@ export function ChannelDetail() {
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50 text-xs uppercase tracking-wider text-muted-foreground">
                     <tr>
+                      <th className="text-left px-3 py-2 font-medium w-20">Tipo</th>
                       <th className="text-left px-4 py-2 font-medium">Título</th>
                       <th className="text-left px-4 py-2 font-medium hidden md:table-cell">Subject</th>
                       <th className="text-left px-4 py-2 font-medium hidden lg:table-cell">Fecha</th>
@@ -215,6 +320,17 @@ export function ChannelDetail() {
                   <tbody className="divide-y divide-border/60">
                     {filtered.map((v) => (
                       <tr key={v.index} className="hover:bg-muted/30 transition-colors">
+                        <td className="px-3 py-3">
+                          {v.is_short ? (
+                            <Badge variant="outline" className="gap-1 text-emerald-300 border-emerald-300/40 bg-emerald-300/5">
+                              <Sparkles className="h-3 w-3" /> Short
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="gap-1 text-violet-300 border-violet-300/40 bg-violet-300/5">
+                              <Clapperboard className="h-3 w-3" /> Long
+                            </Badge>
+                          )}
+                        </td>
                         <td className="px-4 py-3 max-w-[400px]">
                           <div className="font-medium text-foreground line-clamp-1">
                             {v.title || "(sin título)"}
@@ -246,6 +362,15 @@ export function ChannelDetail() {
                                 </Button>
                               </a>
                             )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEditVideo(v)}
+                              aria-label="Editar"
+                              title="Editar título y subject"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
                             <Button
                               variant="ghost"
                               size="icon"
@@ -315,7 +440,90 @@ export function ChannelDetail() {
         sseUrl={uploadOpen && id ? api.uploadLastUrl(id) : null}
         onDone={load}
       />
+
+      <Dialog open={!!editingVideo} onOpenChange={(o) => !o && setEditingVideo(null)}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Editar entrada del historial</DialogTitle>
+            <DialogDescription>
+              Solo afecta al caché local — no actualiza el video en YouTube.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-title">Título</Label>
+              <Input
+                id="edit-title"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-subject">Subject</Label>
+              <Textarea
+                id="edit-subject"
+                rows={2}
+                value={editSubject}
+                onChange={(e) => setEditSubject(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-description">Descripción</Label>
+              <Textarea
+                id="edit-description"
+                rows={4}
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+              />
+            </div>
+            {editingVideo?.url && (
+              <div className="text-[11px] text-muted-foreground font-mono break-all">
+                {editingVideo.url}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingVideo(null)}>
+              Cancelar
+            </Button>
+            <Button variant="brand" onClick={saveVideoEdits} disabled={savingVideo}>
+              {savingVideo ? "Guardando…" : "Guardar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
+  );
+}
+
+function KindTab({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+  count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon?: typeof Sparkles;
+  label: string;
+  count: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "px-2.5 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors " +
+        (active
+          ? "bg-background shadow-sm text-foreground"
+          : "text-muted-foreground hover:text-foreground")
+      }
+    >
+      {Icon && <Icon className="h-3.5 w-3.5" />}
+      {label}
+      <span className="tabular-nums opacity-60">({count})</span>
+    </button>
   );
 }
 

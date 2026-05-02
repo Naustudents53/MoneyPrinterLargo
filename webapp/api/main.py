@@ -316,6 +316,25 @@ def delete_channel(channel_id: str):
 # Channel videos
 # ---------------------------------------------------------------------------
 
+def _infer_is_short(v: dict) -> bool:
+    """Best-effort detection for legacy cache entries that don't have an
+    explicit `is_short` field. Going forward `is_short` is always written by
+    `YouTube.upload_video`, so this only kicks in for old records.
+
+    Heuristics:
+      - explicit `is_short` value wins
+      - presence of a #Shorts hashtag (case-insensitive) → short
+      - everything else → long (false). Default-to-short is wrong because in
+        this project most legacy uploads are long-form.
+    """
+    if "is_short" in v:
+        return bool(v["is_short"])
+    text = ((v.get("title") or "") + " " + (v.get("description") or "")).lower()
+    if "#short" in text or "#shorts" in text:
+        return True
+    return False
+
+
 @app.get("/api/channels/{channel_id}/videos")
 def list_channel_videos(channel_id: str):
     raw = _read_youtube_raw()
@@ -332,7 +351,7 @@ def list_channel_videos(channel_id: str):
                     "subject": v.get("subject", ""),
                     "url": v.get("url", ""),
                     "date": v.get("date", ""),
-                    "is_short": v.get("is_short", True),
+                    "is_short": _infer_is_short(v),
                 }
                 for i, v in enumerate(sorted_videos)
             ]
@@ -365,6 +384,65 @@ def delete_channel_video(channel_id: str, url: Optional[str] = None, date: Optio
     if not found:
         raise HTTPException(404, "Video not found")
     return {"ok": True}
+
+
+class VideoEdit(BaseModel):
+    # Identifier — both url and date must match the entry being edited so we
+    # don't accidentally update the wrong video when multiple share a title.
+    url: str
+    date: str
+    # Editable fields. Sent as Optional so the frontend can patch a subset.
+    title: Optional[str] = None
+    subject: Optional[str] = None
+    description: Optional[str] = None
+    is_short: Optional[bool] = None
+
+
+@app.patch("/api/channels/{channel_id}/videos")
+def edit_channel_video(channel_id: str, payload: VideoEdit):
+    """Update title / subject / description / kind of a video entry in the
+    channel's history. The video is identified by (url, date) which together
+    are unique in practice."""
+    raw = _read_youtube_raw()
+    for acc in raw.get("accounts", []):
+        if acc.get("id") != channel_id:
+            continue
+        for v in acc.get("videos", []) or []:
+            if v.get("url") == payload.url and v.get("date") == payload.date:
+                if payload.title is not None:
+                    v["title"] = payload.title
+                if payload.subject is not None:
+                    v["subject"] = payload.subject
+                if payload.description is not None:
+                    v["description"] = payload.description
+                if payload.is_short is not None:
+                    v["is_short"] = bool(payload.is_short)
+                _write_youtube_raw(raw)
+                return {"ok": True, "video": v}
+        raise HTTPException(404, "Video not found in this channel")
+    raise HTTPException(404, "Channel not found")
+
+
+@app.post("/api/channels/{channel_id}/videos/mark-all")
+def mark_all_videos_kind(channel_id: str, kind: str):
+    """Bulk-set is_short on every video entry in the channel.
+    `kind` must be 'short' or 'long'. Useful one-shot to fix legacy entries
+    where is_short was never recorded."""
+    if kind not in ("short", "long"):
+        raise HTTPException(400, "kind must be 'short' or 'long'")
+    is_short = kind == "short"
+    raw = _read_youtube_raw()
+    updated = 0
+    for acc in raw.get("accounts", []):
+        if acc.get("id") != channel_id:
+            continue
+        for v in acc.get("videos", []) or []:
+            if v.get("is_short") != is_short:
+                v["is_short"] = is_short
+                updated += 1
+        _write_youtube_raw(raw)
+        return {"ok": True, "updated": updated, "kind": kind}
+    raise HTTPException(404, "Channel not found")
 
 
 @app.post("/api/channels/{channel_id}/videos/clear")

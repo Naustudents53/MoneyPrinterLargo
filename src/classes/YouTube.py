@@ -5609,6 +5609,7 @@ No markdown. No explanation. Just the JSON array."""
                 "url": "uploading...",
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "thumbnail_path": getattr(self, "thumbnail_path", "") or "",
+                "is_short": not is_long_video,
             }
             try:
                 self.add_video(cache_entry)

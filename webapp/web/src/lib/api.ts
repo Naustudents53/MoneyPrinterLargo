@@ -183,6 +183,26 @@ export const api = {
   },
   clearVideos: (id: string) =>
     request<{ ok: boolean }>(`/api/channels/${id}/videos/clear`, { method: "POST" }),
+  editVideo: (
+    id: string,
+    payload: {
+      url: string;
+      date: string;
+      title?: string;
+      subject?: string;
+      description?: string;
+      is_short?: boolean;
+    }
+  ) =>
+    request<{ ok: boolean; video: ChannelVideo }>(`/api/channels/${id}/videos`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  markAllVideosKind: (id: string, kind: "short" | "long") =>
+    request<{ ok: boolean; updated: number }>(
+      `/api/channels/${id}/videos/mark-all?kind=${kind}`,
+      { method: "POST" }
+    ),
 
   // Twitter
   listTwitterAccounts: () => request<TwitterAccount[]>("/api/twitter/accounts"),
