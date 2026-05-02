@@ -1,0 +1,156 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Light theme — soft, clean, with emerald primary + violet/gold accents */
+    --background: 220 33% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 160 84% 39%;          /* emerald-500 */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 258 89% 66%;           /* violet-500 */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 222 47% 11%;
+
+    --gold: 43 96% 56%;
+    --gold-foreground: 222 47% 11%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 160 84% 39%;
+
+    --brand-start: 160 84% 39%;
+    --brand-mid: 199 89% 48%;
+    --brand-end: 258 89% 66%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    /* Dark theme — deep blue-slate base, glowing emerald + violet accents */
+    --background: 222 47% 6%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 47% 9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 158 78% 50%;          /* glowing emerald */
+    --primary-foreground: 222 47% 6%;
+
+    --secondary: 217 33% 14%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217 33% 14%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 263 90% 70%;           /* glowing violet */
+    --accent-foreground: 222 47% 6%;
+
+    --destructive: 0 76% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 158 64% 52%;
+    --success-foreground: 222 47% 6%;
+
+    --warning: 38 92% 60%;
+    --warning-foreground: 222 47% 6%;
+
+    --gold: 43 96% 64%;
+    --gold-foreground: 222 47% 6%;
+
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 158 78% 50%;
+
+    --brand-start: 158 78% 50%;
+    --brand-mid: 199 89% 58%;
+    --brand-end: 263 90% 70%;
+  }
+
+  * {
+    @apply border-border;
+  }
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    font-feature-settings: "cv11", "ss01";
+  }
+}
+
+@layer components {
+  .brand-text {
+    background: linear-gradient(135deg, hsl(var(--brand-start)), hsl(var(--brand-mid)) 50%, hsl(var(--brand-end)));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+
+  .glass {
+    @apply bg-card/70 backdrop-blur-xl border border-border/60;
+  }
+
+  .glow-ring {
+    box-shadow:
+      0 0 0 1px hsl(var(--primary) / .2),
+      0 8px 32px -8px hsl(var(--primary) / .35);
+  }
+
+  .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 9999px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / .4); }
+}
+
+/* Subtle animated mesh background for the auth/dashboard hero */
+.mesh-bg {
+  background-image:
+    radial-gradient(at 0% 0%, hsl(var(--brand-start) / .15) 0, transparent 50%),
+    radial-gradient(at 100% 0%, hsl(var(--brand-mid) / .12) 0, transparent 50%),
+    radial-gradient(at 100% 100%, hsl(var(--brand-end) / .15) 0, transparent 50%),
+    radial-gradient(at 0% 100%, hsl(var(--gold) / .08) 0, transparent 50%);
+}
+
+/* Shimmer skeleton */
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 0%,
+    hsl(var(--muted) / .5) 50%,
+    hsl(var(--muted)) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2.5s linear infinite;
+}

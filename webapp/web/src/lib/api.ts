@@ -1,0 +1,223 @@
+/**
+ * API client for the MoneyPrinter Pro backend.
+ *
+ * Vite dev server proxies /api → http://127.0.0.1:8000 (see vite.config.ts).
+ * In production builds, set VITE_API_BASE if the backend lives elsewhere.
+ */
+
+const BASE = (import.meta.env.VITE_API_BASE as string) || "";
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...init,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body.detail || JSON.stringify(body);
+    } catch {
+      // ignore
+    }
+    throw new Error(`${res.status}: ${detail}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+// ---------- Types ----------
+
+export interface Channel {
+  id: string;
+  nickname: string;
+  firefox_profile: string;
+  niche: string;
+  language: string;
+  image_style: string;
+  short_voice: string;
+  long_voice: string;
+  hook_profile: string;
+  voice_drama: boolean;
+  videos_count: number;
+}
+
+export interface ChannelInput {
+  nickname: string;
+  firefox_profile?: string;
+  niche?: string;
+  language?: string;
+  image_style?: string;
+  short_voice?: string;
+  long_voice?: string;
+  hook_profile?: string;
+  voice_drama?: boolean;
+}
+
+export interface ChannelVideo {
+  index: number;
+  title: string;
+  description: string;
+  subject: string;
+  url: string;
+  date: string;
+  is_short: boolean;
+}
+
+export interface TwitterAccount {
+  id: string;
+  nickname: string;
+  firefox_profile: string;
+  topic: string;
+  posts_count: number;
+}
+
+export interface TwitterPost {
+  index: number;
+  content: string;
+  date: string;
+}
+
+export interface SystemStats {
+  channels_count: number;
+  twitter_accounts_count: number;
+  products_count: number;
+  total_videos: number;
+  total_posts: number;
+  mp4_count: number;
+  mp4_bytes: number;
+  mp4_mb: number;
+  recent_videos: {
+    channel_id: string;
+    channel_nickname: string;
+    title: string;
+    url: string;
+    date: string;
+  }[];
+}
+
+export interface SystemInfo {
+  root_dir: string;
+  mp_dir_exists: boolean;
+  config_exists: boolean;
+  llm_provider: string;
+  tts_voice: string;
+  image_aspect_ratio: string;
+  stt_provider: string;
+  headless: boolean;
+  version: string;
+  ts: string;
+}
+
+export interface ConfigField {
+  key: string;
+  label: string;
+  type: "bool" | "int" | "str" | "secret";
+  group: string;
+}
+
+export interface ConfigResponse {
+  raw: Record<string, unknown>;
+  fields: ConfigField[];
+}
+
+export interface SeriesEntry {
+  id: string;
+  name: string;
+  title_template?: string;
+  thumbnail_overlay?: string;
+  script_brief?: string;
+  section_themes?: string[];
+}
+
+export interface Mp4FileEntry {
+  name: string;
+  size_mb: number;
+  mtime: string;
+}
+
+// ---------- Endpoints ----------
+
+export const api = {
+  // System
+  systemInfo: () => request<SystemInfo>("/api/system/info"),
+  systemStats: () => request<SystemStats>("/api/system/stats"),
+
+  // Channels
+  listChannels: () => request<Channel[]>("/api/channels"),
+  getChannel: (id: string) => request<Channel>(`/api/channels/${id}`),
+  createChannel: (data: ChannelInput) =>
+    request<Channel>("/api/channels", { method: "POST", body: JSON.stringify(data) }),
+  updateChannel: (id: string, data: ChannelInput) =>
+    request<Channel>(`/api/channels/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteChannel: (id: string) =>
+    request<{ ok: boolean }>(`/api/channels/${id}`, { method: "DELETE" }),
+
+  // Videos
+  listVideos: (id: string) => request<ChannelVideo[]>(`/api/channels/${id}/videos`),
+  deleteVideo: (id: string, params: { url?: string; date?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.url) qs.set("url", params.url);
+    if (params.date) qs.set("date", params.date);
+    return request<{ ok: boolean }>(
+      `/api/channels/${id}/videos?${qs.toString()}`,
+      { method: "DELETE" }
+    );
+  },
+  clearVideos: (id: string) =>
+    request<{ ok: boolean }>(`/api/channels/${id}/videos/clear`, { method: "POST" }),
+
+  // Twitter
+  listTwitterAccounts: () => request<TwitterAccount[]>("/api/twitter/accounts"),
+  createTwitterAccount: (data: { nickname: string; firefox_profile?: string; topic?: string }) =>
+    request<TwitterAccount>("/api/twitter/accounts", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateTwitterAccount: (id: string, data: { nickname: string; firefox_profile?: string; topic?: string }) =>
+    request<TwitterAccount>(`/api/twitter/accounts/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteTwitterAccount: (id: string) =>
+    request<{ ok: boolean }>(`/api/twitter/accounts/${id}`, { method: "DELETE" }),
+  listTwitterPosts: (id: string) => request<TwitterPost[]>(`/api/twitter/accounts/${id}/posts`),
+
+  // Series
+  listSeries: () => request<SeriesEntry[]>("/api/series"),
+
+  // Config
+  getConfig: () => request<ConfigResponse>("/api/config"),
+  updateConfig: (data: Record<string, unknown>) =>
+    request<{ ok: boolean; raw: Record<string, unknown> }>("/api/config", {
+      method: "PUT",
+      body: JSON.stringify({ data }),
+    }),
+
+  // Storage
+  listMp4: () => request<Mp4FileEntry[]>("/api/storage/mp4"),
+  deleteMp4: (name: string) =>
+    request<{ ok: boolean }>(`/api/storage/mp4/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
+  clearMp4: () =>
+    request<{ ok: boolean; deleted: number }>("/api/storage/mp4/clear", { method: "POST" }),
+
+  // SSE URLs (used by EventSource directly)
+  generateUrl(id: string, params: {
+    kind: "short" | "long";
+    custom_topic?: string;
+    image_mode?: "ai" | "photos";
+    auto_upload?: boolean;
+    series_id?: string;
+  }): string {
+    const qs = new URLSearchParams();
+    qs.set("kind", params.kind);
+    if (params.custom_topic) qs.set("custom_topic", params.custom_topic);
+    if (params.image_mode) qs.set("image_mode", params.image_mode);
+    if (params.auto_upload) qs.set("auto_upload", "true");
+    if (params.series_id) qs.set("series_id", params.series_id);
+    return `${BASE}/api/channels/${id}/generate?${qs.toString()}`;
+  },
+  uploadLastUrl: (id: string) => `${BASE}/api/channels/${id}/upload-last`,
+  postTweetUrl: (id: string) => `${BASE}/api/twitter/accounts/${id}/post`,
+};

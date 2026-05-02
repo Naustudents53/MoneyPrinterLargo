@@ -111,14 +111,13 @@ HOOK_PROFILES: dict = {
 }
 
 
-# Civilization-specific art-style presets for AI image prompts. When the
-# video subject matches keywords from one of these civilizations, the
-# corresponding `style` suffix replaces the channel's `image_style` so the
-# generated images mimic that civilization's traditional art (instead of
-# generic AI photorealism). Keyword matching is accent-insensitive and
-# case-insensitive. Edit freely — the mapping is consulted by
-# `_detect_civilization_style` and applied in `_apply_channel_style`.
-CIVILIZATION_ART_STYLES: dict = {
+# Civilization era anchors. When the video subject matches keywords from one
+# of these civilizations, `era_brief` is injected into the LLM image-prompt
+# task so the generated scene descriptions stay period-accurate (clothing,
+# architecture, weapons, objects). Local LLMs (Ollama) drift into modern
+# visuals on abstract script lines without this anchor. Keyword matching is
+# accent-insensitive and case-insensitive; edit freely.
+CIVILIZATIONS: dict = {
     "roman": {
         "name": "Ancient Rome",
         "era_brief": "togas, tunics, leather sandals, bronze cuirass and plumed helmets, gladius swords, marble columns, Roman arches, mosaics, terracotta tile roofs, oil lamps, papyrus scrolls, Roman Forum, amphitheaters, chariots, laurel wreaths",
@@ -129,7 +128,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "pompeya", "pompeii", "coliseo", "colosseum", "vestal",
             "legion romana", "gladiador", "centurion",
         ],
-        "style": "Roman fresco style, Pompeii mural aesthetic, classical Mediterranean palette, hand-painted illustration, non-photorealistic, period-accurate museum artwork",
     },
     "greek": {
         "name": "Ancient Greece",
@@ -143,7 +141,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "olimpo", "olympus", "partenon", "parthenon",
             "helenico", "hellenic", "minoico", "micenico", "mycenaean",
         ],
-        "style": "ancient Greek red-figure pottery aesthetic, classical marble sculpture, hand-painted illustration, ochre and black palette, period-accurate non-photorealistic art",
     },
     "chinese": {
         "name": "Imperial China",
@@ -158,7 +155,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "ciudad prohibida", "forbidden city",
             "guerreros de terracota", "terracotta army",
         ],
-        "style": "Chinese ink wash painting, Song dynasty scroll aesthetic, traditional brushwork, soft mist palette, period-accurate non-photorealistic illustration",
     },
     "japanese": {
         "name": "Feudal Japan",
@@ -170,7 +166,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "periodo edo", "edo period", "meiji", "kamikaze",
             "bushido", "geisha", "yamato",
         ],
-        "style": "Japanese ukiyo-e woodblock print, Edo period aesthetic, Hokusai/Hiroshige style, flat color planes, bold outlines, period-accurate non-photorealistic illustration",
     },
     "indian": {
         "name": "Ancient and Medieval India",
@@ -181,7 +176,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "mughal", "mogol", "rajput",
             "ganges", "varanasi", "delhi", "taj mahal",
         ],
-        "style": "Mughal miniature painting, Rajput manuscript illumination, intricate ornamental detail, vivid jewel tones, gold leaf accents, period-accurate non-photorealistic illustration",
     },
     "mayan": {
         "name": "Maya civilization",
@@ -191,7 +185,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "tikal", "chichen", "palenque", "yucatan",
             "kukulkan", "popol vuh", "bonampak", "copan",
         ],
-        "style": "Mayan codex style, pre-Columbian Mesoamerican glyphs, Bonampak mural palette, flat figures with bold outlines, period-accurate non-photorealistic illustration",
     },
     "inca": {
         "name": "Inca Empire",
@@ -202,7 +195,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "atahualpa", "manco capac",
             "imperio incaico", "imperio inca", "andino", "andean", "quechua",
         ],
-        "style": "Andean textile pattern aesthetic, Inca and Moche pottery art, geometric stepped motifs, earth-tone palette, period-accurate non-photorealistic illustration",
     },
     "egyptian": {
         "name": "Ancient Egypt",
@@ -216,7 +208,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "esfinge", "sphinx",
             "horus", "anubis", "osiris", "isis", "luxor", "tebas", "thebes",
         ],
-        "style": "ancient Egyptian tomb painting, hieroglyphic mural style, profile-view figures, flat ochre/red/gold palette, period-accurate non-photorealistic illustration",
     },
     "renaissance": {
         "name": "Italian Renaissance",
@@ -228,7 +219,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "florencia", "florence", "medici", "savonarola", "vasari", "donatello",
             "humanismo", "humanism",
         ],
-        "style": "Italian Renaissance fresco aesthetic, Botticelli/Da Vinci painting style, soft sfumato, classical composition, period-accurate non-photorealistic painted illustration",
     },
     "viking": {
         "name": "Viking Age Norse",
@@ -238,7 +228,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "ragnar", "odin", "thor", "valhalla",
             "nordico", "norse", "runa", "runas", "drakkar",
         ],
-        "style": "Norse manuscript illumination, runestone carving aesthetic, intricate knotwork, cold muted palette, period-accurate non-photorealistic illustration",
     },
     "aztec": {
         "name": "Aztec Empire",
@@ -249,7 +238,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "mexica", "huitzilopochtli", "quetzalcoatl",
             "codice azteca", "codice borgia",
         ],
-        "style": "Aztec codex style, Codex Borgia palette, Mexica pictogram aesthetic, flat figures with bold black outlines, period-accurate non-photorealistic illustration",
     },
     "persian": {
         "name": "Ancient Persia",
@@ -261,7 +249,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "aquemenida", "achaemenid", "sasanida", "sassanid",
             "zoroastro", "zoroaster", "persepolis",
         ],
-        "style": "Persian miniature painting, Safavid manuscript illumination, intricate ornamental borders, jewel tones, period-accurate non-photorealistic illustration",
     },
     "mesopotamian": {
         "name": "Ancient Mesopotamia",
@@ -275,7 +262,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "uruk", "ninive", "nineveh",
             "ziggurat", "cuneiforme", "cuneiform",
         ],
-        "style": "Mesopotamian relief carving aesthetic, Assyrian palace bas-relief style, cuneiform inscription motifs, ochre stone palette, period-accurate non-photorealistic illustration",
     },
     "ottoman": {
         "name": "Ottoman Empire",
@@ -287,7 +273,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "mehmed ii", "topkapi",
             "sultan otomano",
         ],
-        "style": "Ottoman miniature painting, Iznik tile pattern aesthetic, ornate calligraphic borders, jewel tones, period-accurate non-photorealistic illustration",
     },
     "byzantine": {
         "name": "Byzantine Empire",
@@ -300,7 +285,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "constantinopla", "constantinople",
             "iconoclasia", "iconoclasm",
         ],
-        "style": "Byzantine icon painting, gold-leaf mosaic aesthetic, flat hieratic figures, deep ultramarine and gold palette, period-accurate non-photorealistic illustration",
     },
     "medieval": {
         "name": "Medieval Europe",
@@ -315,23 +299,8 @@ CIVILIZATION_ART_STYLES: dict = {
             "ricardo corazon de leon", "saladino", "saladin",
             "peste negra", "black death",
         ],
-        "style": "medieval illuminated manuscript style, Book of Hours aesthetic, gold-leaf flat figures, ornate gothic borders, period-accurate non-photorealistic illustration",
     },
 }
-
-
-# Fixed visual style applied to ALL Shorts (overrides civilization detection and
-# per-channel image_style). The goal is consistency across the channel: every
-# Short has the same recognizable look regardless of topic, while the SCENE
-# content (what the script is talking about right now) remains the dominant
-# subject. Inspired by 2D animated history channels like "Impacto Stories":
-# flat-color vector illustration with cinematic lighting and bold outlines.
-SHORTS_FIXED_STYLE: str = (
-    "2D vector illustration, flat-color cartoon style, bold dark outlines, "
-    "cinematic comic-book aesthetic, vibrant saturated palette, dramatic shading "
-    "and rim lighting, expressive characters with clean shapes, hand-drawn "
-    "animation feel, modern motion-comic look"
-)
 
 
 class YouTube:
@@ -1083,15 +1052,28 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
             prompt = f"""Task: write {n_prompts} image prompts for a video about "{self.subject}".{era_clause}
 
-Below are {n_prompts} script sections. For each one, write a vivid 35-55 word English description of a SPECIFIC visual scene that illustrates that exact section. Pick a concrete action with a verb (NOT a general theme). Name what people do, wear, hold; name the setting and 2-3 period objects. Each scene must be different.
+You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section says "the priest opens the temple gate at dawn", the image is exactly that.
 
-Examples of good scenes:
-- "Caesar in red cloak rides a black warhorse across the shallow Rubicon at dusk, his Thirteenth Legion wading behind in lorica segmentata, eagle standards held high, hills in the distance, tense determined faces."
-- "A samurai in dark do armor swings his katana mid-stroke in a wooden dojo, sweat on his brow, paper shoji screens around, morning light on tatami mats, wooden practice swords stacked nearby."
-- "A Byzantine sailor lights a bronze siphon of Greek fire on a dromon warship, flames leaping toward an enemy galley, sea spray, gold-trimmed sails, oars mid-stroke, Constantinople walls in the distance."
+ABSOLUTE RULES (every prompt):
+1. SCENE FIDELITY. Open with a concrete action (subject + verb). Whatever the script section says is happening, that is what the image shows.
+2. PERIOD ACCURACY. If a person appears, describe their clothing exactly as it would be in the right historical period/place/culture (fabric, cut, color, footwear, headwear). Do the same for architecture, weapons, tools, transport, and 2-3 supporting objects in the scene. If the section names a specific real person, place or event, use that proper noun.
+3. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe, same level of detail. No image should look like it belongs to a different show.
+4. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The look is decided by the suffix appended later — your job is the content.
+5. LENGTH. 35-60 English words per prompt. No camera or lens jargon.
+
+Examples of GOOD scene-only prompts:
+- "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his Thirteenth Legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces."
+- "A samurai in dark lacquered do armor stands mid-strike with his katana in a wooden dojo, paper shoji screens around him, morning light falling on tatami mats, wooden practice swords stacked against a beam, sweat on his temple."
+- "A Byzantine sailor on a dromon warship leans over a bronze siphon and ignites a jet of Greek fire toward an enemy galley, flames arcing over the dark sea, gold-trimmed sails, oars mid-stroke, the walls of Constantinople in the distance."
+
+Examples of BAD prompts (DO NOT WRITE THESE):
+- "An ancient Roman scene." (too vague, no action, no specific subject)
+- "Stylized cartoon of Caesar crossing a river." (forbidden art-style word)
+- "A historical illustration of a samurai." (forbidden art-style word, no action)
+- "Symbolic image of a Byzantine ship." (no concrete moment)
 
 {sections_text}
-Forbidden words: cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization.
+Forbidden words: cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, ukiyo-e, sketch.
 
 Return ONLY a JSON array of {n_prompts} strings (one prompt per section, in order). Example format:
 ["scene 1 description...", "scene 2 description...", ...]
@@ -1419,68 +1401,56 @@ No markdown. No explanation. Just the JSON array."""
         raise RuntimeError("Leonardo: timeout waiting for generation")
 
     def _augment_for_ai_fallback(self, query: str) -> str:
-        """Wrap a short photo-mode search query so AI generators render a usable image.
-        Shorts always use the fixed 2D style, so we must NOT inject photorealistic
-        wrapping (it would clash). Long videos defer to the civilization/channel
-        style if present, and only fall back to the photographic wrapper otherwise."""
-        is_long = bool(getattr(self, "_is_long_video", False))
-        if not is_long:
-            # Shorts: scene-only description, the 2D style is added by _apply_channel_style.
-            out = f"{query}, full scene with the key subjects clearly visible, vivid mood"
-        elif self._detect_civilization_style() or self._image_style:
-            out = f"{query}, full scene with key subjects visible, period-accurate setting, vivid mood"
-        else:
-            out = f"{query}, cinematic photograph, photorealistic, dramatic lighting, highly detailed, 4K"
+        """Wrap a short photo-mode search query with cinematic styling so AI generators render a usable image."""
+        out = f"{query}, cinematic photograph, photorealistic, dramatic lighting, highly detailed, 4K"
         return self._apply_channel_style(out)
+
+    # Default visual baseline applied when a channel has NO `image_style`
+    # configured. Goal: keep all images of a single video uniform (same look,
+    # same realism level) and let the scene description itself carry the
+    # period-accurate clothing / setting / objects. We deliberately avoid any
+    # "art style" cue (no "cinematic", "painting", "cartoon", "illustration"):
+    # it must be neutral documentary realism so a Roman scene, an Inca scene
+    # and a Japanese scene all feel like they belong to the same series.
+    DEFAULT_BASE_STYLE = (
+        "photorealistic image, true-to-life realism, natural realistic lighting, "
+        "period-accurate clothing architecture weapons and everyday objects, "
+        "authentic materials and textures, neutral documentary tone, "
+        "consistent realistic look across the series, "
+        "no cartoon, no illustration, no painting, no anime, no stylization"
+    )
 
     def _apply_channel_style(self, prompt: str) -> str:
         """
-        Wrap an AI image prompt with the visual style appropriate for the format.
+        Append the per-channel `image_style` suffix to an LLM-produced scene
+        description. If the channel has no style configured, fall back to a
+        neutral realism baseline (`DEFAULT_BASE_STYLE`) so every image in the
+        same video shares the same look — instead of each provider/prompt
+        rendering in its own random aesthetic.
 
-        - SHORTS (`_is_long_video` False): use the channel's `image_style` (so each
-          channel keeps its own consistent look). Civilization detection is
-          intentionally skipped here — for shorts the priority is branding
-          consistency + faithfulness to the script line, not period-accurate art.
-          Falls back to SHORTS_FIXED_STYLE only if the channel has no `image_style`
-          configured.
-        - LONG VIDEOS (`_is_long_video` True): civilization-specific style takes
-          precedence, falling back to the per-channel `image_style`.
-
-        The SCENE description goes FIRST so the diffusion model treats the literal
-        scene content from the script as the dominant subject; the style follows
-        as a rendering modifier. Output is capped to ~1000 chars to fit provider limits.
+        The style suffix never contains civilization-specific art cues; period
+        accuracy is enforced inside the SCENE description (clothing, objects,
+        setting) by the LLM, not by the style suffix.
         """
-        # Both shorts and long videos use the channel's image_style so every video
-        # on the channel has the same recognisable look. Civilization detection is
-        # intentionally skipped here — era accuracy is enforced at the LLM prompt
-        # level (CRITICAL HISTORICAL ERA RULE in generate_prompts /
-        # generate_long_prompts) so the scene content is period-correct while the
-        # rendering style stays consistent with the channel's brand.
-        style = self._image_style or SHORTS_FIXED_STYLE
-        if not style:
-            return prompt
-        scene = prompt.rstrip(', .')
-        combined = f"{scene}. Depicted as {style}. The scene described above is the subject; the style is only how it is rendered."
+        suffix = self._image_style.strip() if self._image_style else self.DEFAULT_BASE_STYLE
+        combined = f"{prompt.rstrip(', .')}, {suffix}"
+        # Hard cap to ~1000 chars so we don't blow past provider input limits.
         return combined[:1000]
 
-    def _detect_civilization_style(self) -> str:
+    def _detect_civilization(self) -> str:
         """
-        Inspect self.subject and return the matching civilization style
-        suffix from CIVILIZATION_ART_STYLES, or "" if none matches.
-        Matching is accent- and case-insensitive; the highest keyword-hit
-        count wins. Result is cached per subject so we don't rescan on
-        every prompt. Also caches the civilization key so callers can
-        look up `name` / `era_brief` via `_get_civilization_info()`.
+        Match self.subject against CIVILIZATIONS keyword lists and return the
+        winning civ key (or "" if none). Matching is accent- and case-insensitive;
+        highest keyword-hit count wins. Cached per subject.
         """
         import unicodedata
 
         subject = (getattr(self, "subject", "") or "").strip()
         if not subject:
-            self._civ_key_cached = ""
             return ""
 
-        if getattr(self, "_civ_style_subject", None) == subject:
-            return getattr(self, "_civ_style_cached", "") or ""
+        if getattr(self, "_civ_subject_cached", None) == subject:
+            return getattr(self, "_civ_key_cached", "") or ""
 
         def _norm(s: str) -> str:
             s = s.lower()
@@ -1492,33 +1462,28 @@ No markdown. No explanation. Just the JSON array."""
         norm_subject = _norm(subject)
         best_civ = ""
         best_score = 0
-        for civ, data in CIVILIZATION_ART_STYLES.items():
+        for civ, data in CIVILIZATIONS.items():
             score = sum(1 for kw in data["keywords"] if _norm(kw) in norm_subject)
             if score > best_score:
                 best_score = score
                 best_civ = civ
 
-        style = CIVILIZATION_ART_STYLES[best_civ]["style"] if best_civ else ""
-        self._civ_style_subject = subject
-        self._civ_style_cached = style
+        self._civ_subject_cached = subject
         self._civ_key_cached = best_civ
-        if style and get_verbose():
-            info(f" => Detected civilization style: {best_civ}")
-        return style
+        if best_civ and get_verbose():
+            info(f" => Detected civilization: {best_civ}")
+        return best_civ
 
     def _get_civilization_info(self) -> dict:
         """
         Returns {"key": ..., "name": ..., "era_brief": ...} for the civilization
-        detected from self.subject, or {} if none. Used by `generate_prompts` to
-        anchor every scene description in the correct historical era — even when
-        the channel's image_style hides civilization-specific styling (shorts).
+        detected from self.subject, or {} if none. Used by `generate_prompts` /
+        `generate_long_prompts` to anchor every scene to the correct historical era.
         """
-        # Ensures _civ_key_cached is populated for the current subject.
-        self._detect_civilization_style()
-        civ_key = getattr(self, "_civ_key_cached", "") or ""
+        civ_key = self._detect_civilization()
         if not civ_key:
             return {}
-        data = CIVILIZATION_ART_STYLES.get(civ_key, {})
+        data = CIVILIZATIONS.get(civ_key, {})
         return {
             "key": civ_key,
             "name": data.get("name", civ_key.title()),
@@ -3826,9 +3791,7 @@ Return ONLY the JSON. No markdown, no explanation."""
             warning(f"Thumbnail: using topic-derived overlay text: {overlay_words}")
 
         # Step 2: render the background image (Nano Banana 2 first, then Leonardo, then Pollinations).
-        # Apply the same per-channel / civilization-detected art style that
-        # generate_long_images uses, so the thumbnail matches the video's look
-        # (ukiyo-e woodblock for feudal Japan, Renaissance painting for Florence, etc.).
+        # Append the channel's image_style suffix so the thumbnail matches the video's look.
         styled_visual_prompt = self._apply_channel_style(visual_prompt)
         if get_verbose() and styled_visual_prompt != visual_prompt:
             info(" => Thumbnail: applied channel art style")
@@ -4003,15 +3966,28 @@ Return ONLY the JSON. No markdown, no explanation."""
 
         prompt = f"""Task: write {n_prompts} image prompts for a long-form documentary about "{self.subject}".{era_clause}
 
-Below are {n_prompts} script sections. For each one, write a vivid 35-55 word English description of a SPECIFIC visual scene that illustrates that exact section. Pick a concrete action with a verb (NOT a general theme). Name what people do, wear, hold; name the setting and 2-3 period objects. Each scene must be different — vary action, setting, character and time of day.
+You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section talks about "the senators debating in the curia at noon", the image is exactly that.
 
-Examples of good scenes:
-- "Caesar in red cloak rides a black warhorse across the shallow Rubicon at dusk, his Thirteenth Legion wading behind in lorica segmentata, eagle standards held high, hills in the distance, tense determined faces."
-- "A samurai in dark do armor swings his katana mid-stroke in a wooden dojo, sweat on his brow, paper shoji screens around, morning light on tatami mats, wooden practice swords stacked nearby."
-- "A Byzantine sailor lights a bronze siphon of Greek fire on a dromon warship, flames leaping toward an enemy galley, sea spray, gold-trimmed sails, oars mid-stroke, Constantinople walls in the distance."
+ABSOLUTE RULES (every prompt):
+1. SCENE FIDELITY. Open with a concrete action (subject + verb) drawn from the section text. Whatever the section is talking about, that is what the image shows.
+2. PERIOD ACCURACY. If a person appears, describe their clothing exactly as it would be in the right historical period/place/culture (fabric, cut, color, footwear, headwear). Same for architecture, weapons, tools, transport, and 2-3 supporting objects. If the section names a real person, place or event, use that proper noun.
+3. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing — but never the level of realism.
+4. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later — your job is content only.
+5. LENGTH. 35-60 English words per prompt. No camera or lens jargon.
+
+Examples of GOOD scene-only prompts:
+- "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his Thirteenth Legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces."
+- "A samurai in dark lacquered do armor stands mid-strike with his katana in a wooden dojo, paper shoji screens around him, morning light falling on tatami mats, wooden practice swords stacked against a beam, sweat on his temple."
+- "A Byzantine sailor on a dromon warship leans over a bronze siphon and ignites a jet of Greek fire toward an enemy galley, flames arcing over the dark sea, gold-trimmed sails, oars mid-stroke, the walls of Constantinople in the distance."
+
+Examples of BAD prompts (DO NOT WRITE THESE):
+- "An ancient Roman scene." (too vague, no action)
+- "Stylized cartoon of Caesar crossing a river." (forbidden art-style word)
+- "A historical illustration of a samurai." (forbidden art-style word, no action)
+- "Symbolic image of Byzantine power." (no concrete moment)
 
 {sections_text}
-Forbidden words: cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization. Also forbidden: cosmic/space/nebula imagery, microscopic diagrams, futuristic/sci-fi visuals (unless the topic itself is astronomy/biology/futurism).
+Forbidden words: cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, ukiyo-e, sketch. Also forbidden unless the topic itself demands it: cosmic/space/nebula imagery, microscopic diagrams, futuristic/sci-fi visuals.
 
 Return ONLY a JSON array of {n_prompts} strings (one prompt per section, in order). Example format:
 ["scene 1 description...", "scene 2 description...", ...]
@@ -5169,6 +5145,49 @@ No markdown. No explanation. Just the JSON array."""
             except Exception:
                 pass
 
+    def _robust_click(self, driver, element, label: str = "") -> bool:
+        """
+        Click an element in YouTube Studio in a way that survives the two
+        failure modes we keep seeing:
+
+          (a) ElementClickInterceptedException — another node (hashtag tooltip,
+              tutorial overlay, sticky header) sits on top of the target. The
+              standard `.click()` aims at the visual coordinates and hits the
+              overlay instead.
+          (b) ElementNotInteractableException — the element is in the DOM but
+              hasn't been scrolled into view yet (long Details panel, the
+              visibility radios live way below the fold).
+
+        Strategy: scroll the element to the center of the viewport, try a
+        normal click, and if that fails for any reason fall back to a JS click
+        which dispatches the event directly on the node and ignores overlays.
+        Returns True on success, False if both attempts blow up.
+        """
+        try:
+            driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center', inline: 'center'});",
+                element,
+            )
+            time.sleep(0.4)
+        except Exception:
+            pass
+        try:
+            element.click()
+            return True
+        except Exception as e:
+            if get_verbose() and label:
+                warning(
+                    f"\t=> {label}: standard click intercepted ({type(e).__name__}); "
+                    "falling back to JS click."
+                )
+            try:
+                driver.execute_script("arguments[0].click();", element)
+                return True
+            except Exception as e2:
+                if label:
+                    warning(f"\t=> {label}: JS click also failed: {str(e2)[:160]}")
+                return False
+
     def upload_video(self) -> bool:
         """
         Uploads the video to YouTube via Selenium.
@@ -5291,14 +5310,14 @@ No markdown. No explanation. Just the JSON array."""
             try:
                 if not get_is_for_kids():
                     not_for_kids = wait.until(
-                        EC.element_to_be_clickable((By.NAME, YOUTUBE_NOT_MADE_FOR_KIDS_NAME))
+                        EC.presence_of_element_located((By.NAME, YOUTUBE_NOT_MADE_FOR_KIDS_NAME))
                     )
-                    not_for_kids.click()
+                    self._robust_click(driver, not_for_kids, "kids radio (not for kids)")
                 else:
                     for_kids = wait.until(
-                        EC.element_to_be_clickable((By.NAME, YOUTUBE_MADE_FOR_KIDS_NAME))
+                        EC.presence_of_element_located((By.NAME, YOUTUBE_MADE_FOR_KIDS_NAME))
                     )
-                    for_kids.click()
+                    self._robust_click(driver, for_kids, "kids radio (made for kids)")
                 time.sleep(1)
             except Exception as e:
                 warning(f"Could not set kids option: {e}")
@@ -5429,9 +5448,10 @@ No markdown. No explanation. Just the JSON array."""
                     info(f"\t=> Clicking Next (step {step_num + 1}/3)...")
                 try:
                     next_btn = wait.until(
-                        EC.element_to_be_clickable((By.ID, YOUTUBE_NEXT_BUTTON_ID))
+                        EC.presence_of_element_located((By.ID, YOUTUBE_NEXT_BUTTON_ID))
                     )
-                    next_btn.click()
+                    if not self._robust_click(driver, next_btn, f"Next step {step_num + 1}/3"):
+                        warning(f"Next button step {step_num + 1} could not be clicked.")
                     time.sleep(2)
                 except Exception as e:
                     warning(f"Next button step {step_num + 1} failed: {e}")
@@ -5444,9 +5464,9 @@ No markdown. No explanation. Just the JSON array."""
             try:
                 radio_buttons = driver.find_elements(By.XPATH, YOUTUBE_RADIO_BUTTON_XPATH)
                 if len(radio_buttons) >= 3:
-                    radio_buttons[2].click()  # 0=Private, 1=Unlisted, 2=Public — but YT may reorder
+                    self._robust_click(driver, radio_buttons[2], "visibility radio")  # 0=Private, 1=Unlisted, 2=Public
                 elif len(radio_buttons) >= 2:
-                    radio_buttons[1].click()  # Try unlisted
+                    self._robust_click(driver, radio_buttons[1], "visibility radio (fallback idx 1)")
                 time.sleep(1)
             except Exception as e:
                 warning(f"Could not set visibility: {e}")
@@ -5457,9 +5477,10 @@ No markdown. No explanation. Just the JSON array."""
 
             try:
                 done_btn = wait.until(
-                    EC.element_to_be_clickable((By.ID, YOUTUBE_DONE_BUTTON_ID))
+                    EC.presence_of_element_located((By.ID, YOUTUBE_DONE_BUTTON_ID))
                 )
-                done_btn.click()
+                if not self._robust_click(driver, done_btn, "Done button"):
+                    warning("Done button could not be clicked.")
             except Exception as e:
                 warning(f"Done button failed: {e}")
 
