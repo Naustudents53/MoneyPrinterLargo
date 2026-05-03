@@ -1914,7 +1914,7 @@ No markdown. No explanation. Just the JSON array."""
         ch_lang = lang_map.get((self._language or "").lower(), "en")
         wikis = [ch_lang, "en"] if ch_lang != "en" else ["en"]
 
-        headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
+        headers = {"User-Agent": "MoneyPrinterPro/1.0 (research use)"}
 
         for wiki in wikis:
             print(colored(f"    [Wikipedia/{wiki}] Searching: {query[:60]}...", "cyan"), flush=True)
@@ -2008,7 +2008,7 @@ No markdown. No explanation. Just the JSON array."""
                 variants.append(v)
                 seen.add(v.lower())
 
-        headers = {"User-Agent": "MoneyPrinterV2/1.0 (https://github.com/; research use)"}
+        headers = {"User-Agent": "MoneyPrinterPro/1.0 (https://github.com/; research use)"}
 
         for variant in variants:
             print(colored(f"    [Wikimedia] Searching: {variant[:60]}...", "cyan"), flush=True)
@@ -2079,7 +2079,7 @@ No markdown. No explanation. Just the JSON array."""
             query = self._extract_search_query(prompt)
 
         print(colored(f"    [Met Museum] Searching: {query[:60]}...", "cyan"), flush=True)
-        headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
+        headers = {"User-Agent": "MoneyPrinterPro/1.0 (research use)"}
 
         search_url = (
             "https://collectionapi.metmuseum.org/public/collection/v1/search"
@@ -2137,7 +2137,7 @@ No markdown. No explanation. Just the JSON array."""
             query = self._extract_search_query(prompt)
 
         print(colored(f"    [LoC] Searching: {query[:60]}...", "cyan"), flush=True)
-        headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
+        headers = {"User-Agent": "MoneyPrinterPro/1.0 (research use)"}
         search_url = (
             f"https://www.loc.gov/photos/?q={urllib.parse.quote(query)}&fo=json&c=25"
         )
@@ -2214,7 +2214,7 @@ No markdown. No explanation. Just the JSON array."""
         ch_lang = lang_map.get((self._language or "").lower(), "en")
         languages = [ch_lang, "en"] if ch_lang != "en" else ["en"]
 
-        headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
+        headers = {"User-Agent": "MoneyPrinterPro/1.0 (research use)"}
 
         for lang in languages:
             print(colored(f"    [Wikidata/{lang}] Searching: {query[:60]}...", "cyan"), flush=True)
@@ -2354,7 +2354,7 @@ No markdown. No explanation. Just the JSON array."""
             query = self._extract_search_query(prompt)
 
         print(colored(f"    [Europeana] Searching: {query[:60]}...", "cyan"), flush=True)
-        headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
+        headers = {"User-Agent": "MoneyPrinterPro/1.0 (research use)"}
 
         # `media=true` → only items with a real media URL we can download.
         # `type=IMAGE` → drops audio/video/text. `reusability=open` would be

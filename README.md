@@ -6,18 +6,18 @@
 
 > 𝕏 Also, follow me on X: [@DevBySami](https://x.com/DevBySami).
 
-[![madewithlove](https://img.shields.io/badge/made_with-%E2%9D%A4-red?style=for-the-badge&labelColor=orange)](https://github.com/FujiwaraChoki/MoneyPrinterV2)
+[![madewithlove](https://img.shields.io/badge/made_with-%E2%9D%A4-red?style=for-the-badge&labelColor=orange)](https://github.com/FujiwaraChoki/MoneyPrinterPro)
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Donate-brightgreen?logo=buymeacoffee)](https://www.buymeacoffee.com/fujicodes)
-[![GitHub license](https://img.shields.io/github/license/FujiwaraChoki/MoneyPrinterV2?style=for-the-badge)](https://github.com/FujiwaraChoki/MoneyPrinterV2/blob/main/LICENSE)
-[![GitHub issues](https://img.shields.io/github/issues/FujiwaraChoki/MoneyPrinterV2?style=for-the-badge)](https://github.com/FujiwaraChoki/MoneyPrinterV2/issues)
-[![GitHub stars](https://img.shields.io/github/stars/FujiwaraChoki/MoneyPrinterV2?style=for-the-badge)](https://github.com/FujiwaraChoki/MoneyPrinterV2/stargazers)
+[![GitHub license](https://img.shields.io/github/license/FujiwaraChoki/MoneyPrinterPro?style=for-the-badge)](https://github.com/FujiwaraChoki/MoneyPrinterPro/blob/main/LICENSE)
+[![GitHub issues](https://img.shields.io/github/issues/FujiwaraChoki/MoneyPrinterPro?style=for-the-badge)](https://github.com/FujiwaraChoki/MoneyPrinterPro/issues)
+[![GitHub stars](https://img.shields.io/github/stars/FujiwaraChoki/MoneyPrinterPro?style=for-the-badge)](https://github.com/FujiwaraChoki/MoneyPrinterPro/stargazers)
 [![Discord](https://img.shields.io/discord/1134848537704804432?style=for-the-badge)](https://dsc.gg/fuji-community)
 
 An Application that automates the process of making money online.
-MPV2 (MoneyPrinter Version 2) is, as the name suggests, the second version of the MoneyPrinter project. It is a complete rewrite of the original project, with a focus on a wider range of features and a more modular architecture.
+MPP (MoneyPrinterPro) is a complete rewrite of the original MoneyPrinter project, with a focus on a wider range of features and a more modular architecture.
 
-> **Note:** MPV2 needs Python 3.12 to function effectively.
+> **Note:** MPP needs Python 3.12 to function effectively.
 > Watch the YouTube video [here](https://youtu.be/wAZ_ZSuIqfk)
 
 ## Features
@@ -40,9 +40,9 @@ If you would like to submit your own version/fork of MoneyPrinter, please open a
 > ⚠️ If you are planning to reach out to scraped businesses per E-Mail, please first install the [Go Programming Language](https://golang.org/).
 
 ```bash
-git clone https://github.com/FujiwaraChoki/MoneyPrinterV2.git
+git clone https://github.com/FujiwaraChoki/MoneyPrinterPro.git
 
-cd MoneyPrinterV2
+cd MoneyPrinterPro
 # Copy Example Configuration and fill out values in config.json
 cp config.example.json config.json
 
@@ -72,7 +72,7 @@ All relevant document can be found [here](docs/).
 
 ## Scripts
 
-For easier usage, there are some scripts in the `scripts` directory, that can be used to directly access the core functionality of MPV2, without the need of user interaction.
+For easier usage, there are some scripts in the `scripts` directory, that can be used to directly access the core functionality of MPP, without the need of user interaction.
 
 All scripts need to be run from the root directory of the project, e.g. `bash scripts/upload_video.sh`.
 
@@ -86,7 +86,7 @@ Please read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for details on our code of 
 
 ## License
 
-MoneyPrinterV2 is licensed under `Affero General Public License v3.0`. See [LICENSE](LICENSE) for more information.
+MoneyPrinterPro is licensed under `Affero General Public License v3.0`. See [LICENSE](LICENSE) for more information.
 
 ## Acknowledgments
 
@@ -95,4 +95,4 @@ MoneyPrinterV2 is licensed under `Affero General Public License v3.0`. See [LICE
 
 ## Disclaimer
 
-This project is for educational purposes only. The author will not be responsible for any misuse of the information provided. All the information on this website is published in good faith and for general information purpose only. The author does not make any warranties about the completeness, reliability, and accuracy of this information. Any action you take upon the information you find on this website (FujiwaraChoki/MoneyPrinterV2), is strictly at your own risk. The author will not be liable for any losses and/or damages in connection with the use of our website.
+This project is for educational purposes only. The author will not be responsible for any misuse of the information provided. All the information on this website is published in good faith and for general information purpose only. The author does not make any warranties about the completeness, reliability, and accuracy of this information. Any action you take upon the information you find on this website (FujiwaraChoki/MoneyPrinterPro), is strictly at your own risk. The author will not be liable for any losses and/or damages in connection with the use of our website.

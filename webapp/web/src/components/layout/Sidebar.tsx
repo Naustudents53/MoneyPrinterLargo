@@ -98,7 +98,7 @@ export function Sidebar() {
       <div className="px-4 py-4 border-t border-border/60 text-[11px] text-muted-foreground space-y-1">
         <div className="flex items-center justify-between">
           <span>v1.0.0</span>
-          <span className="font-mono">MPV2</span>
+          <span className="font-mono">MPP</span>
         </div>
         <div className="brand-text font-semibold">Print smarter, not harder.</div>
       </div>

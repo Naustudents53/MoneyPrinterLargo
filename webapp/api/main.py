@@ -1,7 +1,7 @@
 """
 MoneyPrinter Pro — FastAPI backend.
 
-Wraps the existing MoneyPrinterV2 Python CLI (src/) into a REST API + SSE
+Wraps the existing MoneyPrinterPro Python CLI (src/) into a REST API + SSE
 streaming endpoints so the React frontend can drive every workflow:
 channels CRUD, video listing/deletion, generation + upload with live logs,
 series, settings, system status.
@@ -41,7 +41,7 @@ MP_DIR = ROOT_DIR / ".mp"
 THUMB_DIR = ROOT_DIR / "thumbnails"
 CONFIG_PATH = ROOT_DIR / "config.json"
 
-# Make MoneyPrinterV2 importable. The original config.py computes ROOT_DIR as
+# Make MoneyPrinterPro importable. The original config.py computes ROOT_DIR as
 # os.path.dirname(sys.path[0]) which only works when invoked as `python src/main.py`
 # from the project root. To survive any invocation (uvicorn reload, tests, etc.)
 # we (a) add src/ to sys.path and (b) overwrite config.ROOT_DIR after import.
@@ -68,7 +68,7 @@ from cache import (  # noqa: E402
 
 app = FastAPI(
     title="MoneyPrinter Pro API",
-    description="REST + SSE API exposing MoneyPrinterV2 functionality",
+    description="REST + SSE API exposing MoneyPrinterPro functionality",
     version="1.0.0",
 )
 
