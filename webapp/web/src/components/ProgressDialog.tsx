@@ -66,6 +66,13 @@ export function ProgressDialog({
   const [phase, setPhase] = useState<"generate" | "upload">("generate");
   const esRef = useRef<EventSource | null>(null);
   const logBoxRef = useRef<HTMLDivElement | null>(null);
+  // Hold onDone in a ref so changes to its identity (parent re-renders with a
+  // non-memoized callback) don't retrigger the SSE effect and spawn a duplicate
+  // job on the backend.
+  const onDoneRef = useRef(onDone);
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
 
   // (Re)connect when sseUrl changes (initial open OR upload-last triggered).
   useEffect(() => {
@@ -117,7 +124,7 @@ export function ProgressDialog({
       append("──── completado ✅ ────");
       setStatus("done");
       es.close();
-      onDone?.();
+      onDoneRef.current?.();
       toast.success(phase === "upload" ? "Video subido" : "Render completado");
     });
     es.addEventListener("error", (ev) => {
@@ -138,7 +145,7 @@ export function ProgressDialog({
       es.close();
       esRef.current = null;
     };
-  }, [open, activeUrl, phase, onDone]);
+  }, [open, activeUrl, phase]);
 
   // Initial sseUrl → activeUrl mirror when the dialog opens.
   useEffect(() => {

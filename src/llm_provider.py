@@ -70,8 +70,8 @@ def generate_text(prompt: str, model_name: str = None) -> str:
     if provider == "gemini":
         providers = [
             ("gemini", lambda: _generate_text_gemini(prompt)),
-            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
             ("ollama", lambda: _generate_text_ollama(prompt, None)),
+            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
         ]
     elif provider == "pollinations":
         providers = [
