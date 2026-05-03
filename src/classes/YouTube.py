@@ -926,6 +926,7 @@ CRITICAL RULES:
 - NO "welcome", NO "voiceover", NO meta-references.
 - ABSOLUTELY NO stage directions of any kind. Never write "(image of ...)", "(imagen de ...)", "[B-roll: ...]", "(plano cerrado)", "(music)", "(música suave)", "(emoji)", "(transition)", "(voice over)" or anything similar. Only text a narrator would speak ALOUD.
 - NUMBERS: spell numbers out as words, not digits. Examples (in {self.language}): "mil cuatrocientos cincuenta y tres" not "1453"; "four thousand five hundred" not "4,500".
+- YEARS vs ELAPSED TIME — DO NOT CONFUSE THEM. A calendar year (e.g. 1477) is a DATE; elapsed time is a DURATION. To name a year, write "el año mil cuatrocientos setenta y siete" / "in the year fourteen seventy-seven". NEVER use "hace mil cuatrocientos setenta y siete años" / "1477 years ago" to refer TO the year 1477 — that phrase ONLY means elapsed duration, calculated from the current year ({datetime.now().year}). An event in 1477 happened {datetime.now().year - 1477} years ago, never 1477 years ago. If unsure, prefer naming the year ("el año X") and skip the elapsed-time phrasing entirely.
 - ONLY return the raw script text. Nothing else.
 - WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.
 """
@@ -1579,6 +1580,40 @@ No markdown. No explanation. Just the JSON array."""
         # cap, so this leaves headroom while preventing prompt explosion.
         return combined[:1500]
 
+    def _niche_is_historical(self) -> bool:
+        """
+        True only if the channel niche explicitly references history, antiquity,
+        mythology, archaeology, an empire, or a medieval/ancient setting.
+        Used to gate civilization detection — modern-narrative channels
+        (drama, suspense, fitness, tech, etc.) should never have ancient-era
+        visual anchors injected because of an incidental "Platón" mention in
+        the script. Note: matches ``\\bhistoria\\b`` as a whole word so it
+        does NOT trigger on "Historias" (Spanish for "stories").
+        """
+        import unicodedata, re
+
+        niche = (getattr(self, "niche", "") or "").strip()
+        if not niche:
+            return False
+
+        norm = "".join(
+            c for c in unicodedata.normalize("NFD", niche.lower())
+            if unicodedata.category(c) != "Mn"
+        )
+
+        word_kw = (
+            r"historia|historica|historico|historicas|historicos"
+            r"|history|historical"
+            r"|antigua|antiguo|antiguas|antiguos|ancient|antiquity"
+            r"|medieval|medievales|medievo"
+            r"|imperio|imperios|empire|empires"
+        )
+        if re.search(rf"\b(?:{word_kw})\b", norm):
+            return True
+
+        substr_kw = ("civilizacion", "arqueolog", "mitolog", "mythology", "archaeology")
+        return any(s in norm for s in substr_kw)
+
     def _detect_civilization(self) -> str:
         """
         Match the topic + script against CIVILIZATIONS keyword lists and return
@@ -1590,8 +1625,16 @@ No markdown. No explanation. Just the JSON array."""
         Looking at the script too matters because abstract titles like "El
         código de honor más extremo" don't carry civ keywords, but the body
         of the script will mention Sparta, hoplites, etc.
+
+        Gated on ``_niche_is_historical()``: channels whose niche is not about
+        history (e.g. modern-drama "Impacto Stories") never trigger civ
+        detection, even if the LLM happens to drop a "Platón" quote in the
+        script.
         """
         import unicodedata
+
+        if not self._niche_is_historical():
+            return ""
 
         subject = (getattr(self, "subject", "") or "").strip()
         script = (getattr(self, "script", "") or "").strip()
@@ -3490,6 +3533,7 @@ REGLAS DE ESTILO:
     * "el año mil cuatrocientos cincuenta y tres" (no "1453")
     * "el siglo dieciséis" (no "el siglo XVI" ni "el siglo 16")
     * "tres coma uno cuatro" (no "3,14")
+- AÑO vs TIEMPO TRANSCURRIDO — REGLA INVIOLABLE. Un año (fecha) y un lapso transcurrido NO son lo mismo. Para nombrar un año, di "el año mil cuatrocientos setenta y siete"; NUNCA digas "hace mil cuatrocientos setenta y siete años" para referirte al año 1477. "Hace X años" SOLO indica tiempo transcurrido y SE CALCULA: año actual ({datetime.now().year}) menos año del evento. Un evento del año 1477 ocurrió "hace {datetime.now().year - 1477} años", no "hace mil cuatrocientos setenta y siete años". En la duda, prefiere nombrar el año ("el año X") y evita "hace X años".
 - SOLO devuelve el guion completo con los 12 marcadores arriba listados. Sin preámbulo.
 """
         completion = self._clean_llm_script(self.generate_response(prompt))
@@ -3570,6 +3614,7 @@ REGLAS:
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
 - NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
+- AÑO vs TIEMPO TRANSCURRIDO — REGLA INVIOLABLE. Un año (fecha) y un lapso transcurrido NO son lo mismo. Para nombrar un año, di "el año mil cuatrocientos setenta y siete"; NUNCA digas "hace mil cuatrocientos setenta y siete años" para referirte al año 1477. "Hace X años" SOLO indica tiempo transcurrido y SE CALCULA: año actual ({datetime.now().year}) menos año del evento. Un evento del año 1477 ocurrió "hace {datetime.now().year - 1477} años", no "hace mil cuatrocientos setenta y siete años". En la duda, prefiere nombrar el año ("el año X") y evita "hace X años".
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [INTRO]
 """
         intro = _ensure_marker(_ask_section(intro_prompt, min_words=80), "[INTRO]")
@@ -3597,6 +3642,7 @@ Escribe SOLO la SECCIÓN {i}:
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
 - NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
+- AÑO vs TIEMPO TRANSCURRIDO — REGLA INVIOLABLE. Un año (fecha) y un lapso transcurrido NO son lo mismo. Para nombrar un año, di "el año mil cuatrocientos setenta y siete"; NUNCA digas "hace mil cuatrocientos setenta y siete años" para referirte al año 1477. "Hace X años" SOLO indica tiempo transcurrido y SE CALCULA: año actual ({datetime.now().year}) menos año del evento. Un evento del año 1477 ocurrió "hace {datetime.now().year - 1477} años", no "hace mil cuatrocientos setenta y siete años". En la duda, prefiere nombrar el año ("el año X") y evita "hace X años".
 - Devuelve SOLO el texto de la sección, precedido EXACTAMENTE por una línea con: [SECTION {i}: <título breve descriptivo>]
 """
             section = _ensure_marker(_ask_section(section_prompt, min_words=180), f"[SECTION {i}: parte {i}]")
@@ -3621,6 +3667,7 @@ Escribe SOLO el CIERRE:
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
 - NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453").
+- AÑO vs TIEMPO TRANSCURRIDO — REGLA INVIOLABLE. Un año (fecha) y un lapso transcurrido NO son lo mismo. Para nombrar un año, di "el año mil cuatrocientos setenta y siete"; NUNCA digas "hace mil cuatrocientos setenta y siete años" para referirte al año 1477. "Hace X años" SOLO indica tiempo transcurrido y SE CALCULA: año actual ({datetime.now().year}) menos año del evento. Un evento del año 1477 ocurrió "hace {datetime.now().year - 1477} años", no "hace mil cuatrocientos setenta y siete años". En la duda, prefiere nombrar el año ("el año X") y evita "hace X años".
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [CLOSING]
 """
         closing = _ensure_marker(_ask_section(closing_prompt, min_words=80), "[CLOSING]")
@@ -3835,13 +3882,17 @@ Return ONLY a JSON object with two fields:
 - "words": a CLICKBAIT TEASER PHRASE in {self.language}, ALL UPPERCASE, for the thumbnail overlay. ABSOLUTELY CRITICAL RULES:
   * Length: 3 to 6 words forming a COMPLETE PUNCHY PHRASE. NEVER return a single word.
   * It must SOUND like a YouTube clickbait teaser — provoke curiosity, hint at a revelation, or pose a question fragment. It is NOT a label.
-  * It must be CLEARLY tied to the video's title or topic — pick the most charged real words from the title/topic and arrange them.
+  * It must be CLEARLY tied to the video's title or topic — pick the most charged, SPECIFIC words: proper names, places, dates, concrete actions, key objects.
   * EVERY WORD must already appear (literally or as a clear root form) in the VIDEO TITLE or TOPIC above. DO NOT INVENT WORDS. Each word must be a correctly-spelled real word in {self.language}.
-  * Good examples (assuming the title contained those words):
-      Title "El patrón OCULTO de la historia" → "EL PATRÓN OCULTO DE LA HISTORIA" or "EL PATRÓN QUE OCULTARON".
-      Title "¿Por qué COLAPSAN las civilizaciones?" → "POR QUÉ COLAPSAN TODAS" or "EL FIN DE LAS CIVILIZACIONES".
-      Title "El SECRETO de Anubis" → "EL SECRETO DE ANUBIS" or "ANUBIS Y SU SECRETO".
-  * BAD examples: "SECRETO" (single word, no teaser), "NADIE LO SABE" (cliché), "INCREÍBLE" (generic).
+  * VARY THE ANGLE between videos — pick the most specific hook from THIS topic. Available patterns (use whichever fits the topic best):
+      - Proper-noun reveal: "ANUBIS Y EL JUICIO FINAL", "EL DIARIO DE TUTANKAMÓN".
+      - Date/place anchor: "1959, EL PASO DYATLOV", "LA NOCHE DEL MARY CELESTE".
+      - Question fragment: "POR QUÉ DESAPARECIERON TODOS", "QUIÉN ENCONTRÓ EL CUERPO".
+      - Concrete action: "PLANTÓ UN BOSQUE POR ELLA", "CRUZARON LOS ANDES A PIE".
+      - Revelation hook: "LO QUE ENCONTRARON ALLÍ", "NADIE VOLVIÓ A VERLOS".
+      - Contrast/twist: "ERA UN ANCIANO CIEGO", "EL ÚLTIMO MENSAJE DE OLOF".
+  * DO NOT default to "EL SECRETO DE..." or "EL MISTERIO DE..." just because they sound clickbaity. Use those openings ONLY if the video title itself literally contains "SECRETO" or "MISTERIO". Otherwise pick a more specific angle from the patterns above.
+  * BAD examples: "SECRETO" (single word, no teaser), "NADIE LO SABE" (cliché), "INCREÍBLE" (generic), "EL SECRETO DE X" when the title doesn't mention a secret (lazy default).
   * AVOID these overused clichés entirely: "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR", "INCREÍBLE", "JAMÁS LO CREERÁS".
 
 Return ONLY the JSON. No markdown, no explanation."""
@@ -3866,11 +3917,28 @@ Return ONLY the JSON. No markdown, no explanation."""
                 "INCREÍBLE", "INCREIBLE", "JAMÁS LO CREERÁS", "JAMAS LO CREERAS",
             }
 
+            # The LLM defaults to "EL SECRETO DE ..." even when the topic has
+            # nothing to do with a secret. Allow that opening only when the
+            # source title itself mentions the word — otherwise force variety.
+            title_topic_norm = _norm(title_topic_text)
+            title_mentions_secret = "secreto" in title_topic_norm
+            title_mentions_mystery = ("misterio" in title_topic_norm
+                                      or "misterios" in title_topic_norm)
+
             def _validate_overlay(candidate: str) -> bool:
-                """Reject if too short, banned, or any content word is hallucinated."""
+                """Reject if too short, banned, lazy-default, or hallucinated."""
                 if not candidate:
                     return False
                 if candidate in BANNED_OVERLAYS:
+                    return False
+                norm_cand = _norm(candidate)
+                if not title_mentions_secret and (
+                    norm_cand.startswith("el secreto") or norm_cand.startswith("secreto")
+                ):
+                    return False
+                if not title_mentions_mystery and (
+                    norm_cand.startswith("el misterio") or norm_cand.startswith("misterio")
+                ):
                     return False
                 STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
                         "que", "por", "para", "con", "en", "a", "su", "sus", "lo"}
@@ -3887,7 +3955,7 @@ Return ONLY the JSON. No markdown, no explanation."""
                 return True
 
             if overlay_words and not _validate_overlay(overlay_words):
-                warning(f"Thumbnail: LLM overlay '{overlay_words}' rejected (hallucinated or banned).")
+                warning(f"Thumbnail: LLM overlay '{overlay_words}' rejected (hallucinated, banned, or lazy default).")
                 overlay_words = ""
 
         if not visual_prompt:
