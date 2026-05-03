@@ -93,6 +93,10 @@ HOOK_PROFILES: dict = {
         ("Hidden secret reveal", '"Hay algo que nadie te contó sobre..."'),
         ("Counterintuitive claim", '"Todo lo que crees sobre X está mal."'),
         ("Negation cliffhanger", '"No vas a creer lo que pasó cuando..."'),
+        ("Time-warp opener", '"Hace dos mil años, en [lugar], [escena breve]..." o "En [siglo o año], [lugar] vivía un día como cualquier otro, hasta que..."'),
+        ("Stakes-first pivotal moment", '"Una sola idea, una sola decisión o una sola noche cambió el rumbo de [civilización, era o pueblo]."'),
+        ("Cultural lens flip", '"Para nosotros sería [reacción moderna: impensable, una locura, un crimen], pero en [época o civilización] era [normalidad opuesta: lo más natural, una virtud, lo esperado]."'),
+        ("Hidden origin reveal", '"Lo que hoy conocemos como [cosa familiar] empezó con algo que casi nadie recuerda: [origen olvidado]."'),
     ],
     # Animated storytelling: epic, horror, mystery, adventure. Hooks designed
     # to be addictive and pull the viewer into the scene immediately.
