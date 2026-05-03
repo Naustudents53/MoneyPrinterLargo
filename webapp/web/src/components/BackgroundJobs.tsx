@@ -119,6 +119,8 @@ export function BackgroundJobs() {
         title={attaching?.title || "Trabajo"}
         description="Reattach a un job en background — los logs se replayan desde el inicio."
         sseUrl={attaching ? api.jobStreamUrl(attaching.id) : null}
+        channelId={attaching?.channel_id || undefined}
+        kind={attaching?.kind || undefined}
       />
     </>
   );

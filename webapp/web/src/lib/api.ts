@@ -151,6 +151,11 @@ export interface JobSummary {
   rc: number | null;
   last_line: string;
   log_lines: number;
+  // Set by the backend only for YouTube generation jobs so the reattach UI
+  // can offer "Subir a YouTube" against the original channel. Null on jobs
+  // where the action wouldn't make sense (upload-last itself, sync, tweet).
+  channel_id: string | null;
+  kind: "short" | "long" | null;
 }
 
 // ---------- Endpoints ----------

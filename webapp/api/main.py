@@ -621,10 +621,11 @@ _FINISHED_TTL = 600  # keep finished jobs queryable for 10 minutes
 class JobState:
     __slots__ = (
         "id", "title", "proc", "started_at", "finished_at", "status", "rc",
-        "lines", "lock",
+        "lines", "lock", "channel_id", "kind",
     )
 
-    def __init__(self, job_id: str, title: str, proc: subprocess.Popen):
+    def __init__(self, job_id: str, title: str, proc: subprocess.Popen,
+                 channel_id: Optional[str] = None, kind: Optional[str] = None):
         self.id = job_id
         self.title = title
         self.proc = proc
@@ -633,6 +634,13 @@ class JobState:
         self.status: str = "running"  # "running" | "done" | "error"
         self.rc: Optional[int] = None
         self.lines: list[str] = []
+        # Optional context so the UI can offer "Subir a YouTube" when
+        # reattaching to a finished generation job from the background panel.
+        # Only set for YouTube generation jobs; upload-last and other jobs
+        # leave these None so the upload button doesn't appear in places it
+        # shouldn't (e.g. already-uploaded jobs, sync jobs, tweet jobs).
+        self.channel_id: Optional[str] = channel_id
+        self.kind: Optional[str] = kind
         # Plain lock — SSE consumers poll the buffer rather than wait on a
         # condition. Polling keeps the asyncio loop unblocked: no executor
         # thread is held idle, so /api/health and other endpoints stay
@@ -682,7 +690,9 @@ def _gc_finished_jobs_locked() -> None:
             _JOBS.pop(jid, None)
 
 
-def _spawn_job(args: list[str], title: str = "") -> JobState:
+def _spawn_job(args: list[str], title: str = "",
+               channel_id: Optional[str] = None,
+               kind: Optional[str] = None) -> JobState:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
@@ -698,7 +708,7 @@ def _spawn_job(args: list[str], title: str = "") -> JobState:
         errors="replace",
     )
     job_id = uuid.uuid4().hex[:12]
-    job = JobState(job_id, title or args[0], proc)
+    job = JobState(job_id, title or args[0], proc, channel_id=channel_id, kind=kind)
     with _JOBS_LOCK:
         _gc_finished_jobs_locked()
         _JOBS[job_id] = job
@@ -757,6 +767,8 @@ def _job_summary(j: JobState) -> dict:
         "rc": j.rc,
         "last_line": last_line,
         "log_lines": len(j.lines),
+        "channel_id": j.channel_id,
+        "kind": j.kind,
     }
 
 
@@ -844,7 +856,7 @@ async def generate_video(
 
     label = "Short" if kind == "short" else "Long video"
     title = f"Generando {label} — {ch.get('nickname', channel_id)}"
-    job = _spawn_job(args, title=title)
+    job = _spawn_job(args, title=title, channel_id=channel_id, kind=kind)
     return EventSourceResponse(_stream_job(job))
 
 
