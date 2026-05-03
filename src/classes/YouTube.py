@@ -620,10 +620,30 @@ class YouTube:
             # Clear English signal: several English stopwords and more EN than ES
             return en_hits >= 3 and en_hits > es_hits
 
+        def _content_bigrams(norm: str) -> set:
+            """
+            Consecutive non-stopword token pairs from the normalized form.
+            Catches lowercase compound subjects ("fuego griego", "biblioteca
+            alejandria") that `_extract_entities` misses because it only
+            counts capitalized tokens. Bigrams where BOTH tokens are in
+            COMMON_CAP_NOISE are dropped — those are generic phrase-noise
+            ("antigua grecia", "imperio romano") that two different videos
+            can legitimately share without being duplicates.
+            """
+            toks = norm.split()
+            out: set = set()
+            for i in range(len(toks) - 1):
+                a, b = toks[i], toks[i + 1]
+                if a in COMMON_CAP_NOISE and b in COMMON_CAP_NOISE:
+                    continue
+                out.add(f"{a} {b}")
+            return out
+
         # ---- 3. Pre-compute past signatures ----
         past_clean = [_strip_markdown(t) for t in past_topics]
         past_norm = [_normalize(t) for t in past_clean]
         past_entities = [_extract_entities(t) for t in past_clean]
+        past_bigrams = [_content_bigrams(n) for n in past_norm]
 
         # Frequency-based filter: an entity that shows up in >15% of past
         # topics (with a floor of 3) is effectively a channel-wide theme
@@ -637,14 +657,25 @@ class YouTube:
         _common_threshold = max(3, len(past_entities) // 7)
         common_entities = {e for e, c in _freq.items() if c > _common_threshold}
 
+        # Same frequency filter for bigrams: a 2-word phrase appearing across
+        # many past videos is a channel-wide theme ("imperio romano" on a Rome
+        # channel), not a distinctive subject signature. Dropping these avoids
+        # false-positive dedupe when the user wants multiple legit angles on
+        # a recurring topic.
+        _bg_freq: Counter = Counter()
+        for _bgs in past_bigrams:
+            _bg_freq.update(_bgs)
+        common_bigrams = {b for b, c in _bg_freq.items() if c > _common_threshold}
+
         def _is_duplicate(candidate: str) -> tuple[bool, str]:
             cand_clean = _strip_markdown(candidate)
             if not cand_clean:
                 return False, ""
             cand_norm = _normalize(cand_clean)
             cand_ents = _extract_entities(cand_clean)
+            cand_bigrams = _content_bigrams(cand_norm)
 
-            for original, p_norm, p_ents in zip(past_topics, past_norm, past_entities):
+            for original, p_norm, p_ents, p_bgs in zip(past_topics, past_norm, past_entities, past_bigrams):
                 if not p_norm:
                     continue
                 # Exact normalized match
@@ -657,6 +688,13 @@ class YouTube:
                 # collide on the shared region/era.
                 shared = (cand_ents & p_ents) - common_entities
                 if shared:
+                    return True, original
+                # Shared distinctive bigram → same compound subject in
+                # lowercase ("fuego griego", "muerte negra"). Excludes
+                # channel-wide common bigrams so recurring niche themes
+                # don't auto-collide.
+                shared_bg = (cand_bigrams & p_bgs) - common_bigrams
+                if shared_bg:
                     return True, original
                 # Token-overlap fallback (tighter threshold than before)
                 a, b = set(cand_norm.split()), set(p_norm.split())
