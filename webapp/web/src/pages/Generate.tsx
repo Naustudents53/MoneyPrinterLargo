@@ -198,7 +198,7 @@ export function Generate() {
                         onClick={() => setImageMode('photos')}
                         icon={Camera}
                         title="Fotos stock"
-                        description="Pexels/Pixabay/Europeana. Cae a AI si no hay match."
+                        description="Busca fotos reales en Wikipedia y museos. Si no las encuentra, prueba bancos de stock y, como último recurso, genera con AI."
                       />
                     </div>
                   </div>
@@ -331,8 +331,11 @@ export function Generate() {
                   nombre exacto en el tema.
                 </Tip>
                 <Tip>
-                  El modo "fotos stock" cae a AI cuando no encuentra match
-                  relevante — útil para niches actuales.
+                  El modo "fotos stock" busca primero en archivos curados
+                  (Wikipedia, Wikimedia, Europeana, el Met, la Library of
+                  Congress). Si nada encaja, prueba con bancos de stock
+                  (Pexels, Pixabay) y al final cae a AI. Ideal para historia
+                  y temas con archivo real.
                 </Tip>
                 <Tip>
                   La subida usa Selenium contra YouTube Studio. El perfil
