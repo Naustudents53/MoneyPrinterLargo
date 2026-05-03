@@ -1072,11 +1072,17 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section says "the priest opens the temple gate at dawn", the image is exactly that.
 
 ABSOLUTE RULES (every prompt):
-1. SCENE FIDELITY. Open with a concrete action (subject + verb). Whatever the script section says is happening, that is what the image shows.
-2. {era_rule}
-3. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe, same level of detail. No image should look like it belongs to a different show.
-4. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The look is decided by the suffix appended later — your job is the content.
-5. LENGTH. 35-60 English words per prompt. No camera or lens jargon.
+1. ENGLISH ONLY — NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns and historical terms naturally (e.g. "Platón" -> "Plato", "Alejandro Magno" -> "Alexander the Great"). NO Spanish words anywhere in the output.
+2. SCENE FIDELITY. Open with a concrete action (subject + verb). Whatever the script section says is happening, that is what the image shows.
+3. NAMED CHARACTER IDENTITY. When the script names a real historical person, do NOT just write their name — describe what they look like physically so the image generator can render the right person. Examples:
+   - Plato → "an old Greek philosopher with a long white beard, balding head, weathered face, wearing white himation"
+   - Caesar → "a stern middle-aged Roman general with short curly hair, clean-shaven, sharp jawline, in a purple-bordered toga"
+   - Cleopatra → "a young Egyptian queen with dark kohl-lined eyes, straight black hair with gold beaded braids, wearing white linen pleated dress and gold collar"
+   The named person's physical description MUST appear in the prompt every time they're shown.
+4. {era_rule}
+5. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe, same level of detail. No image should look like it belongs to a different show.
+6. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The look is decided by the suffix appended later — your job is the content.
+7. LENGTH. 40-70 English words per prompt. No camera or lens jargon.
 
 Examples of GOOD scene-only prompts:
 - "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his Thirteenth Legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces."
@@ -1312,7 +1318,10 @@ No markdown. No explanation. Just the JSON array."""
         raise RuntimeError("Ideogram: failed to download image")
 
     def _try_leonardo(self, prompt: str) -> bytes:
-        """Try Leonardo AI API (excellent quality, $5 free credit)."""
+        """Try Leonardo AI API (excellent quality, $5 free credit).
+        Uses Phoenix 1.0 by default — it follows long prompts much better
+        than Lightning XL, which was averaging out specific subjects (e.g.
+        rendering "Plato" as a generic Greek figure)."""
         from config import get_leonardo_api_key
         api_key = get_leonardo_api_key()
         if not api_key:
@@ -1324,12 +1333,24 @@ No markdown. No explanation. Just the JSON array."""
             "Content-Type": "application/json",
         }
         payload = {
-            "prompt": prompt[:1000],
-            "modelId": "b24e16ff-06e3-43eb-8d33-4416c2d75876",  # Leonardo Lightning XL
+            "prompt": prompt[:1500],
+            "modelId": "de7d3faf-762f-48e0-b3b7-9d0ac3a3fcf3",  # Leonardo Phoenix 1.0
             "width": 576,
             "height": 1024,
             "num_images": 1,
+            "contrast": 3.5,
+            "alchemy": True,
         }
+        # When the channel forces an artistic style, hint to Leonardo via
+        # presetStyle so it applies an aesthetic LoRA on top of the prompt.
+        # Detection is keyword-based on the channel's image_style.
+        style_text = (self._image_style or "").lower()
+        if any(k in style_text for k in ("cartoon", "anime", "illustration", "animated", "cel shading", "hand-drawn")):
+            payload["presetStyle"] = "ILLUSTRATION"
+        elif any(k in style_text for k in ("cinematic", "film", "movie")):
+            payload["presetStyle"] = "CINEMATIC"
+        elif self._image_style:
+            payload["presetStyle"] = "DYNAMIC"
         resp = requests.post(
             "https://cloud.leonardo.ai/api/rest/v1/generations",
             headers=headers, json=payload, timeout=30,
@@ -4070,11 +4091,13 @@ Return ONLY the JSON. No markdown, no explanation."""
 You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section talks about "the senators debating in the curia at noon", the image is exactly that.
 
 ABSOLUTE RULES (every prompt):
-1. SCENE FIDELITY. Open with a concrete action (subject + verb) drawn from the section text. Whatever the section is talking about, that is what the image shows.
-2. PERIOD ACCURACY — STRICT. {("Era is **" + civ_info['name'] + "**. Every prompt with a person MUST name at least 2 specific period clothing/armor items from this era. No modern military uniforms, no firearms, no industrial-era visuals — ever. ") if civ_info else ""}If a person appears, describe their clothing exactly as it would be in the right historical period/place/culture (fabric, cut, color, footwear, headwear). Same for architecture, weapons, tools, transport, and 2-3 supporting objects. If the section names a real person, place or event, use that proper noun.
-3. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing — but never the level of realism.
-4. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later — your job is content only.
-5. LENGTH. 35-60 English words per prompt. No camera or lens jargon.
+1. ENGLISH ONLY — NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns naturally (e.g. "Platón" -> "Plato", "Alejandro Magno" -> "Alexander the Great"). NO Spanish words anywhere in the output.
+2. SCENE FIDELITY. Open with a concrete action (subject + verb) drawn from the section text. Whatever the section is talking about, that is what the image shows.
+3. NAMED CHARACTER IDENTITY. When the script names a real historical person, do NOT just write their name — describe them physically (age, hair, beard, build) so the image generator can render the correct person. Examples: Plato -> "an old Greek philosopher with a long white beard, balding head, in white himation"; Caesar -> "a stern middle-aged Roman general, short curly hair, clean-shaven, in purple-bordered toga"; Cleopatra -> "young Egyptian queen, dark kohl-lined eyes, straight black hair with gold beaded braids, white linen pleated dress, gold collar". The physical description MUST appear every time they're shown.
+4. PERIOD ACCURACY — STRICT. {("Era is **" + civ_info['name'] + "**. Every prompt with a person MUST name at least 2 specific period clothing/armor items from this era. No modern military uniforms, no firearms, no industrial-era visuals — ever. ") if civ_info else ""}If a person appears, describe their clothing exactly as it would be in the right historical period/place/culture (fabric, cut, color, footwear, headwear). Same for architecture, weapons, tools, transport, and 2-3 supporting objects. If the section names a real person, place or event, use that proper noun.
+5. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing — but never the level of realism.
+6. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later — your job is content only.
+7. LENGTH. 40-70 English words per prompt. No camera or lens jargon.
 
 Examples of GOOD scene-only prompts:
 - "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his Thirteenth Legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces."
@@ -4176,12 +4199,21 @@ No markdown. No explanation. Just the JSON array."""
             "Content-Type": "application/json",
         }
         payload = {
-            "prompt": prompt[:1000],
-            "modelId": "b24e16ff-06e3-43eb-8d33-4416c2d75876",  # Leonardo Lightning XL
+            "prompt": prompt[:1500],
+            "modelId": "de7d3faf-762f-48e0-b3b7-9d0ac3a3fcf3",  # Leonardo Phoenix 1.0
             "width": 1024,
             "height": 576,
             "num_images": 1,
+            "contrast": 3.5,
+            "alchemy": True,
         }
+        style_text = (self._image_style or "").lower()
+        if any(k in style_text for k in ("cartoon", "anime", "illustration", "animated", "cel shading", "hand-drawn")):
+            payload["presetStyle"] = "ILLUSTRATION"
+        elif any(k in style_text for k in ("cinematic", "film", "movie")):
+            payload["presetStyle"] = "CINEMATIC"
+        elif self._image_style:
+            payload["presetStyle"] = "DYNAMIC"
         resp = requests.post(
             "https://cloud.leonardo.ai/api/rest/v1/generations",
             headers=headers, json=payload, timeout=30,
