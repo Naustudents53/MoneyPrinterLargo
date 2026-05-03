@@ -101,19 +101,27 @@ def _select_llm_provider():
 
 def _cleanup_after_upload(is_long: bool):
     """Remove scratch files in .mp/. Preserves long-video .mp4s so they can be
-    re-uploaded or kept locally; shorts get fully wiped."""
+    re-uploaded or kept locally; shorts get fully wiped. Always removes the
+    .meta.json sidecars since they no longer have a matching mp4 to point to
+    (or the upload already consumed them)."""
     try:
         from utils import rem_temp_files
         rem_temp_files()
+        mp_dir = os.path.join(str(ROOT_DIR), ".mp")
+        if os.path.isdir(mp_dir):
+            for name in os.listdir(mp_dir):
+                lower = name.lower()
+                if lower.endswith(".meta.json"):
+                    try:
+                        os.remove(os.path.join(mp_dir, name))
+                    except Exception:
+                        pass
+                elif lower.endswith(".mp4") and not is_long:
+                    try:
+                        os.remove(os.path.join(mp_dir, name))
+                    except Exception:
+                        pass
         if not is_long:
-            mp_dir = os.path.join(str(ROOT_DIR), ".mp")
-            if os.path.isdir(mp_dir):
-                for name in os.listdir(mp_dir):
-                    if name.lower().endswith(".mp4"):
-                        try:
-                            os.remove(os.path.join(mp_dir, name))
-                        except Exception:
-                            pass
             print("[runner] .mp cleaned after upload", flush=True)
         else:
             print("[runner] .mp scratch cleaned (long .mp4 preserved)", flush=True)
@@ -207,8 +215,38 @@ def cmd_upload_last(args):
         sys.exit(5)
     candidates.sort(reverse=True)
     youtube.video_path = candidates[0][1]
-    youtube._is_long_video = (args.kind == "long")
-    print(f"[runner] Uploading {'LONG' if args.kind == 'long' else 'SHORT'}: {youtube.video_path}", flush=True)
+
+    # Load the sidecar (`<basename>.meta.json`) that the generation step wrote
+    # so we recover subject + title + description. Without this, upload_video
+    # bails out with "subject is empty" because a fresh subprocess has no
+    # in-memory state from the prior generation.
+    sidecar_path = os.path.splitext(youtube.video_path)[0] + ".meta.json"
+    is_long_from_sidecar = None
+    if os.path.isfile(sidecar_path):
+        try:
+            import json as _json
+            with open(sidecar_path, "r", encoding="utf-8") as f:
+                meta = _json.load(f)
+            youtube.subject = meta.get("subject", "") or ""
+            md = meta.get("metadata") or {}
+            if md:
+                youtube.metadata = md
+            tp = meta.get("thumbnail_path", "")
+            if tp:
+                youtube.thumbnail_path = tp
+            if "is_long" in meta:
+                is_long_from_sidecar = bool(meta["is_long"])
+            print(f"[runner] Loaded sidecar: subject={youtube.subject[:60]!r}", flush=True)
+        except Exception as e:
+            print(f"[runner] WARN: could not load sidecar {sidecar_path}: {e}", flush=True)
+    else:
+        print(f"[runner] WARN: no sidecar at {sidecar_path} — upload may fail if subject is required", flush=True)
+
+    # Sidecar's is_long takes precedence over the user-passed --kind because
+    # the sidecar reflects what was actually generated.
+    is_long = is_long_from_sidecar if is_long_from_sidecar is not None else (args.kind == "long")
+    youtube._is_long_video = is_long
+    print(f"[runner] Uploading {'LONG' if is_long else 'SHORT'}: {youtube.video_path}", flush=True)
 
     ok = youtube.upload_video()
     print(f"[runner] Upload result: {ok}", flush=True)
@@ -255,6 +293,48 @@ def cmd_thumbnail(args):
     print(f"[runner] Thumbnail saved: {args.out}", flush=True)
 
 
+def cmd_sync_yt(args):
+    """Run scripts/sync_youtube_cache.py with the requested flags. Streams
+    its stdout straight through to the SSE consumer so the user sees the
+    live per-video progress in the dialog."""
+    script = os.path.join(str(ROOT_DIR), "scripts", "sync_youtube_cache.py")
+    if not os.path.isfile(script):
+        print(f"[runner] ERROR: sync script not found at {script}", flush=True)
+        sys.exit(2)
+
+    cmd = [sys.executable, script, "--apply"]
+    if args.prune:
+        cmd.append("--prune")
+    if args.add_missing:
+        cmd.append("--add")
+    if args.refresh_meta:
+        cmd.append("--refresh-meta")
+    elif args.refresh_dates:
+        cmd.append("--refresh-dates")
+    if args.channel_id:
+        cmd += ["--channel-id", args.channel_id]
+
+    print(f"[runner] Syncing YouTube cache: {' '.join(cmd[2:])}", flush=True)
+    import subprocess
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    proc = subprocess.Popen(
+        cmd, cwd=str(ROOT_DIR), env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        bufsize=1, text=True, encoding="utf-8", errors="replace",
+    )
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+    rc = proc.wait()
+    if rc != 0:
+        print(f"[runner] Sync failed (rc={rc})", flush=True)
+        sys.exit(rc)
+    print("[runner] Sync complete", flush=True)
+
+
 def cmd_tweet(args):
     from cache import get_accounts
     from classes.Twitter import Twitter
@@ -293,6 +373,13 @@ def main():
     p_th.add_argument("--out", required=True)
     p_th.add_argument("--visual", default="")
 
+    p_sy = sub.add_parser("sync-yt")
+    p_sy.add_argument("--prune", action="store_true")
+    p_sy.add_argument("--add-missing", action="store_true")
+    p_sy.add_argument("--refresh-meta", action="store_true")
+    p_sy.add_argument("--refresh-dates", action="store_true")
+    p_sy.add_argument("--channel-id", default="")
+
     args = parser.parse_args()
 
     _setup_paths()
@@ -307,6 +394,8 @@ def main():
         cmd_tweet(args)
     elif args.cmd == "thumbnail":
         cmd_thumbnail(args)
+    elif args.cmd == "sync-yt":
+        cmd_sync_yt(args)
     else:
         parser.error(f"unknown command {args.cmd}")
 

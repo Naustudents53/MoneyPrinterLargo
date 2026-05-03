@@ -9,6 +9,7 @@ import {
   Mic,
   ExternalLink,
   Folder,
+  RefreshCw,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
@@ -17,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ProgressDialog } from "@/components/ProgressDialog";
 import { api, type Channel } from "@/lib/api";
 import { ChannelFormDialog } from "./ChannelFormDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -28,6 +30,7 @@ export function Channels() {
   const [editing, setEditing] = useState<Channel | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Channel | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -63,9 +66,20 @@ export function Channels() {
         title="Canales de YouTube"
         description="Administra los perfiles de cada canal: voces, estilo, niche."
         actions={
-          <Button variant="brand" size="sm" className="gap-2" onClick={() => setCreating(true)}>
-            <Plus className="h-4 w-4" /> Nuevo canal
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => setSyncing(true)}
+              title="Sincroniza el historial local con los videos reales de tus canales en YouTube"
+            >
+              <RefreshCw className="h-4 w-4" /> Sincronizar con YouTube
+            </Button>
+            <Button variant="brand" size="sm" className="gap-2" onClick={() => setCreating(true)}>
+              <Plus className="h-4 w-4" /> Nuevo canal
+            </Button>
+          </div>
         }
       />
 
@@ -128,6 +142,17 @@ export function Channels() {
         confirmLabel="Eliminar canal"
         variant="destructive"
         onConfirm={handleDelete}
+      />
+
+      <ProgressDialog
+        open={syncing}
+        onOpenChange={(o) => {
+          setSyncing(o);
+          if (!o) load();
+        }}
+        title="Sincronizando con YouTube"
+        description="Actualiza tipo (short/long), descripción y fecha de subida de cada video desde tus canales reales. Tarda ~1 min por canal grande."
+        sseUrl={syncing ? api.syncYouTubeUrl({ prune: true, add_missing: true, refresh_meta: true }) : null}
       />
     </>
   );

@@ -95,6 +95,10 @@ class YouTubeChannelIn(BaseModel):
     long_voice: str = ""
     hook_profile: str = ""
     voice_drama: bool = False
+    # Public channel handle or full URL (e.g. "@andrecronicas" or
+    # "https://www.youtube.com/@andrecronicas"). Used by the cache-sync
+    # script to fetch the actual list of uploaded videos / shorts.
+    youtube_handle: str = ""
 
 
 class YouTubeChannelOut(YouTubeChannelIn):
@@ -169,6 +173,7 @@ def _channel_out(acc: dict) -> dict:
         "long_voice": acc.get("long_voice", ""),
         "hook_profile": acc.get("hook_profile", ""),
         "voice_drama": acc.get("voice_drama", False),
+        "youtube_handle": acc.get("youtube_handle", ""),
         "videos_count": len(acc.get("videos", []) or []),
     }
 
@@ -853,6 +858,35 @@ async def upload_last(channel_id: str, kind: str = "short"):
         raise HTTPException(400, "kind must be 'short' or 'long'")
     title = f"Subiendo {kind} — {ch.get('nickname', channel_id)}"
     job = _spawn_job(["upload-last", "--channel-id", channel_id, "--kind", kind], title=title)
+    return EventSourceResponse(_stream_job(job))
+
+
+@app.get("/api/youtube/sync")
+async def sync_youtube(
+    channel_id: str = "",
+    prune: bool = True,
+    add_missing: bool = True,
+    refresh_meta: bool = True,
+):
+    """Run scripts/sync_youtube_cache.py against either one channel or all of
+    them. Streams the per-video progress as SSE so the UI can show it live.
+    """
+    args = ["sync-yt"]
+    if prune:
+        args.append("--prune")
+    if add_missing:
+        args.append("--add-missing")
+    if refresh_meta:
+        args.append("--refresh-meta")
+    if channel_id:
+        ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
+        if not ch:
+            raise HTTPException(404, "Channel not found")
+        args += ["--channel-id", channel_id]
+        title = f"Sync YouTube — {ch.get('nickname', channel_id)}"
+    else:
+        title = "Sync YouTube — todos los canales"
+    job = _spawn_job(args, title=title)
     return EventSourceResponse(_stream_job(job))
 
 

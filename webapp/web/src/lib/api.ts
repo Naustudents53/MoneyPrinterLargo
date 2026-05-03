@@ -258,6 +258,19 @@ export const api = {
   },
   uploadLastUrl: (id: string, kind: "short" | "long" = "short") =>
     `${BASE}/api/channels/${id}/upload-last?kind=${kind}`,
+  syncYouTubeUrl: (params: {
+    channel_id?: string;
+    prune?: boolean;
+    add_missing?: boolean;
+    refresh_meta?: boolean;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.channel_id) qs.set("channel_id", params.channel_id);
+    qs.set("prune", String(params.prune ?? true));
+    qs.set("add_missing", String(params.add_missing ?? true));
+    qs.set("refresh_meta", String(params.refresh_meta ?? true));
+    return `${BASE}/api/youtube/sync?${qs.toString()}`;
+  },
   postTweetUrl: (id: string) => `${BASE}/api/twitter/accounts/${id}/post`,
 
   // Job control / monitoring

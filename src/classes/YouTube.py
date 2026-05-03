@@ -1363,9 +1363,40 @@ No markdown. No explanation. Just the JSON array."""
         raise RuntimeError("Leonardo: timeout waiting for generation")
 
     def _augment_for_ai_fallback(self, query: str) -> str:
-        """Wrap a short photo-mode search query with cinematic styling so AI generators render a usable image."""
-        out = f"{query}, cinematic photograph, photorealistic, dramatic lighting, highly detailed, 4K"
+        """Wrap a short photo-mode search query with neutral mood cues so AI
+        generators render a usable image. We DO NOT inject 'photorealistic'
+        / 'cinematic photograph' here anymore — those would override a
+        cartoon / illustration channel style. The actual aesthetic is
+        decided by `_apply_channel_style` (channel image_style or default
+        baseline)."""
+        out = f"{query}, dramatic lighting, highly detailed composition"
         return self._apply_channel_style(out)
+
+    def _persist_metadata_sidecar(self, is_long: bool) -> None:
+        """Write a `<video_basename>.meta.json` next to the rendered .mp4 with
+        subject + metadata + kind, so that a later upload-last invocation
+        (which runs in a fresh subprocess and has no in-memory state) can
+        recover what to upload. Without this sidecar the user gets
+        'subject is empty' when clicking Subir from the dialog after generation.
+        """
+        try:
+            video_path = getattr(self, "video_path", "")
+            if not video_path:
+                return
+            sidecar = os.path.splitext(video_path)[0] + ".meta.json"
+            payload = {
+                "subject": getattr(self, "subject", "") or "",
+                "metadata": getattr(self, "metadata", {}) or {},
+                "is_long": bool(is_long),
+                "thumbnail_path": getattr(self, "thumbnail_path", "") or "",
+            }
+            with open(sidecar, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            if get_verbose():
+                info(f" => Wrote upload sidecar: {sidecar}")
+        except Exception as e:
+            if get_verbose():
+                warning(f"Could not write upload sidecar: {e}")
 
     # Default visual baseline applied when a channel has NO `image_style`
     # configured. Goal: keep all images uniform (same realism level) and let
@@ -1423,38 +1454,63 @@ No markdown. No explanation. Just the JSON array."""
 
     def _apply_channel_style(self, prompt: str) -> str:
         """
-        Append the per-channel `image_style` suffix to an LLM-produced scene
-        description. If the channel has no style configured, fall back to a
-        neutral realism baseline (`DEFAULT_BASE_STYLE`) so every image in the
-        same video shares the same look — instead of each provider/prompt
-        rendering in its own random aesthetic.
+        Wrap an LLM-produced scene description with the channel's visual
+        style + an era anchor so each image is on-topic AND consistent with
+        the channel's aesthetic.
 
-        ALSO injects a guaranteed civilization/era anchor (period clothing,
-        architecture, weapons) when the topic matches a known civilization.
-        Without this, when the LLM writes a vague scene like "soldier walking
-        through a battlefield" Gemini renders a 20th-century soldier instead
-        of, say, an ancient Greek hoplite — even though the LLM was told the
-        era. We inject the anchor directly into the image-gen prompt so the
-        period markers can't be forgotten.
+        Two modes:
+
+        1) Channel has a custom `image_style` (e.g. cartoon, watercolor,
+           anime). The style MUST dominate. We frame the prompt so Gemini
+           reads it as: STYLE first, scene second, period items as content
+           (NOT as realism cues), STYLE again at the end. The era block uses
+           neutral wording ("use these era-appropriate items") instead of
+           "period-accurate" / "photorealistic" cues that would fight the
+           channel style.
+
+        2) No `image_style` configured → fall back to `DEFAULT_BASE_STYLE`
+           (photoreal documentary look) and a stronger era anchor that
+           explicitly forbids modern/industrial visuals.
+
+        The split matters: with a cartoon channel we don't want phrases like
+        "photorealistic" or "realistic skin" in the prompt because Gemini
+        will average between the two and produce neither.
         """
-        clean_prompt = self._sanitize_image_prompt(prompt)
-
+        clean_prompt = self._sanitize_image_prompt(prompt).rstrip(', .')
         civ_info = self._get_civilization_info()
-        era_anchor = ""
-        if civ_info and civ_info.get("era_brief"):
-            era_anchor = (
-                f"Setting: {civ_info['name']}. "
-                f"Period-accurate visual anchors that MUST appear when relevant — "
-                f"{civ_info['era_brief']}. "
-                f"Any clothing, armor, weapons, architecture and objects strictly from this era only. "
-                f"No modern military uniforms, no industrial-era clothing, no anachronistic items."
-            )
+        custom_style = (self._image_style or "").strip()
 
-        suffix = self._image_style.strip() if self._image_style else self.DEFAULT_BASE_STYLE
-        parts = [clean_prompt.rstrip(', .')]
-        if era_anchor:
-            parts.append(era_anchor)
-        parts.append(suffix)
+        parts: list[str] = []
+
+        if custom_style:
+            # Style anchored at front for maximum weight, then scene, then a
+            # neutral era clause, then style repeated at the end as reminder.
+            short_style = custom_style if len(custom_style) <= 200 else custom_style[:200].rsplit(",", 1)[0]
+            parts.append(f"ART STYLE — render the entire image in this style: {custom_style}")
+            parts.append(clean_prompt)
+            if civ_info and civ_info.get("era_brief"):
+                parts.append(
+                    f"Era context — the scene is set in {civ_info['name']}. "
+                    f"Include era-appropriate items in the composition (clothing, architecture, weapons, "
+                    f"objects from this list, drawn in the art style above): {civ_info['era_brief']}. "
+                    f"No modern uniforms, no firearms, no industrial-era objects."
+                )
+            parts.append(
+                f"FINAL REMINDER — keep the entire image in the art style described above ({short_style}). "
+                f"Do NOT default to photorealism. Do NOT add realistic skin texture or photographic lighting. "
+                f"The art style overrides any realism implied by the scene."
+            )
+        else:
+            parts.append(clean_prompt)
+            if civ_info and civ_info.get("era_brief"):
+                parts.append(
+                    f"Setting: {civ_info['name']}. "
+                    f"Period-accurate visual anchors that MUST appear when relevant — {civ_info['era_brief']}. "
+                    f"Any clothing, armor, weapons, architecture and objects strictly from this era only. "
+                    f"No modern military uniforms, no industrial-era clothing, no anachronistic items."
+                )
+            parts.append(self.DEFAULT_BASE_STYLE)
+
         combined = ". ".join(p for p in parts if p)
         # Hard cap to ~1500 chars — Gemini accepts up to ~1900 in our payload
         # cap, so this leaves headroom while preventing prompt explosion.
@@ -3127,6 +3183,7 @@ No markdown. No explanation. Just the JSON array."""
             info(f" => Generated Video: {path}")
 
         self.video_path = os.path.abspath(path)
+        self._persist_metadata_sidecar(is_long=False)
 
         return path
 
@@ -4656,6 +4713,7 @@ No markdown. No explanation. Just the JSON array."""
         video_path = self.combine_long()
 
         self.video_path = os.path.abspath(video_path)
+        self._persist_metadata_sidecar(is_long=True)
         success(f"\n=> Long video generated: {video_path}")
 
         return video_path

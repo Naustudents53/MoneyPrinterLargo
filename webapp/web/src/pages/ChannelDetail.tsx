@@ -12,6 +12,7 @@ import {
   Film,
   Calendar,
   Clapperboard,
+  RefreshCw,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
@@ -70,6 +71,7 @@ export function ChannelDetail() {
   const [savingVideo, setSavingVideo] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const openEditVideo = (v: ChannelVideo) => {
     setEditingVideo(v);
@@ -190,6 +192,15 @@ export function ChannelDetail() {
             >
               <UploadCloud className="h-4 w-4" /> Subir último
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => setSyncing(true)}
+              title="Sincroniza este canal con YouTube"
+            >
+              <RefreshCw className="h-4 w-4" /> Sync YT
+            </Button>
             <Button variant="ghost" size="icon" onClick={() => setEditing(true)}>
               <Pencil className="h-4 w-4" />
             </Button>
@@ -269,6 +280,28 @@ export function ChannelDetail() {
                   className="pl-8 h-9 w-72"
                 />
               </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    disabled={videos.length === 0}
+                  >
+                    <Pencil className="h-4 w-4" /> Marcar tipo…
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>Aplicar a TODOS los videos</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => markAllAs("short")} className="gap-2">
+                    <Sparkles className="h-3.5 w-3.5" /> Marcar todos como Short
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => markAllAs("long")} className="gap-2">
+                    <Clapperboard className="h-3.5 w-3.5" /> Marcar todos como Long
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button
                 variant="outline"
                 size="sm"
@@ -441,6 +474,17 @@ export function ChannelDetail() {
         onDone={load}
       />
 
+      <ProgressDialog
+        open={syncing}
+        onOpenChange={(o) => {
+          setSyncing(o);
+          if (!o) load();
+        }}
+        title="Sincronizando este canal con YouTube"
+        description="Reclasifica short/long, agrega los que faltan, borra los huérfanos y actualiza descripción + fecha real de subida."
+        sseUrl={syncing && id ? api.syncYouTubeUrl({ channel_id: id, prune: true, add_missing: true, refresh_meta: true }) : null}
+      />
+
       <Dialog open={!!editingVideo} onOpenChange={(o) => !o && setEditingVideo(null)}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
@@ -450,6 +494,21 @@ export function ChannelDetail() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-kind">Tipo</Label>
+              <Select
+                value={editIsShort ? "short" : "long"}
+                onValueChange={(v) => setEditIsShort(v === "short")}
+              >
+                <SelectTrigger id="edit-kind" className="w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="short">Short (9:16)</SelectItem>
+                  <SelectItem value="long">Long (16:9)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="edit-title">Título</Label>
               <Input
