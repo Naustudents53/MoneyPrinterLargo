@@ -10,11 +10,24 @@ import {
   Film,
   BookOpen,
   Image as ImageIcon,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { WordMark } from "../Logo";
 
-const NAV = [
+interface NavItem {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  end?: boolean;
+}
+
+interface NavGroup {
+  section: string;
+  items: NavItem[];
+}
+
+const NAV: NavGroup[] = [
   {
     section: "Principal",
     items: [
@@ -43,7 +56,7 @@ const NAV = [
     section: "Sistema",
     items: [{ to: "/settings", label: "Configuración", icon: Settings }],
   },
-] as const;
+];
 
 export function Sidebar() {
   return (
@@ -67,7 +80,7 @@ export function Sidebar() {
                 <li key={to}>
                   <NavLink
                     to={to}
-                    end={(end as boolean | undefined) ?? false}
+                    end={end ?? false}
                     className={({ isActive }) =>
                       cn(
                         "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",

@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
-import { api, type Channel, type ChannelInput } from "@/lib/api";
+import { api, type Channel, type ChannelInput, type Voice } from "@/lib/api";
 import { toast } from "sonner";
 
 interface Props {
@@ -35,6 +35,7 @@ const HOOK_PROFILES = ["", "educational", "storytelling"];
 export function ChannelFormDialog({ open, onOpenChange, channel, onSaved }: Props) {
   const editing = !!channel;
   const [saving, setSaving] = useState(false);
+  const [voices, setVoices] = useState<Voice[]>([]);
   const [data, setData] = useState<ChannelInput>({
     nickname: "",
     firefox_profile: "",
@@ -46,6 +47,14 @@ export function ChannelFormDialog({ open, onOpenChange, channel, onSaved }: Prop
     hook_profile: "",
     voice_drama: false,
   });
+
+  useEffect(() => {
+    if (!open) return;
+    api
+      .listVoices()
+      .then((r) => setVoices(r.voices))
+      .catch(() => setVoices([]));
+  }, [open]);
 
   useEffect(() => {
     if (channel) {
@@ -195,21 +204,21 @@ export function ChannelFormDialog({ open, onOpenChange, channel, onSaved }: Prop
 
           <div className="space-y-2">
             <Label htmlFor="short_voice">Voz para Shorts</Label>
-            <Input
+            <VoiceSelect
               id="short_voice"
-              value={data.short_voice}
-              onChange={(e) => update("short_voice", e.target.value)}
-              placeholder="Pablo o es-ES-PabloNeural"
+              value={data.short_voice || ""}
+              voices={voices}
+              onChange={(v) => update("short_voice", v)}
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="long_voice">Voz para Long Videos</Label>
-            <Input
+            <VoiceSelect
               id="long_voice"
-              value={data.long_voice}
-              onChange={(e) => update("long_voice", e.target.value)}
-              placeholder="es-ES-AlvaroNeural"
+              value={data.long_voice || ""}
+              voices={voices}
+              onChange={(v) => update("long_voice", v)}
             />
           </div>
 
@@ -238,5 +247,57 @@ export function ChannelFormDialog({ open, onOpenChange, channel, onSaved }: Prop
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+interface VoiceSelectProps {
+  id: string;
+  value: string;
+  voices: Voice[];
+  onChange: (v: string) => void;
+}
+
+function VoiceSelect({ id, value, voices, onChange }: VoiceSelectProps) {
+  // If the saved value isn't in the curated list, surface it as an "orphan"
+  // option so the user can still see what's saved (and pick a new one
+  // without silently losing the previous value).
+  const knownIds = new Set(voices.map((v) => v.voice_id));
+  const knownAliases = new Set(voices.map((v) => v.alias));
+  const isOrphan = !!value && !knownIds.has(value) && !knownAliases.has(value);
+
+  // Group voices by language tag for readability.
+  const grouped = voices.reduce<Record<string, Voice[]>>((acc, v) => {
+    (acc[v.language] ||= []).push(v);
+    return acc;
+  }, {});
+  const languages = Object.keys(grouped).sort();
+
+  return (
+    <Select value={value || "__none__"} onValueChange={(v) => onChange(v === "__none__" ? "" : v)}>
+      <SelectTrigger id={id}>
+        <SelectValue placeholder="(seleccionar voz)" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__">(sin voz — usa el default del sistema)</SelectItem>
+        {isOrphan && (
+          <SelectItem value={value}>
+            {value} <span className="text-xs text-muted-foreground">(personalizada)</span>
+          </SelectItem>
+        )}
+        {languages.map((lang) => (
+          <div key={lang}>
+            <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+              {lang}
+            </div>
+            {grouped[lang].map((v) => (
+              <SelectItem key={v.voice_id} value={v.voice_id}>
+                {v.alias}{" "}
+                <span className="text-xs text-muted-foreground">— {v.voice_id}</span>
+              </SelectItem>
+            ))}
+          </div>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }

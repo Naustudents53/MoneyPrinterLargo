@@ -582,6 +582,28 @@ _CONFIG_FIELD_DEFS = [
 ]
 
 
+@app.get("/api/voices")
+def list_voices():
+    """
+    Curated Edge-TTS voices available for channel narration. Returns alias,
+    full voice ID and a language tag derived from the voice ID prefix
+    (e.g. es-ES → es-ES). The frontend uses this to populate the Voz
+    dropdowns in the channel form.
+    """
+    from classes.Tts import EDGE_TTS_VOICES  # noqa: WPS433 (lazy import — keeps API startup light)
+
+    voices = []
+    for alias, voice_id in EDGE_TTS_VOICES.items():
+        parts = voice_id.split("-")
+        lang_tag = "-".join(parts[:2]) if len(parts) >= 2 else voice_id
+        voices.append({
+            "alias": alias,
+            "voice_id": voice_id,
+            "language": lang_tag,
+        })
+    return {"voices": voices}
+
+
 @app.get("/api/config")
 def read_config():
     cfg = _read_config()

@@ -158,6 +158,12 @@ export interface JobSummary {
   kind: "short" | "long" | null;
 }
 
+export interface Voice {
+  alias: string;
+  voice_id: string;
+  language: string;
+}
+
 // ---------- Endpoints ----------
 
 export const api = {
@@ -227,6 +233,9 @@ export const api = {
 
   // Series
   listSeries: () => request<SeriesEntry[]>("/api/series"),
+
+  // Voices (curated Edge-TTS list — used by ChannelFormDialog selects)
+  listVoices: () => request<{ voices: Voice[] }>("/api/voices"),
 
   // Config
   getConfig: () => request<ConfigResponse>("/api/config"),
