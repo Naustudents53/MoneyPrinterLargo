@@ -47,6 +47,47 @@ _PHOTO_STOPWORDS = {
 }
 
 
+# Generic historical/topic words that are NOT distinctive enough to anchor a
+# search result on the right subject. A result whose title only matches these
+# is considered off-topic — e.g. a video about Nero must NOT accept any photo
+# whose only overlap is "roman" or "emperor". The relevance filter requires
+# at least one truly distinctive token (proper noun / unique term) on top of
+# these. Keep this list conservative — adding a real proper noun here would
+# silently disable relevance checks for that subject.
+_GENERIC_TOPIC_TOKENS = {
+    # Eras / civilizations / generic adjectives
+    "ancient", "antiguo", "antigua", "antiguos", "antiguas",
+    "old", "viejo", "vieja", "modern", "moderno", "moderna",
+    "history", "historia", "historical", "historic", "historico", "historica",
+    "story", "tale", "cuento", "relato",
+    "civilization", "civilizacion", "culture", "cultura", "era", "epoca", "period", "periodo",
+    # Civilizations / nationalities (won't disambiguate one figure from another)
+    "roman", "romano", "romana", "romanos", "romanas",
+    "greek", "griego", "griega", "griegos", "griegas",
+    "egyptian", "egipcio", "egipcia", "egipcios", "egipcias",
+    "chinese", "chino", "china", "chinos", "chinas",
+    "japanese", "japones", "japonesa", "japoneses", "japonesas",
+    "indian", "indio", "india", "indios", "indias",
+    "european", "europeo", "europea", "asian", "asiatico", "asiatica",
+    "african", "africano", "africana", "american", "americano", "americana",
+    # Common roles
+    "emperor", "emperador", "emperatriz", "empress",
+    "king", "rey", "queen", "reina",
+    "prince", "principe", "princess", "princesa",
+    "soldier", "soldado", "warrior", "guerrero", "guerrera",
+    "priest", "sacerdote", "priestess", "sacerdotisa",
+    "people", "gente", "person", "persona", "man", "hombre", "woman", "mujer",
+    # Generic places / objects
+    "city", "ciudad", "town", "village", "pueblo", "place", "lugar",
+    "world", "mundo", "earth", "tierra", "land", "country", "pais",
+    "war", "guerra", "battle", "batalla", "fight", "combate",
+    "great", "grande", "famous", "famoso", "famosa", "important", "importante",
+    "life", "vida", "death", "muerte",
+    "scene", "escena", "view", "vista", "image", "imagen", "photo", "foto",
+    "art", "arte", "painting", "pintura", "statue", "estatua",
+}
+
+
 # Per-channel hook style presets used by `generate_script`. Each entry is
 # (style_name, hook_example). One style is picked at random per script so
 # every short doesn't open the same way. Configure on the account JSON via
@@ -59,6 +100,10 @@ HOOK_PROFILES: dict = {
         ("Hidden secret reveal", '"Hay algo que nadie te contó sobre..."'),
         ("Counterintuitive claim", '"Todo lo que crees sobre X está mal."'),
         ("Negation cliffhanger", '"No vas a creer lo que pasó cuando..."'),
+        ("Time-warp opener", '"Hace dos mil años, en [lugar], [escena breve]..." o "En [siglo o año], [lugar] vivía un día como cualquier otro, hasta que..."'),
+        ("Stakes-first pivotal moment", '"Una sola idea, una sola decisión o una sola noche cambió el rumbo de [civilización, era o pueblo]."'),
+        ("Cultural lens flip", '"Para nosotros sería [reacción moderna: impensable, una locura, un crimen], pero en [época o civilización] era [normalidad opuesta: lo más natural, una virtud, lo esperado]."'),
+        ("Hidden origin reveal", '"Lo que hoy conocemos como [cosa familiar] empezó con algo que casi nadie recuerda: [origen olvidado]."'),
     ],
     # Animated storytelling: epic, horror, mystery, adventure. Hooks designed
     # to be addictive and pull the viewer into the scene immediately.
@@ -77,15 +122,16 @@ HOOK_PROFILES: dict = {
 }
 
 
-# Civilization-specific art-style presets for AI image prompts. When the
-# video subject matches keywords from one of these civilizations, the
-# corresponding `style` suffix replaces the channel's `image_style` so the
-# generated images mimic that civilization's traditional art (instead of
-# generic AI photorealism). Keyword matching is accent-insensitive and
-# case-insensitive. Edit freely — the mapping is consulted by
-# `_detect_civilization_style` and applied in `_apply_channel_style`.
-CIVILIZATION_ART_STYLES: dict = {
+# Civilization era anchors. When the video subject matches keywords from one
+# of these civilizations, `era_brief` is injected into the LLM image-prompt
+# task so the generated scene descriptions stay period-accurate (clothing,
+# architecture, weapons, objects). Local LLMs (Ollama) drift into modern
+# visuals on abstract script lines without this anchor. Keyword matching is
+# accent-insensitive and case-insensitive; edit freely.
+CIVILIZATIONS: dict = {
     "roman": {
+        "name": "Ancient Rome",
+        "era_brief": "togas, tunics, leather sandals, bronze cuirass and plumed helmets, gladius swords, marble columns, Roman arches, mosaics, terracotta tile roofs, oil lamps, papyrus scrolls, Roman Forum, amphitheaters, chariots, laurel wreaths",
         "keywords": [
             "roma", "romano", "romana", "romanos", "rome", "roman",
             "cesar", "augusto", "neron", "caligula", "trajano", "adriano",
@@ -93,9 +139,10 @@ CIVILIZATION_ART_STYLES: dict = {
             "pompeya", "pompeii", "coliseo", "colosseum", "vestal",
             "legion romana", "gladiador", "centurion",
         ],
-        "style": "Roman fresco style, Pompeii mural aesthetic, classical Mediterranean palette, hand-painted illustration, non-photorealistic, period-accurate museum artwork",
     },
     "greek": {
+        "name": "Ancient Greece",
+        "era_brief": "white chitons and peplos robes, leather sandals, bronze hoplite armor, round shields, long spears, Doric and Ionic marble columns, white marble temples, agoras, amphorae, olive trees, oil lamps, laurel wreaths",
         "keywords": [
             "grecia", "griego", "griega", "griegos", "greece", "greek",
             "atenas", "athens", "esparta", "sparta",
@@ -105,9 +152,10 @@ CIVILIZATION_ART_STYLES: dict = {
             "olimpo", "olympus", "partenon", "parthenon",
             "helenico", "hellenic", "minoico", "micenico", "mycenaean",
         ],
-        "style": "ancient Greek red-figure pottery aesthetic, classical marble sculpture, hand-painted illustration, ochre and black palette, period-accurate non-photorealistic art",
     },
     "chinese": {
+        "name": "Imperial China",
+        "era_brief": "hanfu silk robes, dynasty-specific headwear, jade ornaments, calligraphy ink brushes and bamboo scrolls, pagodas, curved tile roofs, painted screens, paper lanterns, dragons, tea ceremony objects, Forbidden City courtyards",
         "keywords": [
             "china", "chino", "chinos", "chinese",
             "qin shi huang", "shi huang",
@@ -118,9 +166,10 @@ CIVILIZATION_ART_STYLES: dict = {
             "ciudad prohibida", "forbidden city",
             "guerreros de terracota", "terracotta army",
         ],
-        "style": "Chinese ink wash painting, Song dynasty scroll aesthetic, traditional brushwork, soft mist palette, period-accurate non-photorealistic illustration",
     },
     "japanese": {
+        "name": "Feudal Japan",
+        "era_brief": "kimonos and yukatas, samurai armor (do, kabuto helmet), katana and wakizashi, tatami mats, shoji paper screens, pagodas, torii gates, paper lanterns, cherry blossoms, Edo-period streets, Mt. Fuji backdrop",
         "keywords": [
             "japon", "japan", "japones", "japonesa", "japanese",
             "samurai", "shogun", "ronin", "ninja",
@@ -128,35 +177,39 @@ CIVILIZATION_ART_STYLES: dict = {
             "periodo edo", "edo period", "meiji", "kamikaze",
             "bushido", "geisha", "yamato",
         ],
-        "style": "Japanese ukiyo-e woodblock print, Edo period aesthetic, Hokusai/Hiroshige style, flat color planes, bold outlines, period-accurate non-photorealistic illustration",
     },
     "indian": {
+        "name": "Ancient and Medieval India",
+        "era_brief": "saris, dhotis, turbans, ornate gold jewelry, Mughal architecture with onion domes and pointed arches, intricately carved Hindu temples, elephants with howdahs, palace marble jali screens, sitar and tabla instruments",
         "keywords": [
             "india", "indio", "indios", "indian", "hindu", "hinduismo",
             "buda", "buddha", "ashoka", "mauryan", "maurya",
             "mughal", "mogol", "rajput",
             "ganges", "varanasi", "delhi", "taj mahal",
         ],
-        "style": "Mughal miniature painting, Rajput manuscript illumination, intricate ornamental detail, vivid jewel tones, gold leaf accents, period-accurate non-photorealistic illustration",
     },
     "mayan": {
+        "name": "Maya civilization",
+        "era_brief": "cotton huipiles and loincloths, jade ornaments, jaguar pelt and feather headdresses, stepped stone pyramids, glyph-carved stelae, ball courts, jungle backdrops, codex screenfold books, obsidian-edged weapons, feathered serpent motifs",
         "keywords": [
             "maya", "mayas", "mayan",
             "tikal", "chichen", "palenque", "yucatan",
             "kukulkan", "popol vuh", "bonampak", "copan",
         ],
-        "style": "Mayan codex style, pre-Columbian Mesoamerican glyphs, Bonampak mural palette, flat figures with bold outlines, period-accurate non-photorealistic illustration",
     },
     "inca": {
+        "name": "Inca Empire",
+        "era_brief": "wool tunics with geometric patterns, llama-wool sandals, gold ornaments, terraced mountain cities, polygonal stone block masonry without mortar, llamas, quipu knot strings, Andes mountain backdrops, Machu Picchu-style citadels",
         "keywords": [
             "inca", "incas", "incaico", "incaica",
             "machu picchu", "cuzco", "cusco",
             "atahualpa", "manco capac",
             "imperio incaico", "imperio inca", "andino", "andean", "quechua",
         ],
-        "style": "Andean textile pattern aesthetic, Inca and Moche pottery art, geometric stepped motifs, earth-tone palette, period-accurate non-photorealistic illustration",
     },
     "egyptian": {
+        "name": "Ancient Egypt",
+        "era_brief": "linen schenti kilts, white pleated dresses, kohl eye makeup, gold collars, nemes royal headdresses, pyramids, sphinxes, hieroglyph-covered temple walls, papyrus scrolls, oil lamps, Nile river, palm trees, falcon and scarab motifs, lotus columns",
         "keywords": [
             "egipto", "egipcio", "egipcia", "egipcios", "egypt", "egyptian",
             "faraon", "pharaoh", "tutankamon", "tutankhamun",
@@ -166,9 +219,10 @@ CIVILIZATION_ART_STYLES: dict = {
             "esfinge", "sphinx",
             "horus", "anubis", "osiris", "isis", "luxor", "tebas", "thebes",
         ],
-        "style": "ancient Egyptian tomb painting, hieroglyphic mural style, profile-view figures, flat ochre/red/gold palette, period-accurate non-photorealistic illustration",
     },
     "renaissance": {
+        "name": "Italian Renaissance",
+        "era_brief": "doublet jackets, hose, fur-trimmed gowns, ruffed collars, velvet caps, Florence and Venice cityscapes, domed cathedrals, marble palaces, frescoed walls, easel paintings on wooden panels, quill pens, oil lanterns, gondolas, period nobility and merchants",
         "keywords": [
             "renacimiento", "renaissance",
             "leonardo da vinci", "miguel angel", "michelangelo",
@@ -176,26 +230,29 @@ CIVILIZATION_ART_STYLES: dict = {
             "florencia", "florence", "medici", "savonarola", "vasari", "donatello",
             "humanismo", "humanism",
         ],
-        "style": "Italian Renaissance fresco aesthetic, Botticelli/Da Vinci painting style, soft sfumato, classical composition, period-accurate non-photorealistic painted illustration",
     },
     "viking": {
+        "name": "Viking Age Norse",
+        "era_brief": "wool tunics with brooches, fur cloaks, leather boots, conical iron helmets (no horns), round wooden shields, longswords and battle-axes, longhouses with thatched roofs, longships (drakkar), runestones, fjord landscapes",
         "keywords": [
             "vikingo", "vikinga", "vikingos", "viking", "vikings",
             "ragnar", "odin", "thor", "valhalla",
             "nordico", "norse", "runa", "runas", "drakkar",
         ],
-        "style": "Norse manuscript illumination, runestone carving aesthetic, intricate knotwork, cold muted palette, period-accurate non-photorealistic illustration",
     },
     "aztec": {
+        "name": "Aztec Empire",
+        "era_brief": "maxtlatl loincloths, quechquemitl shawls, feathered headdresses, jaguar and eagle warrior costumes, obsidian-edged macuahuitl swords, stepped temple pyramids, painted codices, chinampa floating gardens, Lake Texcoco, Tenochtitlan plaza",
         "keywords": [
             "azteca", "aztecas", "aztec",
             "tenochtitlan", "moctezuma", "montezuma",
             "mexica", "huitzilopochtli", "quetzalcoatl",
             "codice azteca", "codice borgia",
         ],
-        "style": "Aztec codex style, Codex Borgia palette, Mexica pictogram aesthetic, flat figures with bold black outlines, period-accurate non-photorealistic illustration",
     },
     "persian": {
+        "name": "Ancient Persia",
+        "era_brief": "long flowing robes with embroidered borders, conical Persian caps, ornate jewelry, recurve bows, scale armor, lamassu winged-bull statues, columns with double-bull capitals, Persepolis bas-reliefs, formal gardens, cypress trees",
         "keywords": [
             "persia", "persa", "persas", "persian",
             "ciro el grande", "cyrus the great", "dario", "darius",
@@ -203,9 +260,10 @@ CIVILIZATION_ART_STYLES: dict = {
             "aquemenida", "achaemenid", "sasanida", "sassanid",
             "zoroastro", "zoroaster", "persepolis",
         ],
-        "style": "Persian miniature painting, Safavid manuscript illumination, intricate ornamental borders, jewel tones, period-accurate non-photorealistic illustration",
     },
     "mesopotamian": {
+        "name": "Ancient Mesopotamia",
+        "era_brief": "long woolen kaunakes tunics with fringed hems, conical hats, beards in tight curls, ziggurats, mud-brick walls, cuneiform clay tablets, cylinder seals, recurve bows, cedar gates, palm trees, Tigris and Euphrates river scenes",
         "keywords": [
             "mesopotamia", "mesopotamico",
             "sumerio", "sumeria", "sumerian",
@@ -215,9 +273,10 @@ CIVILIZATION_ART_STYLES: dict = {
             "uruk", "ninive", "nineveh",
             "ziggurat", "cuneiforme", "cuneiform",
         ],
-        "style": "Mesopotamian relief carving aesthetic, Assyrian palace bas-relief style, cuneiform inscription motifs, ochre stone palette, period-accurate non-photorealistic illustration",
     },
     "ottoman": {
+        "name": "Ottoman Empire",
+        "era_brief": "long caftans and turbans, embroidered sashes, scimitar swords, Janissary uniforms with tall caps, domed mosques with slender minarets, Iznik blue-tile interiors, palace gardens, Topkapi-style architecture, bazaars, ornate carpets",
         "keywords": [
             "otomano", "otomana", "otomanos", "ottoman",
             "imperio otomano", "ottoman empire",
@@ -225,9 +284,10 @@ CIVILIZATION_ART_STYLES: dict = {
             "mehmed ii", "topkapi",
             "sultan otomano",
         ],
-        "style": "Ottoman miniature painting, Iznik tile pattern aesthetic, ornate calligraphic borders, jewel tones, period-accurate non-photorealistic illustration",
     },
     "byzantine": {
+        "name": "Byzantine Empire",
+        "era_brief": "long ornate robes with gold embroidery, jeweled imperial crowns, mosaic-decorated church interiors, Hagia Sophia-style domes, gold-leaf icons, marble columns, candle-lit halls, Constantinople walls",
         "keywords": [
             "bizantino", "bizantina", "bizantinos", "byzantine",
             "imperio bizantino", "byzantine empire",
@@ -236,9 +296,10 @@ CIVILIZATION_ART_STYLES: dict = {
             "constantinopla", "constantinople",
             "iconoclasia", "iconoclasm",
         ],
-        "style": "Byzantine icon painting, gold-leaf mosaic aesthetic, flat hieratic figures, deep ultramarine and gold palette, period-accurate non-photorealistic illustration",
     },
     "medieval": {
+        "name": "Medieval Europe",
+        "era_brief": "tunics, hose, hooded cloaks, chainmail and plate armor, kite shields, longswords, knightly heraldry on tabards, stone castles with battlements, gothic cathedrals, peasant villages with thatched roofs, illuminated manuscripts, monks in robes",
         "keywords": [
             "medieval", "edad media", "middle ages",
             "feudalismo", "feudal",
@@ -249,7 +310,6 @@ CIVILIZATION_ART_STYLES: dict = {
             "ricardo corazon de leon", "saladino", "saladin",
             "peste negra", "black death",
         ],
-        "style": "medieval illuminated manuscript style, Book of Hours aesthetic, gold-leaf flat figures, ornate gothic borders, period-accurate non-photorealistic illustration",
     },
 }
 
@@ -582,10 +642,30 @@ class YouTube:
             # Clear English signal: several English stopwords and more EN than ES
             return en_hits >= 3 and en_hits > es_hits
 
+        def _content_bigrams(norm: str) -> set:
+            """
+            Consecutive non-stopword token pairs from the normalized form.
+            Catches lowercase compound subjects ("fuego griego", "biblioteca
+            alejandria") that `_extract_entities` misses because it only
+            counts capitalized tokens. Bigrams where BOTH tokens are in
+            COMMON_CAP_NOISE are dropped — those are generic phrase-noise
+            ("antigua grecia", "imperio romano") that two different videos
+            can legitimately share without being duplicates.
+            """
+            toks = norm.split()
+            out: set = set()
+            for i in range(len(toks) - 1):
+                a, b = toks[i], toks[i + 1]
+                if a in COMMON_CAP_NOISE and b in COMMON_CAP_NOISE:
+                    continue
+                out.add(f"{a} {b}")
+            return out
+
         # ---- 3. Pre-compute past signatures ----
         past_clean = [_strip_markdown(t) for t in past_topics]
         past_norm = [_normalize(t) for t in past_clean]
         past_entities = [_extract_entities(t) for t in past_clean]
+        past_bigrams = [_content_bigrams(n) for n in past_norm]
 
         # Frequency-based filter: an entity that shows up in >15% of past
         # topics (with a floor of 3) is effectively a channel-wide theme
@@ -599,14 +679,25 @@ class YouTube:
         _common_threshold = max(3, len(past_entities) // 7)
         common_entities = {e for e, c in _freq.items() if c > _common_threshold}
 
+        # Same frequency filter for bigrams: a 2-word phrase appearing across
+        # many past videos is a channel-wide theme ("imperio romano" on a Rome
+        # channel), not a distinctive subject signature. Dropping these avoids
+        # false-positive dedupe when the user wants multiple legit angles on
+        # a recurring topic.
+        _bg_freq: Counter = Counter()
+        for _bgs in past_bigrams:
+            _bg_freq.update(_bgs)
+        common_bigrams = {b for b, c in _bg_freq.items() if c > _common_threshold}
+
         def _is_duplicate(candidate: str) -> tuple[bool, str]:
             cand_clean = _strip_markdown(candidate)
             if not cand_clean:
                 return False, ""
             cand_norm = _normalize(cand_clean)
             cand_ents = _extract_entities(cand_clean)
+            cand_bigrams = _content_bigrams(cand_norm)
 
-            for original, p_norm, p_ents in zip(past_topics, past_norm, past_entities):
+            for original, p_norm, p_ents, p_bgs in zip(past_topics, past_norm, past_entities, past_bigrams):
                 if not p_norm:
                     continue
                 # Exact normalized match
@@ -619,6 +710,13 @@ class YouTube:
                 # collide on the shared region/era.
                 shared = (cand_ents & p_ents) - common_entities
                 if shared:
+                    return True, original
+                # Shared distinctive bigram → same compound subject in
+                # lowercase ("fuego griego", "muerte negra"). Excludes
+                # channel-wide common bigrams so recurring niche themes
+                # don't auto-collide.
+                shared_bg = (cand_bigrams & p_bgs) - common_bigrams
+                if shared_bg:
                     return True, original
                 # Token-overlap fallback (tighter threshold than before)
                 a, b = set(cand_norm.split()), set(p_norm.split())
@@ -846,6 +944,7 @@ CRITICAL RULES:
 - NO "welcome", NO "voiceover", NO meta-references.
 - ABSOLUTELY NO stage directions of any kind. Never write "(image of ...)", "(imagen de ...)", "[B-roll: ...]", "(plano cerrado)", "(music)", "(música suave)", "(emoji)", "(transition)", "(voice over)" or anything similar. Only text a narrator would speak ALOUD.
 - NUMBERS: spell numbers out as words, not digits. Examples (in {self.language}): "mil cuatrocientos cincuenta y tres" not "1453"; "four thousand five hundred" not "4,500".
+- YEARS vs ELAPSED TIME — DO NOT CONFUSE THEM. A calendar year (e.g. 1477) is a DATE; elapsed time is a DURATION. To name a year, write "el año mil cuatrocientos setenta y siete" / "in the year fourteen seventy-seven". NEVER use "hace mil cuatrocientos setenta y siete años" / "1477 years ago" to refer TO the year 1477 — that phrase ONLY means elapsed duration, calculated from the current year ({datetime.now().year}). An event in 1477 happened {datetime.now().year - 1477} years ago, never 1477 years ago. If unsure, prefer naming the year ("el año X") and skip the elapsed-time phrasing entirely.
 - ONLY return the raw script text. Nothing else.
 - WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.
 """
@@ -874,15 +973,52 @@ CRITICAL RULES:
         Returns:
             metadata (dict): The generated metadata.
         """
-        title = self.generate_response(
-            f"Please generate a YouTube Video Title for the following subject: {self.subject}. "
-            f"Optionally include 1-2 relevant hashtags at the end (but only if they fit naturally). "
-            f"Only return the title, nothing else. Limit the title under 80 characters. Be concise. "
-            f"YOU MUST WRITE THE TITLE IN {self.language}. Do NOT wrap the title in quotes. Do NOT start or end with any quote character."
-        )
+        # Pass the actual script to the title prompt \u2014 without it, the model
+        # invents clickbait promises ("5 curiosidades", "3 secretos") that
+        # the script never delivers. The title must reflect what the video
+        # actually says.
+        title_prompt = f"""Generate a YouTube Short title for this video.
+
+SUBJECT: {self.subject}
+
+ACTUAL SCRIPT (the title must match what THIS script delivers):
+\"\"\"
+{self.script}
+\"\"\"
+
+ABSOLUTE RULES:
+- The title must accurately describe what the script says. Do NOT promise content that is not in the script.
+- FORBIDDEN: "X curiosidades", "X secretos", "X razones", "X cosas", "X datos", "X hechos", "Top X", "X que..." or ANY list-form promise (in {self.language} or English) UNLESS the script actually presents that exact number of distinct enumerated items. If the script tells ONE continuous story, the title MUST NOT promise a list.
+- FORBIDDEN: "no vas a creer", "te volar\u00e1 la cabeza", "el secreto que nadie te cont\u00f3", and similar empty hype that the script does not back up.
+- The title can be intriguing, but it must be HONEST \u2014 every promise in the title must be delivered by the script.
+- Optionally include 1-2 relevant hashtags at the end (only if they fit naturally).
+- Under 80 characters.
+- WRITE ENTIRELY IN {self.language}. Do NOT wrap the title in quotes. No leading/trailing quote characters.
+- Only return the title text, nothing else."""
+
+        title = self.generate_response(title_prompt)
 
         # Strip any quotes the LLM might add (regular, curly, single)
         title = re.sub(r'^[\"\'\u201c\u201d\u2018\u2019]+|[\"\'\u201c\u201d\u2018\u2019]+$', '', title.strip()).strip()
+
+        # Belt-and-suspenders enforcement: even with the prompt above, some
+        # models still slip in "X <noun>" list promises. If the title makes
+        # that promise but the script doesn't enumerate items, regenerate
+        # once with a stricter instruction.
+        if self._title_promises_list(title) and not self._script_has_enumerated_items(self.script):
+            warning(
+                f"Title promises a list but script does not enumerate items: '{title}' \u2014 regenerating."
+            )
+            retry = self.generate_response(
+                title_prompt
+                + "\n\nPREVIOUS ATTEMPT WAS REJECTED because it promised a numbered list that the script does NOT deliver. "
+                + "Your script tells ONE continuous story \u2014 the title must reflect that. "
+                + "Do NOT use any number followed by a noun ('5 curiosidades', '3 razones', etc.). "
+                + "Do NOT use 'Top N' or 'N que...'. Try again."
+            )
+            retry = re.sub(r'^[\"\'\u201c\u201d\u2018\u2019]+|[\"\'\u201c\u201d\u2018\u2019]+$', '', retry.strip()).strip()
+            if retry and not self._title_promises_list(retry):
+                title = retry
 
         # If truncation would cut a hashtag, remove hashtags instead
         if len(title) > 100:
@@ -937,43 +1073,96 @@ CRITICAL RULES:
         if image_mode == "photos":
             prompt = f"""Generate exactly {n_prompts} short SEARCH QUERIES to find REAL historical/documentary/educational images for a video about: {self.subject}
 
-These queries will be searched against Wikipedia articles + Wikimedia Commons + Met Museum + Library of Congress. Tailor the wording for those archives.
+These queries will be searched against Wikidata + Wikipedia + Wikimedia Commons + Europeana + Met Museum + Library of Congress. Tailor the wording for those archives.
 
-CRITICAL: use the CANONICAL ENGLISH NAME (the form Wikipedia uses for the article title) for every person, place, event, or work. Examples:
+ABSOLUTE RULE — SUBJECT ANCHORING:
+Every single query MUST contain the canonical English name of the subject (or, if the section is about a specific historical event/place/person tied to the subject, that proper noun directly — e.g. "Domus Aurea" or "Great Fire of Rome" for a Nero video). NEVER write a query that is just a generic concept ("ancient Roman temple", "imperial banquet", "Roman senator portrait") — the search will return random unrelated results. The subject's proper noun, or a proper noun strictly identifying the same exact thing/event/person, MUST be present in every query.
+
+CRITICAL — use the CANONICAL ENGLISH NAME (the form Wikipedia uses for the article title) for every person, place, event, or work:
   - WRONG: "Hipparchus the astronomer of stars"   →   RIGHT: "Hipparchus of Nicaea"
   - WRONG: "Marco Aurelio philosophy book"        →   RIGHT: "Marcus Aurelius" or "Meditations Marcus Aurelius"
   - WRONG: "Roman vestal virgin priestess fire"   →   RIGHT: "Vestal Virgins" or "Temple of Vesta"
   - WRONG: "Alexander conquering Persians battle" →   RIGHT: "Battle of Gaugamela"
-  - WRONG: "ancient Egypt cat goddess statue"     →   RIGHT: "Bastet" or "Egyptian cat goddess"
-A Wikipedia article should EXIST for the subject of every query. If unsure, prefer the proper noun on its own.
+  - WRONG: "ancient Egypt cat goddess statue"     →   RIGHT: "Bastet" (specific deity, not a generic "Egyptian cat goddess")
+A Wikipedia article should EXIST for the subject of every query.
+
+ANCHORING EXAMPLES — for a video about "Nero":
+  - GOOD: "Nero portrait bust", "Nero Domus Aurea", "Great Fire of Rome 64 AD", "Nero Capitoline Museum", "Nero coin denarius", "Tacitus Annals Nero".
+  - BAD:  "Roman emperor toga", "ancient Rome fire", "imperial palace Rome", "Roman bust marble". (None mentions Nero or a proper noun strictly tied to him.)
 
 The script has been divided into {n_prompts} sections. Each query must match its section:
 {sections_text}
 INSTRUCTIONS:
 - Query 1 finds a photo for SECTION 1, Query 2 for SECTION 2, etc.
-- Use PROPER NOUNS: real names of people, places, buildings, objects, events.
+- Each query MUST contain at least one PROPER NOUN strictly identifying the subject (e.g. "Nero", "Domus Aurea", "Great Fire of Rome").
 - 3 to 7 words per query. No full sentences.
 - FORBIDDEN words: cinematic, dramatic, lighting, 8K, 4K, photorealistic, HD, macro, bokeh, shot, close-up, aerial, style, composition, render, aesthetic. No adjectives describing mood or camera.
-- Good examples: "Cosimo I de Medici portrait", "Torre dei Mannelli Florence", "Ponte Vecchio historical engraving", "Giorgio Vasari self-portrait".
-- Bad examples: "a dramatic portrait of a duke", "beautiful Italian architecture at golden hour".
-- Write in English (Wikimedia/stock sites index in English).
+- FORBIDDEN as the ONLY proper noun in a query: civilization adjectives ("Roman", "Greek", "Egyptian"), generic roles ("emperor", "king", "soldier"), or generic places ("city", "temple"). They may appear, but never alone.
+- Write in English (most archives index in English).
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         else:
-            prompt = f"""Generate exactly {n_prompts} image prompts for a video about: {self.subject}
+            # Detect civilization from subject so we can anchor every scene to the
+            # right historical era (clothing, architecture, weapons, objects).
+            # Local LLMs (Ollama) drift into modern visuals if the era isn't named
+            # explicitly inside the prompt.
+            civ_info = self._get_civilization_info()
+            era_block = ""
+            era_rule = "PERIOD ACCURACY. If a person appears, describe their clothing in concrete detail (fabric, cut, color, footwear, headwear). Do the same for architecture, weapons, tools, transport, and 2-3 supporting objects in the scene. If the section names a specific real person, place or event, use that proper noun."
+            if civ_info:
+                era_block = (
+                    f"\n\n=== HISTORICAL ERA — NON-NEGOTIABLE ===\n"
+                    f"This video is set in: **{civ_info['name']}**.\n"
+                    f"Every prompt MUST stay in this era. Period visual anchors: {civ_info['era_brief']}.\n"
+                    f"FORBIDDEN in every prompt: modern military uniforms, industrial-era clothing, "
+                    f"firearms, tanks, cars, modern architecture, electricity, anachronistic objects of any kind.\n"
+                    f"REQUIRED in every prompt that includes a person: at least 2 specific period clothing/armor terms "
+                    f"from the era markers above (e.g. for Ancient Greece — 'bronze hoplite cuirass', 'crested Corinthian helmet', "
+                    f"'round aspis shield', 'long dory spear', 'red cloak', 'leather sandals', 'white chiton tunic').\n"
+                    f"=========================================="
+                )
+                era_rule = (
+                    f"PERIOD ACCURACY — STRICT. Era is **{civ_info['name']}**. "
+                    f"Every prompt with a person MUST name at least 2 specific period clothing/armor items from "
+                    f"this era's anchors. Architecture, weapons, tools and objects must also be strictly from this era. "
+                    f"NO modern military uniforms, NO firearms, NO industrial-era visuals — ever."
+                )
 
-The script has been divided into {n_prompts} sections. Each image MUST match its section:
+            prompt = f"""Task: write {n_prompts} image prompts for a video about "{self.subject}".{era_block}
+
+You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section says "the priest opens the temple gate at dawn", the image is exactly that.
+
+ABSOLUTE RULES (every prompt):
+1. ENGLISH ONLY — NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns and historical terms naturally (e.g. "Platón" -> "Plato", "Alejandro Magno" -> "Alexander the Great"). NO Spanish words anywhere in the output.
+2. SCENE FIDELITY. Open with a concrete action (subject + verb). Whatever the script section says is happening, that is what the image shows.
+3. NAMED CHARACTER IDENTITY. When the script names a real historical person, do NOT just write their name — describe what they look like physically so the image generator can render the right person. Examples:
+   - Plato → "an old Greek philosopher with a long white beard, balding head, weathered face, wearing white himation"
+   - Caesar → "a stern middle-aged Roman general with short curly hair, clean-shaven, sharp jawline, in a purple-bordered toga"
+   - Cleopatra → "a young Egyptian queen with dark kohl-lined eyes, straight black hair with gold beaded braids, wearing white linen pleated dress and gold collar"
+   The named person's physical description MUST appear in the prompt every time they're shown.
+4. {era_rule}
+5. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe, same level of detail. No image should look like it belongs to a different show.
+6. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The look is decided by the suffix appended later — your job is the content.
+7. LENGTH. 40-70 English words per prompt. No camera or lens jargon.
+
+Examples of GOOD scene-only prompts:
+- "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his Thirteenth Legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces."
+- "A samurai in dark lacquered do armor stands mid-strike with his katana in a wooden dojo, paper shoji screens around him, morning light falling on tatami mats, wooden practice swords stacked against a beam, sweat on his temple."
+- "A Byzantine sailor on a dromon warship leans over a bronze siphon and ignites a jet of Greek fire toward an enemy galley, flames arcing over the dark sea, gold-trimmed sails, oars mid-stroke, the walls of Constantinople in the distance."
+
+Examples of BAD prompts (DO NOT WRITE THESE):
+- "An ancient Roman scene." (too vague, no action, no specific subject)
+- "Stylized cartoon of Caesar crossing a river." (forbidden art-style word)
+- "A historical illustration of a samurai." (forbidden art-style word, no action)
+- "Symbolic image of a Byzantine ship." (no concrete moment)
+
 {sections_text}
-INSTRUCTIONS:
-- Image 1 MUST illustrate SECTION 1, Image 2 MUST illustrate SECTION 2, etc.
-- Describe the LITERAL content of each section as a visual scene: who/what is in it, what they are doing, the setting, period-accurate clothing/architecture/objects, atmosphere and colors.
-- Example: if a section says "The ancient Egyptians built massive pyramids", write: "Massive Egyptian pyramids mid-construction, thousands of workers pulling limestone blocks across desert sand under a vast blue sky, wooden cranes and ramps, an overseer with a staff watching from a stone platform"
-- Be SPECIFIC: name real things (animals, buildings, objects, places, people).
-- DO NOT specify camera angles, lenses, or any photography/film terminology. The channel will impose its own visual style at render time, so describe the SCENE CONTENT only.
-- Write in English. Each prompt: 30-60 words.
-- FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
+Forbidden words (art-style / camera jargon): cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, ukiyo-e, sketch.
+Forbidden words (multi-image triggers — these make image generators output collages instead of one image): series, sequence, scenes (plural), panels, panel, storyboard, comic strip, montage, collage, grid, split screen, frames, multiple, diptych, triptych, before-and-after, side by side.
 
-Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
+Return ONLY a JSON array of {n_prompts} strings (one prompt per section, in order). Example format:
+["scene 1 description...", "scene 2 description...", ...]
+No markdown. No explanation. Just the JSON array."""
 
         completion = (
             str(self.generate_response(prompt))
@@ -984,19 +1173,39 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         image_prompts = []
 
-        # Try to extract JSON array from the response
+        def _extract_prompts(parsed_value):
+            """Pull the prompt strings out of a parsed LLM response.
+            For AI mode the LLM returns objects {"section", "moment", "prompt"};
+            for photos mode (legacy) it returns plain strings. Handle both."""
+            out = []
+            if isinstance(parsed_value, list):
+                for item in parsed_value:
+                    if isinstance(item, str):
+                        out.append(item)
+                    elif isinstance(item, dict):
+                        # Prefer the structured "prompt" field; if missing,
+                        # combine moment + any description we can find.
+                        p = item.get("prompt") or item.get("image_prompt") or ""
+                        moment = item.get("moment") or item.get("key_visual_moment") or ""
+                        if p:
+                            out.append(str(p))
+                        elif moment:
+                            out.append(str(moment))
+            elif isinstance(parsed_value, dict) and "image_prompts" in parsed_value:
+                out = parsed_value["image_prompts"]
+            return out
+
+        # Try to extract JSON from the response
         try:
             parsed = json.loads(completion)
-            if isinstance(parsed, list):
-                image_prompts = [str(p) for p in parsed if isinstance(p, str)]
-            elif isinstance(parsed, dict) and "image_prompts" in parsed:
-                image_prompts = parsed["image_prompts"]
+            image_prompts = _extract_prompts(parsed)
         except Exception:
-            # Try to find a JSON array in the response
-            match = re.search(r'\[.*?\]', completion, re.DOTALL)
+            # Try to find a JSON array anywhere in the response
+            match = re.search(r'\[.*\]', completion, re.DOTALL)
             if match:
                 try:
-                    image_prompts = json.loads(match.group())
+                    parsed = json.loads(match.group())
+                    image_prompts = _extract_prompts(parsed)
                 except Exception:
                     pass
 
@@ -1004,13 +1213,16 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         if image_mode == "photos":
             fallback_prompts = [self.subject] * n_prompts
         else:
+            # Single-image, scene-only fallback prompts. No "illustrated", no
+            # "series" / "sequence" / "panels" — those words make Gemini /
+            # Nano Banana 2 produce a stacked collage instead of one image.
             fallback_prompts = [
-                f"{self.subject}, full scene with the central subject visible, period-accurate setting and clothing, vivid mood",
-                f"{self.subject}, detail of the central object or person, period-accurate textures and materials",
-                f"{self.subject}, panoramic view of the environment, period-accurate landscape and architecture",
-                f"{self.subject}, illustrated historical scene with period-accurate clothing and architecture",
-                f"{self.subject}, group composition showing several figures interacting in period-accurate context",
-                f"{self.subject}, atmospheric scene with depth and storytelling, period-accurate mood and palette",
+                f"{self.subject}, the central subject in full view, period-accurate setting and clothing, single image",
+                f"{self.subject}, detail of the central object or person, period-accurate textures and materials, single image",
+                f"{self.subject}, panoramic view of the environment, period-accurate landscape and architecture, single image",
+                f"{self.subject}, the historical moment shown directly, period-accurate clothing and architecture, single image",
+                f"{self.subject}, several figures interacting in period-accurate context, single image",
+                f"{self.subject}, atmospheric historical moment with depth, period-accurate mood and palette, single image",
             ]
 
         if not image_prompts or not isinstance(image_prompts, list):
@@ -1166,67 +1378,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             return img_resp.content
         raise RuntimeError("Ideogram: failed to download image")
 
-    def _call_nanobanana2(self, prompt: str, aspect_ratio: str) -> bytes:
-        """
-        Call Google's Nano Banana 2 (Gemini image API) with the given prompt and
-        aspect ratio. Returns raw image bytes (PNG/JPEG). Used by both the
-        portrait (9:16) and landscape (16:9) wrappers below.
-        """
-        from config import (
-            get_nanobanana2_api_key,
-            get_nanobanana2_api_base_url,
-            get_nanobanana2_model,
-        )
-        api_key = get_nanobanana2_api_key()
-        if not api_key:
-            raise RuntimeError("Nano Banana 2 API key not configured (nanobanana2_api_key)")
-
-        base_url = (get_nanobanana2_api_base_url() or "").rstrip("/")
-        model = get_nanobanana2_model() or "gemini-3.1-flash-image-preview"
-        url = f"{base_url}/models/{model}:generateContent?key={api_key}"
-
-        print(colored(f"    [Nano Banana 2 {aspect_ratio}] Generating...", "cyan"), flush=True)
-        payload = {
-            "contents": [{"parts": [{"text": prompt[:1900]}]}],
-            "generationConfig": {
-                "responseModalities": ["IMAGE"],
-                "imageConfig": {"aspectRatio": aspect_ratio},
-            },
-        }
-        resp = requests.post(
-            url,
-            headers={"Content-Type": "application/json"},
-            json=payload,
-            timeout=120,
-        )
-        if resp.status_code != 200:
-            raise RuntimeError(f"Nano Banana 2: HTTP {resp.status_code} — {resp.text[:200]}")
-
-        data = resp.json()
-        candidates = data.get("candidates") or []
-        for cand in candidates:
-            for part in (cand.get("content") or {}).get("parts") or []:
-                inline = part.get("inlineData") or part.get("inline_data") or {}
-                b64 = inline.get("data")
-                if b64:
-                    img_bytes = base64.b64decode(b64)
-                    if len(img_bytes) > 5000:
-                        print(colored("OK", "green"))
-                        return img_bytes
-        raise RuntimeError(f"Nano Banana 2: no image in response — {str(data)[:200]}")
-
-    def _try_nanobanana2(self, prompt: str) -> bytes:
-        """Nano Banana 2 in the configured aspect ratio (defaults to 9:16 for Shorts)."""
-        from config import get_nanobanana2_aspect_ratio
-        ratio = get_nanobanana2_aspect_ratio() or "9:16"
-        return self._call_nanobanana2(prompt, ratio)
-
-    def _try_nanobanana2_landscape(self, prompt: str) -> bytes:
-        """Nano Banana 2 in 16:9 for long-form videos."""
-        return self._call_nanobanana2(prompt, "16:9")
-
     def _try_leonardo(self, prompt: str) -> bytes:
-        """Try Leonardo AI API (excellent quality, $5 free credit)."""
+        """Try Leonardo AI API (excellent quality, $5 free credit).
+        Uses Phoenix 1.0 by default — it follows long prompts much better
+        than Lightning XL, which was averaging out specific subjects (e.g.
+        rendering "Plato" as a generic Greek figure)."""
         from config import get_leonardo_api_key
         api_key = get_leonardo_api_key()
         if not api_key:
@@ -1238,12 +1394,24 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             "Content-Type": "application/json",
         }
         payload = {
-            "prompt": prompt[:1000],
-            "modelId": "b24e16ff-06e3-43eb-8d33-4416c2d75876",  # Leonardo Lightning XL
+            "prompt": prompt[:1500],
+            "modelId": "de7d3faf-762f-48e0-b3b7-9d0ac3a3fcf3",  # Leonardo Phoenix 1.0
             "width": 576,
             "height": 1024,
             "num_images": 1,
+            "contrast": 3.5,
+            "alchemy": True,
         }
+        # When the channel forces an artistic style, hint to Leonardo via
+        # presetStyle so it applies an aesthetic LoRA on top of the prompt.
+        # Detection is keyword-based on the channel's image_style.
+        style_text = (self._image_style or "").lower()
+        if any(k in style_text for k in ("cartoon", "anime", "illustration", "animated", "cel shading", "hand-drawn")):
+            payload["presetStyle"] = "ILLUSTRATION"
+        elif any(k in style_text for k in ("cinematic", "film", "movie")):
+            payload["presetStyle"] = "CINEMATIC"
+        elif self._image_style:
+            payload["presetStyle"] = "DYNAMIC"
         resp = requests.post(
             "https://cloud.leonardo.ai/api/rest/v1/generations",
             headers=headers, json=payload, timeout=30,
@@ -1277,64 +1445,223 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         raise RuntimeError("Leonardo: timeout waiting for generation")
 
     def _augment_for_ai_fallback(self, query: str) -> str:
-        """Wrap a short photo-mode search query so AI generators render a usable image.
-        Shorts always use the fixed 2D style, so we must NOT inject photorealistic
-        wrapping (it would clash). Long videos defer to the civilization/channel
-        style if present, and only fall back to the photographic wrapper otherwise."""
-        is_long = bool(getattr(self, "_is_long_video", False))
-        if not is_long:
-            # Shorts: scene-only description, the 2D style is added by _apply_channel_style.
-            out = f"{query}, full scene with the key subjects clearly visible, vivid mood"
-        elif self._detect_civilization_style() or self._image_style:
-            out = f"{query}, full scene with key subjects visible, period-accurate setting, vivid mood"
-        else:
-            out = f"{query}, cinematic photograph, photorealistic, dramatic lighting, highly detailed, 4K"
+        """Wrap a short photo-mode search query with neutral mood cues so AI
+        generators render a usable image. We DO NOT inject 'photorealistic'
+        / 'cinematic photograph' here anymore — those would override a
+        cartoon / illustration channel style. The actual aesthetic is
+        decided by `_apply_channel_style` (channel image_style or default
+        baseline)."""
+        out = f"{query}, dramatic lighting, highly detailed composition"
         return self._apply_channel_style(out)
+
+    def _persist_metadata_sidecar(self, is_long: bool) -> None:
+        """Write a `<video_basename>.meta.json` next to the rendered .mp4 with
+        subject + metadata + kind, so that a later upload-last invocation
+        (which runs in a fresh subprocess and has no in-memory state) can
+        recover what to upload. Without this sidecar the user gets
+        'subject is empty' when clicking Subir from the dialog after generation.
+        """
+        try:
+            video_path = getattr(self, "video_path", "")
+            if not video_path:
+                return
+            sidecar = os.path.splitext(video_path)[0] + ".meta.json"
+            payload = {
+                "subject": getattr(self, "subject", "") or "",
+                "metadata": getattr(self, "metadata", {}) or {},
+                "is_long": bool(is_long),
+                "thumbnail_path": getattr(self, "thumbnail_path", "") or "",
+            }
+            with open(sidecar, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            if get_verbose():
+                info(f" => Wrote upload sidecar: {sidecar}")
+        except Exception as e:
+            if get_verbose():
+                warning(f"Could not write upload sidecar: {e}")
+
+    # Default visual baseline applied when a channel has NO `image_style`
+    # configured. Goal: keep all images uniform (same realism level) and let
+    # the scene description itself carry the period-accurate clothing / setting
+    # / objects. We deliberately avoid any "art style" cue (no "cinematic",
+    # "painting", "cartoon", "illustration").
+    #
+    # PROMPTING NOTES:
+    # - Lead with strong POSITIVE single-frame phrasing ("one full-bleed
+    #   photograph filling the entire frame edge to edge"). Gemini / Nano
+    #   Banana 2 respond much better to positive composition anchors than to
+    #   "no panels / no collage" negatives, which can backfire via priming.
+    # - Include explicit face/skin/hands realism cues so portraits stop looking
+    #   plasticky and AI-glossy.
+    DEFAULT_BASE_STYLE = (
+        "one full-bleed photograph filling the entire frame edge to edge, "
+        "one continuous uninterrupted scene captured in a single exposure, "
+        "photorealistic, true-to-life realism, natural ambient lighting, "
+        "period-accurate clothing architecture weapons and everyday objects, "
+        "authentic materials and textures, neutral documentary tone, "
+        "anatomically correct human faces with realistic skin texture, visible pores, subtle imperfections, "
+        "natural facial proportions, sharp detailed eyes with realistic iris, "
+        "accurate hands with five fingers, correct anatomy, "
+        "subtle film grain, shallow depth of field, "
+        "no cartoon, no illustration, no painting, no anime, no stylization, no plastic skin, no waxy skin"
+    )
+
+    # Words that frequently push Gemini / Nano Banana 2 toward producing a
+    # multi-panel collage instead of a single image. Stripped from any LLM
+    # prompt before it's sent to the image generator. Word-boundary regex.
+    _COLLAGE_TRIGGERS = re.compile(
+        r"\b("
+        r"collage|montage|storyboard|comic[- ]?strip|panels?|grid|split[- ]?screen|"
+        r"diptych|triptych|polyptych|side[- ]?by[- ]?side|before[- ]?and[- ]?after|"
+        r"sequences?|series of|set of \d+|multiple (?:images|scenes|frames)|"
+        r"frames?|stills?|tiled|stacked"
+        r")\b",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _sanitize_image_prompt(cls, text: str) -> str:
+        """Remove multi-image trigger words from a prompt. Image generators
+        (especially Gemini) interpret words like "panels", "sequence",
+        "storyboard" as a request for a collage even when context says "one
+        image" — so we strip them defensively before sending."""
+        if not text:
+            return text
+        cleaned = cls._COLLAGE_TRIGGERS.sub("", text)
+        # Collapse double spaces and stray punctuation left after substitution.
+        cleaned = re.sub(r"\s{2,}", " ", cleaned)
+        cleaned = re.sub(r"\s+,", ",", cleaned)
+        cleaned = re.sub(r",\s*,", ",", cleaned)
+        return cleaned.strip(" ,")
 
     def _apply_channel_style(self, prompt: str) -> str:
         """
-        Wrap an AI image prompt with the visual style appropriate for the format.
+        Wrap an LLM-produced scene description with the channel's visual
+        style + an era anchor so each image is on-topic AND consistent with
+        the channel's aesthetic.
 
-        - SHORTS (`_is_long_video` False): use the channel's `image_style` (so each
-          channel keeps its own consistent look). Civilization detection is
-          intentionally skipped here — for shorts the priority is branding
-          consistency + faithfulness to the script line, not period-accurate art.
-          Falls back to SHORTS_FIXED_STYLE only if the channel has no `image_style`
-          configured.
-        - LONG VIDEOS (`_is_long_video` True): civilization-specific style takes
-          precedence, falling back to the per-channel `image_style`.
+        Two modes:
 
-        The SCENE description goes FIRST so the diffusion model treats the literal
-        scene content from the script as the dominant subject; the style follows
-        as a rendering modifier. Output is capped to ~1000 chars to fit provider limits.
+        1) Channel has a custom `image_style` (e.g. cartoon, watercolor,
+           anime). The style MUST dominate. We frame the prompt so Gemini
+           reads it as: STYLE first, scene second, period items as content
+           (NOT as realism cues), STYLE again at the end. The era block uses
+           neutral wording ("use these era-appropriate items") instead of
+           "period-accurate" / "photorealistic" cues that would fight the
+           channel style.
+
+        2) No `image_style` configured → fall back to `DEFAULT_BASE_STYLE`
+           (photoreal documentary look) and a stronger era anchor that
+           explicitly forbids modern/industrial visuals.
+
+        The split matters: with a cartoon channel we don't want phrases like
+        "photorealistic" or "realistic skin" in the prompt because Gemini
+        will average between the two and produce neither.
         """
-        is_long = bool(getattr(self, "_is_long_video", False))
-        if is_long:
-            style = self._detect_civilization_style() or self._image_style
+        clean_prompt = self._sanitize_image_prompt(prompt).rstrip(', .')
+        civ_info = self._get_civilization_info()
+        custom_style = (self._image_style or "").strip()
+
+        parts: list[str] = []
+
+        if custom_style:
+            # Style anchored at front for maximum weight, then scene, then a
+            # neutral era clause, then style repeated at the end as reminder.
+            short_style = custom_style if len(custom_style) <= 200 else custom_style[:200].rsplit(",", 1)[0]
+            parts.append(f"ART STYLE — render the entire image in this style: {custom_style}")
+            parts.append(clean_prompt)
+            if civ_info and civ_info.get("era_brief"):
+                parts.append(
+                    f"Era context — the scene is set in {civ_info['name']}. "
+                    f"Include era-appropriate items in the composition (clothing, architecture, weapons, "
+                    f"objects from this list, drawn in the art style above): {civ_info['era_brief']}. "
+                    f"No modern uniforms, no firearms, no industrial-era objects."
+                )
+            parts.append(
+                f"FINAL REMINDER — keep the entire image in the art style described above ({short_style}). "
+                f"Do NOT default to photorealism. Do NOT add realistic skin texture or photographic lighting. "
+                f"The art style overrides any realism implied by the scene."
+            )
         else:
-            style = self._image_style or SHORTS_FIXED_STYLE
-        if not style:
-            return prompt
-        scene = prompt.rstrip(', .')
-        combined = f"{scene}. Depicted as {style}. The scene described above is the subject; the style is only how it is rendered."
-        return combined[:1000]
+            parts.append(clean_prompt)
+            if civ_info and civ_info.get("era_brief"):
+                parts.append(
+                    f"Setting: {civ_info['name']}. "
+                    f"Period-accurate visual anchors that MUST appear when relevant — {civ_info['era_brief']}. "
+                    f"Any clothing, armor, weapons, architecture and objects strictly from this era only. "
+                    f"No modern military uniforms, no industrial-era clothing, no anachronistic items."
+                )
+            parts.append(self.DEFAULT_BASE_STYLE)
 
-    def _detect_civilization_style(self) -> str:
+        combined = ". ".join(p for p in parts if p)
+        # Hard cap to ~1500 chars — Gemini accepts up to ~1900 in our payload
+        # cap, so this leaves headroom while preventing prompt explosion.
+        return combined[:1500]
+
+    def _niche_is_historical(self) -> bool:
         """
-        Inspect self.subject and return the matching civilization style
-        suffix from CIVILIZATION_ART_STYLES, or "" if none matches.
-        Matching is accent- and case-insensitive; the highest keyword-hit
-        count wins. Result is cached per subject so we don't rescan on
-        every prompt.
+        True only if the channel niche explicitly references history, antiquity,
+        mythology, archaeology, an empire, or a medieval/ancient setting.
+        Used to gate civilization detection — modern-narrative channels
+        (drama, suspense, fitness, tech, etc.) should never have ancient-era
+        visual anchors injected because of an incidental "Platón" mention in
+        the script. Note: matches ``\\bhistoria\\b`` as a whole word so it
+        does NOT trigger on "Historias" (Spanish for "stories").
+        """
+        import unicodedata, re
+
+        niche = (getattr(self, "niche", "") or "").strip()
+        if not niche:
+            return False
+
+        norm = "".join(
+            c for c in unicodedata.normalize("NFD", niche.lower())
+            if unicodedata.category(c) != "Mn"
+        )
+
+        word_kw = (
+            r"historia|historica|historico|historicas|historicos"
+            r"|history|historical"
+            r"|antigua|antiguo|antiguas|antiguos|ancient|antiquity"
+            r"|medieval|medievales|medievo"
+            r"|imperio|imperios|empire|empires"
+        )
+        if re.search(rf"\b(?:{word_kw})\b", norm):
+            return True
+
+        substr_kw = ("civilizacion", "arqueolog", "mitolog", "mythology", "archaeology")
+        return any(s in norm for s in substr_kw)
+
+    def _detect_civilization(self) -> str:
+        """
+        Match the topic + script against CIVILIZATIONS keyword lists and return
+        the winning civ key (or "" if none). Matching is accent- and
+        case-insensitive; highest keyword-hit count wins. Subject keywords
+        weigh 3x because the title is a stronger signal than the body. Cached
+        per (subject, script) pair.
+
+        Looking at the script too matters because abstract titles like "El
+        código de honor más extremo" don't carry civ keywords, but the body
+        of the script will mention Sparta, hoplites, etc.
+
+        Gated on ``_niche_is_historical()``: channels whose niche is not about
+        history (e.g. modern-drama "Impacto Stories") never trigger civ
+        detection, even if the LLM happens to drop a "Platón" quote in the
+        script.
         """
         import unicodedata
 
-        subject = (getattr(self, "subject", "") or "").strip()
-        if not subject:
+        if not self._niche_is_historical():
             return ""
 
-        if getattr(self, "_civ_style_subject", None) == subject:
-            return getattr(self, "_civ_style_cached", "") or ""
+        subject = (getattr(self, "subject", "") or "").strip()
+        script = (getattr(self, "script", "") or "").strip()
+        if not subject and not script:
+            return ""
+
+        cache_key = (subject, len(script))
+        if getattr(self, "_civ_cache_key", None) == cache_key:
+            return getattr(self, "_civ_key_cached", "") or ""
 
         def _norm(s: str) -> str:
             s = s.lower()
@@ -1344,20 +1671,43 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             )
 
         norm_subject = _norm(subject)
+        norm_script = _norm(script[:4000])  # cap so huge scripts don't dominate
+
         best_civ = ""
         best_score = 0
-        for civ, data in CIVILIZATION_ART_STYLES.items():
-            score = sum(1 for kw in data["keywords"] if _norm(kw) in norm_subject)
+        for civ, data in CIVILIZATIONS.items():
+            score = 0
+            for kw in data["keywords"]:
+                k = _norm(kw)
+                if k in norm_subject:
+                    score += 3
+                if k in norm_script:
+                    score += 1
             if score > best_score:
                 best_score = score
                 best_civ = civ
 
-        style = CIVILIZATION_ART_STYLES[best_civ]["style"] if best_civ else ""
-        self._civ_style_subject = subject
-        self._civ_style_cached = style
-        if style and get_verbose():
-            info(f" => Detected civilization style: {best_civ}")
-        return style
+        self._civ_cache_key = cache_key
+        self._civ_key_cached = best_civ
+        if best_civ and get_verbose():
+            info(f" => Detected civilization: {best_civ} (score {best_score})")
+        return best_civ
+
+    def _get_civilization_info(self) -> dict:
+        """
+        Returns {"key": ..., "name": ..., "era_brief": ...} for the civilization
+        detected from self.subject, or {} if none. Used by `generate_prompts` /
+        `generate_long_prompts` to anchor every scene to the correct historical era.
+        """
+        civ_key = self._detect_civilization()
+        if not civ_key:
+            return {}
+        data = CIVILIZATIONS.get(civ_key, {})
+        return {
+            "key": civ_key,
+            "name": data.get("name", civ_key.title()),
+            "era_brief": data.get("era_brief", ""),
+        }
 
     def _resolve_voice(self, voice: str) -> str:
         """Resolve a voice alias (e.g. 'Pablo') or raw Edge-TTS ID to its full voice ID."""
@@ -1385,6 +1735,107 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         combined = " ".join(t for t in texts if t).lower()
         tokens = re.findall(r"[a-zà-ÿ]+", combined)
         return {t for t in tokens if len(t) > 2 and t not in _PHOTO_STOPWORDS}
+
+    def _strict_anchor_tokens(self) -> set:
+        """Distinctive tokens from the subject — generic words like 'roman' or
+        'emperor' are dropped. These act as the must-match anchor when
+        validating that a result is actually on-topic."""
+        return set(self._topic_keywords()) - _GENERIC_TOPIC_TOKENS
+
+    def _query_proper_nouns(self, query: str) -> set:
+        """Capitalized words from the query — usually identify a specific
+        person/place/event we want to actually appear in the result.
+        Generic tokens (e.g. 'Roman') are stripped so they don't satisfy the
+        anchor check on their own."""
+        if not query:
+            return set()
+        nouns = re.findall(r"\b[A-ZÁ-ÚÑ][\wÀ-ſ]{2,}\b", query)
+        out = set()
+        for n in nouns:
+            t = n.lower()
+            if t in _PHOTO_STOPWORDS or t in _GENERIC_TOPIC_TOKENS:
+                continue
+            out.add(t)
+        return out
+
+    def _title_promises_list(self, title: str) -> bool:
+        """True if the title promises a numbered list of items.
+        Catches 'N <noun>' patterns ('5 curiosidades', '3 secretos', '7 razones')
+        and 'Top N' constructions in Spanish/English. We trigger only on small
+        single-digit lists (the typical clickbait range) — '1989' or 'mil años'
+        in a historical title shouldn't false-positive."""
+        if not title:
+            return False
+        t = title.lower()
+        # "N + noun" where N is 2-9 (single-digit clickbait counts).
+        list_nouns = (
+            r"curiosidad(?:es)?|secret[oa]s?|raz(?:ón|on|ones)|cosas?|"
+            r"dat[oa]s?|hech[oa]s?|reglas?|tips?|consejos?|trucos?|"
+            r"misterios?|claves?|pasos?|errores?|verdades?|mitos?|"
+            r"thing|things|reason|reasons|secret|secrets|fact|facts|"
+            r"rule|rules|tip|tips|step|steps|truth|truths|myth|myths"
+        )
+        if re.search(rf"\b[2-9]\s+(?:{list_nouns})\b", t):
+            return True
+        # "Top N" in Spanish/English.
+        if re.search(r"\btop\s+[2-9]\b", t):
+            return True
+        # "N <noun> que..." — catches "5 curiosidades que te sorprenderán" even
+        # when the noun isn't in the list above.
+        if re.search(r"\b[2-9]\s+\w{4,}\s+que\b", t):
+            return True
+        return False
+
+    def _script_has_enumerated_items(self, script: str) -> bool:
+        """Crude check: does the script actually list at least 3 enumerated items?
+        Looks for explicit ordinal/list markers ('primero', 'segundo', 'tercero',
+        'first', 'second', 'third', 'número uno', 'one:', '1.', '2.', etc.).
+        If it doesn't find them, we conclude the script tells one story and a
+        list-form title is dishonest."""
+        if not script:
+            return False
+        s = script.lower()
+        markers = 0
+        # Spanish ordinals as words
+        for w in ("primero", "primera", "segundo", "segunda", "tercero", "tercera",
+                  "cuarto", "cuarta", "quinto", "quinta", "sexto", "sexta",
+                  "séptimo", "séptima", "octavo", "octava", "noveno", "novena"):
+            if re.search(rf"\b{w}\b", s):
+                markers += 1
+        # English ordinals
+        for w in ("first", "second", "third", "fourth", "fifth", "sixth",
+                  "seventh", "eighth", "ninth"):
+            if re.search(rf"\b{w}\b", s):
+                markers += 1
+        # Numbered list markers ("1.", "1)", "1 -")
+        markers += len(re.findall(r"(?:^|\s)[1-9][\.\)\-:]\s", s))
+        # "número uno/dos/tres" / "number one/two/three"
+        for w in ("uno", "dos", "tres", "cuatro", "cinco",
+                  "one", "two", "three", "four", "five"):
+            if re.search(rf"\bn[uú]mero\s+{w}\b|\bnumber\s+{w}\b", s):
+                markers += 1
+        return markers >= 3
+
+    def _is_relevant(self, query: str, *result_texts: str) -> bool:
+        """Strict relevance check used by every photo provider.
+
+        A result counts as on-topic if it contains AT LEAST ONE distinctive
+        anchor token — either from the subject itself or from the query's
+        proper nouns. Generic words ('roman', 'emperor', 'history') are NOT
+        sufficient on their own. If we can't derive any anchor (rare — e.g.
+        the subject is a generic phrase), we fall back to the previous
+        any-token overlap so the pipeline doesn't deadlock.
+        """
+        result_tokens = self._query_tokens(*result_texts)
+        if not result_tokens:
+            return False
+        anchors = self._strict_anchor_tokens() | self._query_proper_nouns(query)
+        if anchors:
+            return bool(anchors & result_tokens)
+        # No anchors at all → fall back to the loose any-token check so we
+        # still trim obvious off-topic results.
+        loose = self._query_tokens(query, self.subject)
+        return bool(loose & result_tokens) if loose else True
 
     def _extract_search_query(self, prompt: str) -> str:
         """Extract clean search keywords from an AI image prompt for stock photo search."""
@@ -1429,13 +1880,13 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         if not photos:
             raise RuntimeError("Pexels: no photos found")
 
-        # Relevance filter: alt text must share a keyword with the subject/query.
-        relevance_tokens = self._query_tokens(query, self.subject)
-        if relevance_tokens:
-            relevant = [p for p in photos if relevance_tokens & self._query_tokens(p.get("alt") or "")]
-            if not relevant:
-                raise RuntimeError("Pexels: no relevant photos (all off-topic)")
-            photos = relevant
+        # Relevance filter: alt text must contain a distinctive anchor token
+        # from the subject or one of the query's proper nouns. Generic words
+        # ('roman', 'emperor', etc.) alone are NOT enough — see _is_relevant.
+        relevant = [p for p in photos if self._is_relevant(query, p.get("alt") or "")]
+        if not relevant:
+            raise RuntimeError("Pexels: no relevant photos (all off-topic)")
+        photos = relevant
 
         # Filter out already-used images
         available = [p for p in photos if p["src"]["large2x"] not in self._used_stock_urls]
@@ -1478,13 +1929,12 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         if not hits:
             raise RuntimeError("Pixabay: no photos found")
 
-        # Relevance filter: Pixabay `tags` is a comma-separated list — require keyword overlap.
-        relevance_tokens = self._query_tokens(query, self.subject)
-        if relevance_tokens:
-            relevant = [h for h in hits if relevance_tokens & self._query_tokens(h.get("tags") or "")]
-            if not relevant:
-                raise RuntimeError("Pixabay: no relevant photos (all off-topic)")
-            hits = relevant
+        # Relevance filter: Pixabay `tags` is a comma-separated list — require
+        # a distinctive anchor token (proper noun) overlap, not just any word.
+        relevant = [h for h in hits if self._is_relevant(query, h.get("tags") or "")]
+        if not relevant:
+            raise RuntimeError("Pixabay: no relevant photos (all off-topic)")
+        hits = relevant
 
         # Filter out already-used images
         available = [h for h in hits if h.get("largeImageURL", "") not in self._used_stock_urls]
@@ -1525,8 +1975,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         ch_lang = lang_map.get((self._language or "").lower(), "en")
         wikis = [ch_lang, "en"] if ch_lang != "en" else ["en"]
 
-        headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
-        relevance_tokens = self._query_tokens(query, self.subject)
+        headers = {"User-Agent": "MoneyPrinterPro/1.0 (research use)"}
 
         for wiki in wikis:
             print(colored(f"    [Wikipedia/{wiki}] Searching: {query[:60]}...", "cyan"), flush=True)
@@ -1553,10 +2002,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     img_url = self._wikipedia_main_image(wiki, title, headers)
                     if not img_url or img_url in self._used_stock_urls:
                         continue
-                    # Optional relevance check using the article title.
-                    if relevance_tokens:
-                        if not (relevance_tokens & self._query_tokens(title)):
-                            continue
+                    # Strict relevance check: the article title must contain
+                    # at least one distinctive anchor token from the subject
+                    # or query's proper nouns.
+                    if not self._is_relevant(query, title):
+                        continue
                     try:
                         img_resp = requests.get(img_url, headers=headers, timeout=60)
                         if img_resp.status_code == 200 and len(img_resp.content) > 10000:
@@ -1619,8 +2069,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 variants.append(v)
                 seen.add(v.lower())
 
-        headers = {"User-Agent": "MoneyPrinterV2/1.0 (https://github.com/; research use)"}
-        relevance_tokens = self._query_tokens(query, self.subject)
+        headers = {"User-Agent": "MoneyPrinterPro/1.0 (https://github.com/; research use)"}
 
         for variant in variants:
             print(colored(f"    [Wikimedia] Searching: {variant[:60]}...", "cyan"), flush=True)
@@ -1653,11 +2102,11 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                         continue
                     if min(w, h) < 600:
                         continue
-                    # Relevance check: the file's title (e.g. "File:Hipparchus.jpg") should
-                    # share at least one significant token with the query/subject.
-                    if relevance_tokens:
-                        if not (relevance_tokens & self._query_tokens(title)):
-                            continue
+                    # Strict relevance check: file title (e.g. "File:Hipparchus.jpg")
+                    # must contain a distinctive anchor token from the subject
+                    # or query's proper nouns. Generic adjectives don't count.
+                    if not self._is_relevant(variant, title):
+                        continue
                     candidates.append(url)
 
                 if not candidates:
@@ -1691,7 +2140,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             query = self._extract_search_query(prompt)
 
         print(colored(f"    [Met Museum] Searching: {query[:60]}...", "cyan"), flush=True)
-        headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
+        headers = {"User-Agent": "MoneyPrinterPro/1.0 (research use)"}
 
         search_url = (
             "https://collectionapi.metmuseum.org/public/collection/v1/search"
@@ -1704,7 +2153,6 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             raise RuntimeError("Met Museum: no results")
 
         random.shuffle(obj_ids)
-        relevance_tokens = self._query_tokens(query, self.subject)
 
         for obj_id in obj_ids[:8]:
             try:
@@ -1717,16 +2165,16 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 img_url = obj.get("primaryImage") or ""
                 if not img_url or img_url in self._used_stock_urls:
                     continue
-                # Relevance check against the object's metadata.
+                # Strict relevance check against the object's metadata —
+                # generic culture/period words ("Roman", "Imperial") on their
+                # own do not satisfy _is_relevant.
                 metadata_blob = " ".join(
                     str(obj.get(k, "")) for k in
                     ("title", "culture", "period", "objectName", "department",
                      "classification", "artistDisplayName", "country", "region")
                 )
-                if relevance_tokens:
-                    blob_tokens = self._query_tokens(metadata_blob)
-                    if not (relevance_tokens & blob_tokens):
-                        continue
+                if not self._is_relevant(query, metadata_blob):
+                    continue
                 img_resp = requests.get(img_url, headers=headers, timeout=60)
                 if img_resp.status_code == 200 and len(img_resp.content) > 10000:
                     self._used_stock_urls.add(img_url)
@@ -1750,7 +2198,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             query = self._extract_search_query(prompt)
 
         print(colored(f"    [LoC] Searching: {query[:60]}...", "cyan"), flush=True)
-        headers = {"User-Agent": "MoneyPrinterV2/1.0 (research use)"}
+        headers = {"User-Agent": "MoneyPrinterPro/1.0 (research use)"}
         search_url = (
             f"https://www.loc.gov/photos/?q={urllib.parse.quote(query)}&fo=json&c=25"
         )
@@ -1760,7 +2208,6 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         if not results:
             raise RuntimeError("LoC: no results")
 
-        relevance_tokens = self._query_tokens(query, self.subject)
         candidates = []
         for r in results:
             urls = r.get("image_url") or []
@@ -1776,10 +2223,10 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 descr = " ".join(str(d) for d in descr)
             subj = r.get("subject") or []
             subj_text = " ".join(subj) if isinstance(subj, list) else str(subj)
-            if relevance_tokens:
-                blob_tokens = self._query_tokens(title, str(descr), subj_text)
-                if not (relevance_tokens & blob_tokens):
-                    continue
+            # Strict relevance: at least one distinctive anchor token must
+            # appear in title/description/subject metadata.
+            if not self._is_relevant(query, title, str(descr), subj_text):
+                continue
             candidates.append(img_url)
 
         if not candidates:
@@ -1796,6 +2243,251 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             except Exception:
                 continue
         raise RuntimeError("LoC: failed to download any candidate")
+
+    def _try_wikidata(self, prompt: str) -> bytes:
+        """
+        Wikidata-driven image lookup. The flow is:
+          1. Search Wikidata entities for the query in the channel language
+             (es/en) — returns a Q-id whose label most closely matches.
+          2. Fetch that entity's claims:
+             * P18 (image) → curated lead image used by every Wikipedia entry.
+             * P373 (Commons category) → curated category of related images
+               about that exact entity (statues, coins, frescoes, etc.).
+          3. Verify the entity's labels actually contain a distinctive anchor
+             token from the subject — protects against Q-id collisions
+             (e.g. "Nero" → musician vs. emperor).
+
+        Why this works better than fuzzy article search: Wikidata returns a
+        deterministic entity ID, not a free-text article match. The image we
+        get back is the canonical one Wikipedia uses everywhere — so for
+        "Nero", we get the bust from the Capitoline Museums, not a generic
+        Roman ruin.
+        """
+        import urllib.parse
+        import random
+
+        query = prompt.strip()
+        if len(query) > 60 or any(w in query.lower() for w in ("cinematic", "8k", "lighting", "photorealistic")):
+            query = self._extract_search_query(prompt)
+
+        lang_map = {"spanish": "es", "english": "en", "portuguese": "pt", "french": "fr",
+                    "german": "de", "italian": "it"}
+        ch_lang = lang_map.get((self._language or "").lower(), "en")
+        languages = [ch_lang, "en"] if ch_lang != "en" else ["en"]
+
+        headers = {"User-Agent": "MoneyPrinterPro/1.0 (research use)"}
+
+        for lang in languages:
+            print(colored(f"    [Wikidata/{lang}] Searching: {query[:60]}...", "cyan"), flush=True)
+            try:
+                search_url = (
+                    "https://www.wikidata.org/w/api.php"
+                    "?action=wbsearchentities&format=json&type=item"
+                    f"&language={lang}&uselang={lang}"
+                    f"&search={urllib.parse.quote(query)}&limit=8"
+                )
+                resp = requests.get(search_url, headers=headers, timeout=20)
+                resp.raise_for_status()
+                entities = resp.json().get("search") or []
+                if not entities:
+                    continue
+
+                for ent in entities[:5]:
+                    qid = ent.get("id") or ""
+                    label = ent.get("label") or ""
+                    desc = ent.get("description") or ""
+                    if not qid:
+                        continue
+
+                    # Anchor check: the entity label/description must contain a
+                    # distinctive token from the subject or the query's proper
+                    # nouns. Filters out unrelated Q-ids that happen to share
+                    # a generic word.
+                    if not self._is_relevant(query, label, desc):
+                        continue
+
+                    # Fetch the entity's claims.
+                    ent_url = f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json"
+                    try:
+                        ent_resp = requests.get(ent_url, headers=headers, timeout=20)
+                        ent_resp.raise_for_status()
+                        claims = (
+                            ent_resp.json()
+                            .get("entities", {})
+                            .get(qid, {})
+                            .get("claims", {})
+                        )
+                    except Exception:
+                        continue
+
+                    # Collect candidate Commons filenames.
+                    candidates: List[str] = []
+
+                    # P18 = primary image. Curated, single best image.
+                    p18 = claims.get("P18") or []
+                    for c in p18:
+                        try:
+                            fname = c["mainsnak"]["datavalue"]["value"]
+                            if fname:
+                                candidates.append(fname)
+                        except Exception:
+                            continue
+
+                    # P373 = Commons category. Pull a sample of files from it
+                    # so we get variety (busts, coins, paintings, etc.).
+                    p373 = claims.get("P373") or []
+                    for c in p373[:1]:
+                        try:
+                            cat_name = c["mainsnak"]["datavalue"]["value"]
+                        except Exception:
+                            continue
+                        if not cat_name:
+                            continue
+                        try:
+                            cat_url = (
+                                "https://commons.wikimedia.org/w/api.php"
+                                "?action=query&format=json&list=categorymembers"
+                                f"&cmtitle=Category:{urllib.parse.quote(cat_name)}"
+                                "&cmtype=file&cmlimit=20"
+                            )
+                            cat_resp = requests.get(cat_url, headers=headers, timeout=20)
+                            cat_resp.raise_for_status()
+                            members = (
+                                cat_resp.json()
+                                .get("query", {})
+                                .get("categorymembers", [])
+                            )
+                            for m in members:
+                                title = m.get("title") or ""
+                                if title.startswith("File:"):
+                                    fname = title[5:]
+                                    # Skip non-image / generic logos.
+                                    if any(fname.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
+                                        candidates.append(fname)
+                        except Exception:
+                            continue
+
+                    if not candidates:
+                        continue
+
+                    # Resolve filenames to full-resolution URLs via Special:FilePath.
+                    random.shuffle(candidates)
+                    for fname in candidates[:8]:
+                        img_url = (
+                            "https://commons.wikimedia.org/wiki/Special:FilePath/"
+                            + urllib.parse.quote(fname.replace(" ", "_"))
+                        )
+                        if img_url in self._used_stock_urls:
+                            continue
+                        try:
+                            img_resp = requests.get(img_url, headers=headers, timeout=60, allow_redirects=True)
+                            if img_resp.status_code == 200 and len(img_resp.content) > 10000:
+                                self._used_stock_urls.add(img_url)
+                                print(colored(f"OK ({label[:40]} / {qid})", "green"))
+                                return img_resp.content
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+
+        raise RuntimeError("Wikidata: no suitable entity image found")
+
+    def _try_europeana(self, prompt: str) -> bytes:
+        """
+        Europeana — aggregator of European cultural-heritage institutions
+        (museums, libraries, archives). Free API key required.
+        Coverage is similar in quality to Wikipedia for historical/art topics
+        and often surfaces material that isn't on Commons (museum scans,
+        digitized prints, period engravings).
+
+        Docs: https://pro.europeana.eu/page/intro
+        """
+        from config import get_europeana_api_key
+        api_key = get_europeana_api_key()
+        if not api_key:
+            raise RuntimeError("Europeana API key not configured")
+
+        import urllib.parse
+        import random
+
+        query = prompt.strip()
+        if len(query) > 60 or any(w in query.lower() for w in ("cinematic", "8k", "lighting", "photorealistic")):
+            query = self._extract_search_query(prompt)
+
+        print(colored(f"    [Europeana] Searching: {query[:60]}...", "cyan"), flush=True)
+        headers = {"User-Agent": "MoneyPrinterPro/1.0 (research use)"}
+
+        # `media=true` → only items with a real media URL we can download.
+        # `type=IMAGE` → drops audio/video/text. `reusability=open` would be
+        # safer for licensing but excludes too much; we keep results broad
+        # since the videos are not commercial in nature.
+        search_url = (
+            "https://api.europeana.eu/record/v2/search.json"
+            f"?wskey={urllib.parse.quote(api_key)}"
+            f"&query={urllib.parse.quote(query)}"
+            "&type=IMAGE&media=true&thumbnail=true&rows=20&profile=rich"
+        )
+        resp = requests.get(search_url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        items = resp.json().get("items") or []
+        if not items:
+            raise RuntimeError("Europeana: no results")
+
+        candidates = []
+        for it in items:
+            # Strict relevance: title + dcSubject + dcDescription must contain
+            # a distinctive anchor token. Each field can be a list of strings
+            # (Europeana returns localised variants), so flatten to a blob.
+            def _flat(field) -> str:
+                v = it.get(field)
+                if not v:
+                    return ""
+                if isinstance(v, list):
+                    return " ".join(str(x) for x in v)
+                return str(v)
+
+            blob = " ".join(_flat(f) for f in (
+                "title", "dcTitle", "dcSubject", "dcDescription",
+                "dcCreator", "edmConceptPrefLabel", "dataProvider",
+            ))
+            if not self._is_relevant(query, blob):
+                continue
+
+            # Prefer the full-resolution media; fall back to the preview.
+            img_url = ""
+            for k in ("edmIsShownBy", "edmIsShownAt", "edmPreview"):
+                v = it.get(k)
+                if isinstance(v, list) and v:
+                    img_url = str(v[0])
+                    break
+                if isinstance(v, str) and v:
+                    img_url = v
+                    break
+            if not img_url or img_url in self._used_stock_urls:
+                continue
+            candidates.append(img_url)
+
+        if not candidates:
+            raise RuntimeError("Europeana: no relevant images")
+
+        random.shuffle(candidates)
+        for img_url in candidates[:6]:
+            try:
+                img_resp = requests.get(img_url, headers=headers, timeout=60, allow_redirects=True)
+                # Europeana sometimes proxies through HTML pages; require a
+                # real image content-type AND a reasonable size.
+                ctype = img_resp.headers.get("Content-Type", "").lower()
+                if (
+                    img_resp.status_code == 200
+                    and len(img_resp.content) > 10000
+                    and ("image/" in ctype or img_url.lower().endswith((".jpg", ".jpeg", ".png", ".webp")))
+                ):
+                    self._used_stock_urls.add(img_url)
+                    print(colored("OK", "green"))
+                    return img_resp.content
+            except Exception:
+                continue
+        raise RuntimeError("Europeana: failed to download any candidate")
 
     def _try_picsum_stock(self, prompt: str) -> bytes:
         """Fallback: HD stock photo from Picsum (fast, always works)."""
@@ -1886,18 +2578,28 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         if image_mode == "photos":
             print(colored(f"\n  [Images] Fetching {len(prompts)} real photos...", "blue"))
             providers = [
-                # Tier 1: curated, attribution-friendly historical/educational sources
-                # (Wikipedia-style — factual, on-topic). Wikipedia article first because
-                # it returns the curated infobox image (more reliable than Commons file search).
+                # Tier 1: deterministic entity-based lookup. Wikidata maps the
+                # query to a concrete entity (Q-id) and returns the curated
+                # lead image (P18) plus a sample of files from its Commons
+                # category (P373). Far more precise than fuzzy article search,
+                # so it goes first.
+                ("Wikidata", self._try_wikidata, "stock"),
+                # Tier 2: fuzzy Wikipedia article search (handles redirects,
+                # spelling variants) → curated infobox image.
                 ("Wikipedia article", self._try_wikipedia_article, "stock"),
+                # Tier 3: free-text search across other curated heritage
+                # archives. Europeana aggregates European museums/libraries,
+                # Wikimedia Commons covers everything else, Met Museum and
+                # Library of Congress cover art and historical photos.
+                ("Europeana", self._try_europeana, "stock"),
                 ("Wikimedia Commons", self._try_wikimedia, "stock"),
                 ("Met Museum", self._try_met_museum, "stock"),
                 ("Library of Congress", self._try_loc, "stock"),
-                # Tier 2: modern stock (filtered by relevance) — useful for non-historical topics
+                # Tier 4: modern stock (filtered by relevance) — useful for
+                # non-historical topics where heritage archives are sparse.
                 ("Pexels", self._try_pexels, "stock"),
                 ("Pixabay", self._try_pixabay, "stock"),
-                # Tier 3: AI fallback when no real photo matches the topic
-                ("Nano Banana 2", self._try_nanobanana2, "ai"),
+                # Tier 5: AI fallback when no real photo matches the topic.
                 ("Leonardo AI", self._try_leonardo, "ai"),
                 ("Pollinations FLUX", self._try_pollinations, "ai"),
                 ("Pollinations turbo", self._try_pollinations_turbo, "ai"),
@@ -1905,16 +2607,14 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         else:
             print(colored(f"\n  [Images] Generating {len(prompts)} images...", "blue"))
             providers = [
-                # Tier 1: Nano Banana 2 (Gemini 3 image preview) — primary AI generator
-                ("Nano Banana 2", self._try_nanobanana2, "ai"),
-                # Tier 2: High-quality AI generator
+                # Tier 1: High-quality AI generator
                 ("Leonardo AI", self._try_leonardo, "ai"),
-                # Tier 3: Free unlimited AI generators (no daily limits)
+                # Tier 2: Free unlimited AI generators (no daily limits)
                 ("Pollinations FLUX", self._try_pollinations, "ai"),
                 ("Pollinations turbo", self._try_pollinations_turbo, "ai"),
                 ("Pollinations flux-realism", self._try_pollinations_realism, "ai"),
                 ("HuggingFace", self._try_huggingface, "ai"),
-                # Tier 4: Stock photos (reliable, always available)
+                # Tier 3: Stock photos (reliable, always available)
                 ("Pexels", self._try_pexels, "stock"),
                 ("Pixabay", self._try_pixabay, "stock"),
             ]
@@ -2636,6 +3336,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             info(f" => Generated Video: {path}")
 
         self.video_path = os.path.abspath(path)
+        self._persist_metadata_sidecar(is_long=False)
 
         return path
 
@@ -2879,6 +3580,7 @@ REGLAS DE ESTILO:
     * "el año mil cuatrocientos cincuenta y tres" (no "1453")
     * "el siglo dieciséis" (no "el siglo XVI" ni "el siglo 16")
     * "tres coma uno cuatro" (no "3,14")
+- AÑO vs TIEMPO TRANSCURRIDO — REGLA INVIOLABLE. Un año (fecha) y un lapso transcurrido NO son lo mismo. Para nombrar un año, di "el año mil cuatrocientos setenta y siete"; NUNCA digas "hace mil cuatrocientos setenta y siete años" para referirte al año 1477. "Hace X años" SOLO indica tiempo transcurrido y SE CALCULA: año actual ({datetime.now().year}) menos año del evento. Un evento del año 1477 ocurrió "hace {datetime.now().year - 1477} años", no "hace mil cuatrocientos setenta y siete años". En la duda, prefiere nombrar el año ("el año X") y evita "hace X años".
 - SOLO devuelve el guion completo con los 12 marcadores arriba listados. Sin preámbulo.
 """
         completion = self._clean_llm_script(self.generate_response(prompt))
@@ -2959,6 +3661,7 @@ REGLAS:
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
 - NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
+- AÑO vs TIEMPO TRANSCURRIDO — REGLA INVIOLABLE. Un año (fecha) y un lapso transcurrido NO son lo mismo. Para nombrar un año, di "el año mil cuatrocientos setenta y siete"; NUNCA digas "hace mil cuatrocientos setenta y siete años" para referirte al año 1477. "Hace X años" SOLO indica tiempo transcurrido y SE CALCULA: año actual ({datetime.now().year}) menos año del evento. Un evento del año 1477 ocurrió "hace {datetime.now().year - 1477} años", no "hace mil cuatrocientos setenta y siete años". En la duda, prefiere nombrar el año ("el año X") y evita "hace X años".
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [INTRO]
 """
         intro = _ensure_marker(_ask_section(intro_prompt, min_words=80), "[INTRO]")
@@ -2986,6 +3689,7 @@ Escribe SOLO la SECCIÓN {i}:
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
 - NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
+- AÑO vs TIEMPO TRANSCURRIDO — REGLA INVIOLABLE. Un año (fecha) y un lapso transcurrido NO son lo mismo. Para nombrar un año, di "el año mil cuatrocientos setenta y siete"; NUNCA digas "hace mil cuatrocientos setenta y siete años" para referirte al año 1477. "Hace X años" SOLO indica tiempo transcurrido y SE CALCULA: año actual ({datetime.now().year}) menos año del evento. Un evento del año 1477 ocurrió "hace {datetime.now().year - 1477} años", no "hace mil cuatrocientos setenta y siete años". En la duda, prefiere nombrar el año ("el año X") y evita "hace X años".
 - Devuelve SOLO el texto de la sección, precedido EXACTAMENTE por una línea con: [SECTION {i}: <título breve descriptivo>]
 """
             section = _ensure_marker(_ask_section(section_prompt, min_words=180), f"[SECTION {i}: parte {i}]")
@@ -3010,6 +3714,7 @@ Escribe SOLO el CIERRE:
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
 - NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453").
+- AÑO vs TIEMPO TRANSCURRIDO — REGLA INVIOLABLE. Un año (fecha) y un lapso transcurrido NO son lo mismo. Para nombrar un año, di "el año mil cuatrocientos setenta y siete"; NUNCA digas "hace mil cuatrocientos setenta y siete años" para referirte al año 1477. "Hace X años" SOLO indica tiempo transcurrido y SE CALCULA: año actual ({datetime.now().year}) menos año del evento. Un evento del año 1477 ocurrió "hace {datetime.now().year - 1477} años", no "hace mil cuatrocientos setenta y siete años". En la duda, prefiere nombrar el año ("el año X") y evita "hace X años".
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [CLOSING]
 """
         closing = _ensure_marker(_ask_section(closing_prompt, min_words=80), "[CLOSING]")
@@ -3224,13 +3929,17 @@ Return ONLY a JSON object with two fields:
 - "words": a CLICKBAIT TEASER PHRASE in {self.language}, ALL UPPERCASE, for the thumbnail overlay. ABSOLUTELY CRITICAL RULES:
   * Length: 3 to 6 words forming a COMPLETE PUNCHY PHRASE. NEVER return a single word.
   * It must SOUND like a YouTube clickbait teaser — provoke curiosity, hint at a revelation, or pose a question fragment. It is NOT a label.
-  * It must be CLEARLY tied to the video's title or topic — pick the most charged real words from the title/topic and arrange them.
+  * It must be CLEARLY tied to the video's title or topic — pick the most charged, SPECIFIC words: proper names, places, dates, concrete actions, key objects.
   * EVERY WORD must already appear (literally or as a clear root form) in the VIDEO TITLE or TOPIC above. DO NOT INVENT WORDS. Each word must be a correctly-spelled real word in {self.language}.
-  * Good examples (assuming the title contained those words):
-      Title "El patrón OCULTO de la historia" → "EL PATRÓN OCULTO DE LA HISTORIA" or "EL PATRÓN QUE OCULTARON".
-      Title "¿Por qué COLAPSAN las civilizaciones?" → "POR QUÉ COLAPSAN TODAS" or "EL FIN DE LAS CIVILIZACIONES".
-      Title "El SECRETO de Anubis" → "EL SECRETO DE ANUBIS" or "ANUBIS Y SU SECRETO".
-  * BAD examples: "SECRETO" (single word, no teaser), "NADIE LO SABE" (cliché), "INCREÍBLE" (generic).
+  * VARY THE ANGLE between videos — pick the most specific hook from THIS topic. Available patterns (use whichever fits the topic best):
+      - Proper-noun reveal: "ANUBIS Y EL JUICIO FINAL", "EL DIARIO DE TUTANKAMÓN".
+      - Date/place anchor: "1959, EL PASO DYATLOV", "LA NOCHE DEL MARY CELESTE".
+      - Question fragment: "POR QUÉ DESAPARECIERON TODOS", "QUIÉN ENCONTRÓ EL CUERPO".
+      - Concrete action: "PLANTÓ UN BOSQUE POR ELLA", "CRUZARON LOS ANDES A PIE".
+      - Revelation hook: "LO QUE ENCONTRARON ALLÍ", "NADIE VOLVIÓ A VERLOS".
+      - Contrast/twist: "ERA UN ANCIANO CIEGO", "EL ÚLTIMO MENSAJE DE OLOF".
+  * DO NOT default to "EL SECRETO DE..." or "EL MISTERIO DE..." just because they sound clickbaity. Use those openings ONLY if the video title itself literally contains "SECRETO" or "MISTERIO". Otherwise pick a more specific angle from the patterns above.
+  * BAD examples: "SECRETO" (single word, no teaser), "NADIE LO SABE" (cliché), "INCREÍBLE" (generic), "EL SECRETO DE X" when the title doesn't mention a secret (lazy default).
   * AVOID these overused clichés entirely: "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR", "INCREÍBLE", "JAMÁS LO CREERÁS".
 
 Return ONLY the JSON. No markdown, no explanation."""
@@ -3255,11 +3964,28 @@ Return ONLY the JSON. No markdown, no explanation."""
                 "INCREÍBLE", "INCREIBLE", "JAMÁS LO CREERÁS", "JAMAS LO CREERAS",
             }
 
+            # The LLM defaults to "EL SECRETO DE ..." even when the topic has
+            # nothing to do with a secret. Allow that opening only when the
+            # source title itself mentions the word — otherwise force variety.
+            title_topic_norm = _norm(title_topic_text)
+            title_mentions_secret = "secreto" in title_topic_norm
+            title_mentions_mystery = ("misterio" in title_topic_norm
+                                      or "misterios" in title_topic_norm)
+
             def _validate_overlay(candidate: str) -> bool:
-                """Reject if too short, banned, or any content word is hallucinated."""
+                """Reject if too short, banned, lazy-default, or hallucinated."""
                 if not candidate:
                     return False
                 if candidate in BANNED_OVERLAYS:
+                    return False
+                norm_cand = _norm(candidate)
+                if not title_mentions_secret and (
+                    norm_cand.startswith("el secreto") or norm_cand.startswith("secreto")
+                ):
+                    return False
+                if not title_mentions_mystery and (
+                    norm_cand.startswith("el misterio") or norm_cand.startswith("misterio")
+                ):
                     return False
                 STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
                         "que", "por", "para", "con", "en", "a", "su", "sus", "lo"}
@@ -3276,7 +4002,7 @@ Return ONLY the JSON. No markdown, no explanation."""
                 return True
 
             if overlay_words and not _validate_overlay(overlay_words):
-                warning(f"Thumbnail: LLM overlay '{overlay_words}' rejected (hallucinated or banned).")
+                warning(f"Thumbnail: LLM overlay '{overlay_words}' rejected (hallucinated, banned, or lazy default).")
                 overlay_words = ""
 
         if not visual_prompt:
@@ -3335,17 +4061,14 @@ Return ONLY the JSON. No markdown, no explanation."""
             overlay_words = " ".join(topic_words).upper() if topic_words else "DESCUBRE LA VERDAD"
             warning(f"Thumbnail: using topic-derived overlay text: {overlay_words}")
 
-        # Step 2: render the background image (Nano Banana 2 first, then Leonardo, then Pollinations).
-        # Apply the same per-channel / civilization-detected art style that
-        # generate_long_images uses, so the thumbnail matches the video's look
-        # (ukiyo-e woodblock for feudal Japan, Renaissance painting for Florence, etc.).
+        # Step 2: render the background image (Leonardo AI first, then Pollinations).
+        # Append the channel's image_style suffix so the thumbnail matches the video's look.
         styled_visual_prompt = self._apply_channel_style(visual_prompt)
         if get_verbose() and styled_visual_prompt != visual_prompt:
             info(" => Thumbnail: applied channel art style")
 
         bg_bytes = None
         for name, fn in (
-            ("Nano Banana 2 16:9", self._try_nanobanana2_landscape),
             ("Leonardo AI", self._try_leonardo_landscape),
             ("Pollinations FLUX 16:9", self._try_pollinations_landscape),
         ):
@@ -3504,24 +4227,54 @@ Return ONLY the JSON. No markdown, no explanation."""
             f'\nSECTION {i+1}: "{sec}"\n' for i, sec in enumerate(sections)
         )
 
-        prompt = f"""Generate exactly {n_prompts} image prompts for a long-form documentary video.
+        # Era anchor — names the historical period inside the prompt so the LLM
+        # doesn't drift into modern visuals on abstract script lines.
+        civ_info = self._get_civilization_info()
+        era_clause = ""
+        if civ_info:
+            era_clause = (
+                f"\n\n=== HISTORICAL ERA — NON-NEGOTIABLE ===\n"
+                f"This documentary is set in: **{civ_info['name']}**.\n"
+                f"Period visual anchors: {civ_info['era_brief']}.\n"
+                f"FORBIDDEN: modern military uniforms, industrial-era clothing, firearms, tanks, cars, "
+                f"modern architecture, electricity, anachronistic objects of any kind.\n"
+                f"REQUIRED in every prompt with a person: at least 2 specific period clothing/armor terms "
+                f"from the era markers above.\n"
+                f"=========================================="
+            )
 
-TOPIC: {self.subject}
+        prompt = f"""Task: write {n_prompts} image prompts for a long-form documentary about "{self.subject}".{era_clause}
 
-The narration is divided into {n_prompts} sections. Each image must illustrate ITS section.
+You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section talks about "the senators debating in the curia at noon", the image is exactly that.
+
+ABSOLUTE RULES (every prompt):
+1. ENGLISH ONLY — NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns naturally (e.g. "Platón" -> "Plato", "Alejandro Magno" -> "Alexander the Great"). NO Spanish words anywhere in the output.
+2. SCENE FIDELITY. Open with a concrete action (subject + verb) drawn from the section text. Whatever the section is talking about, that is what the image shows.
+3. NAMED CHARACTER IDENTITY. When the script names a real historical person, do NOT just write their name — describe them physically (age, hair, beard, build) so the image generator can render the correct person. Examples: Plato -> "an old Greek philosopher with a long white beard, balding head, in white himation"; Caesar -> "a stern middle-aged Roman general, short curly hair, clean-shaven, in purple-bordered toga"; Cleopatra -> "young Egyptian queen, dark kohl-lined eyes, straight black hair with gold beaded braids, white linen pleated dress, gold collar". The physical description MUST appear every time they're shown.
+4. PERIOD ACCURACY — STRICT. {("Era is **" + civ_info['name'] + "**. Every prompt with a person MUST name at least 2 specific period clothing/armor items from this era. No modern military uniforms, no firearms, no industrial-era visuals — ever. ") if civ_info else ""}If a person appears, describe their clothing exactly as it would be in the right historical period/place/culture (fabric, cut, color, footwear, headwear). Same for architecture, weapons, tools, transport, and 2-3 supporting objects. If the section names a real person, place or event, use that proper noun.
+5. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing — but never the level of realism.
+6. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later — your job is content only.
+7. LENGTH. 40-70 English words per prompt. No camera or lens jargon.
+
+Examples of GOOD scene-only prompts:
+- "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his Thirteenth Legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces."
+- "A samurai in dark lacquered do armor stands mid-strike with his katana in a wooden dojo, paper shoji screens around him, morning light falling on tatami mats, wooden practice swords stacked against a beam, sweat on his temple."
+- "A Byzantine sailor on a dromon warship leans over a bronze siphon and ignites a jet of Greek fire toward an enemy galley, flames arcing over the dark sea, gold-trimmed sails, oars mid-stroke, the walls of Constantinople in the distance."
+
+Examples of BAD prompts (DO NOT WRITE THESE):
+- "An ancient Roman scene." (too vague, no action)
+- "Stylized cartoon of Caesar crossing a river." (forbidden art-style word)
+- "A historical illustration of a samurai." (forbidden art-style word, no action)
+- "Symbolic image of Byzantine power." (no concrete moment)
+
 {sections_text}
-CRITICAL RULES:
-- Image N MUST illustrate SECTION N. Read the section text and describe the LITERAL scene, person, object or event it talks about.
-- Every prompt must be visually unmistakable as the TOPIC. Name the actual SPECIFIC people, places, objects, era, clothing, architecture, or symbols from the section text. Use proper nouns when relevant.
-- Be CONCRETE: describe exactly what appears (subjects, action, setting, period-accurate clothing/architecture/objects, atmosphere and colors).
-- 30-60 words per prompt.
-- All images are 16:9 landscape. Vary scene composition (wide vistas, close-up details, group scenes, intimate moments) and atmosphere (dawn, dusk, candlelit, overcast, etc.) but DO NOT change the subject matter to fit a style.
-- DO NOT specify camera angles, lenses, or any photography/film terminology. The channel will impose its own visual style at render time, so describe the SCENE CONTENT only.
-- ABSOLUTELY FORBIDDEN: cosmic / space / nebula imagery (unless the topic is astronomy), microscopic / scientific diagrams (unless the topic is biology/chemistry), futuristic holographic / sci-fi visuals (unless the topic is futurism), abstract geometric / fractal patterns, generic "concept" or "metaphor" visualizations. NEVER swap topical content for these styles.
-- ALSO FORBIDDEN words: visualization, concept, essence, metaphor, abstract, symbolic, interpretation, photograph, photorealistic, photo-realistic, cinematic, camera, lens, shot, close-up, wide-angle, aerial, bokeh, 8K, 4K, HD, render.
-- Write in English.
+Forbidden words (art-style / camera jargon): cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, ukiyo-e, sketch.
+Forbidden words (multi-image triggers — these make image generators output collages instead of one image): series, sequence, scenes (plural), panels, panel, storyboard, comic strip, montage, collage, grid, split screen, frames, multiple, diptych, triptych, before-and-after, side by side.
+Also forbidden unless the topic itself demands it: cosmic/space/nebula imagery, microscopic diagrams, futuristic/sci-fi visuals.
 
-Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
+Return ONLY a JSON array of {n_prompts} strings (one prompt per section, in order). Example format:
+["scene 1 description...", "scene 2 description...", ...]
+No markdown. No explanation. Just the JSON array."""
 
         completion = (
             str(self.generate_response(prompt))
@@ -3530,16 +4283,31 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             .strip()
         )
 
+        def _extract_prompts_long(parsed_value):
+            out = []
+            if isinstance(parsed_value, list):
+                for item in parsed_value:
+                    if isinstance(item, str):
+                        out.append(item)
+                    elif isinstance(item, dict):
+                        p = item.get("prompt") or item.get("image_prompt") or ""
+                        moment = item.get("moment") or item.get("key_visual_moment") or ""
+                        if p:
+                            out.append(str(p))
+                        elif moment:
+                            out.append(str(moment))
+            return out
+
         image_prompts = []
         try:
             parsed = json.loads(completion)
-            if isinstance(parsed, list):
-                image_prompts = [str(p) for p in parsed if isinstance(p, str)]
+            image_prompts = _extract_prompts_long(parsed)
         except Exception:
             match = re.search(r'\[.*\]', completion, re.DOTALL)
             if match:
                 try:
-                    image_prompts = json.loads(match.group())
+                    parsed = json.loads(match.group())
+                    image_prompts = _extract_prompts_long(parsed)
                 except Exception:
                     pass
 
@@ -3588,12 +4356,21 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             "Content-Type": "application/json",
         }
         payload = {
-            "prompt": prompt[:1000],
-            "modelId": "b24e16ff-06e3-43eb-8d33-4416c2d75876",  # Leonardo Lightning XL
+            "prompt": prompt[:1500],
+            "modelId": "de7d3faf-762f-48e0-b3b7-9d0ac3a3fcf3",  # Leonardo Phoenix 1.0
             "width": 1024,
             "height": 576,
             "num_images": 1,
+            "contrast": 3.5,
+            "alchemy": True,
         }
+        style_text = (self._image_style or "").lower()
+        if any(k in style_text for k in ("cartoon", "anime", "illustration", "animated", "cel shading", "hand-drawn")):
+            payload["presetStyle"] = "ILLUSTRATION"
+        elif any(k in style_text for k in ("cinematic", "film", "movie")):
+            payload["presetStyle"] = "CINEMATIC"
+        elif self._image_style:
+            payload["presetStyle"] = "DYNAMIC"
         resp = requests.post(
             "https://cloud.leonardo.ai/api/rest/v1/generations",
             headers=headers, json=payload, timeout=30,
@@ -3640,7 +4417,6 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             styled_prompt = self._apply_channel_style(prompt)
 
             for name, fn in [
-                ("Nano Banana 2 16:9", lambda p: self._try_nanobanana2_landscape(p)),
                 ("Leonardo AI", lambda p: self._try_leonardo_landscape(p)),
                 ("Pollinations.ai FLUX", lambda p: self._try_pollinations_landscape(p)),
                 ("HuggingFace", self._try_huggingface),
@@ -4150,6 +4926,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         video_path = self.combine_long()
 
         self.video_path = os.path.abspath(video_path)
+        self._persist_metadata_sidecar(is_long=True)
         success(f"\n=> Long video generated: {video_path}")
 
         return video_path
@@ -4161,6 +4938,8 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         Returns True if any custom-thumbnail signal is detected.
         """
         try:
+            # Primary signal: scoped <img> elements inside the thumbnail editor whose
+            # src is NOT an i.ytimg.com auto-generated URL.
             imgs = driver.find_elements(
                 By.CSS_SELECTOR,
                 "ytcp-thumbnails-compact-editor img, "
@@ -4682,6 +5461,49 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             except Exception:
                 pass
 
+    def _robust_click(self, driver, element, label: str = "") -> bool:
+        """
+        Click an element in YouTube Studio in a way that survives the two
+        failure modes we keep seeing:
+
+          (a) ElementClickInterceptedException — another node (hashtag tooltip,
+              tutorial overlay, sticky header) sits on top of the target. The
+              standard `.click()` aims at the visual coordinates and hits the
+              overlay instead.
+          (b) ElementNotInteractableException — the element is in the DOM but
+              hasn't been scrolled into view yet (long Details panel, the
+              visibility radios live way below the fold).
+
+        Strategy: scroll the element to the center of the viewport, try a
+        normal click, and if that fails for any reason fall back to a JS click
+        which dispatches the event directly on the node and ignores overlays.
+        Returns True on success, False if both attempts blow up.
+        """
+        try:
+            driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center', inline: 'center'});",
+                element,
+            )
+            time.sleep(0.4)
+        except Exception:
+            pass
+        try:
+            element.click()
+            return True
+        except Exception as e:
+            if get_verbose() and label:
+                warning(
+                    f"\t=> {label}: standard click intercepted ({type(e).__name__}); "
+                    "falling back to JS click."
+                )
+            try:
+                driver.execute_script("arguments[0].click();", element)
+                return True
+            except Exception as e2:
+                if label:
+                    warning(f"\t=> {label}: JS click also failed: {str(e2)[:160]}")
+                return False
+
     def upload_video(self) -> bool:
         """
         Uploads the video to YouTube via Selenium.
@@ -4796,14 +5618,14 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             try:
                 if not get_is_for_kids():
                     not_for_kids = wait.until(
-                        EC.element_to_be_clickable((By.NAME, YOUTUBE_NOT_MADE_FOR_KIDS_NAME))
+                        EC.presence_of_element_located((By.NAME, YOUTUBE_NOT_MADE_FOR_KIDS_NAME))
                     )
-                    not_for_kids.click()
+                    self._robust_click(driver, not_for_kids, "kids radio (not for kids)")
                 else:
                     for_kids = wait.until(
-                        EC.element_to_be_clickable((By.NAME, YOUTUBE_MADE_FOR_KIDS_NAME))
+                        EC.presence_of_element_located((By.NAME, YOUTUBE_MADE_FOR_KIDS_NAME))
                     )
-                    for_kids.click()
+                    self._robust_click(driver, for_kids, "kids radio (made for kids)")
                 time.sleep(1)
             except Exception as e:
                 warning(f"Could not set kids option: {e}")
@@ -4934,9 +5756,10 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                     info(f"\t=> Clicking Next (step {step_num + 1}/3)...")
                 try:
                     next_btn = wait.until(
-                        EC.element_to_be_clickable((By.ID, YOUTUBE_NEXT_BUTTON_ID))
+                        EC.presence_of_element_located((By.ID, YOUTUBE_NEXT_BUTTON_ID))
                     )
-                    next_btn.click()
+                    if not self._robust_click(driver, next_btn, f"Next step {step_num + 1}/3"):
+                        warning(f"Next button step {step_num + 1} could not be clicked.")
                     time.sleep(2)
                 except Exception as e:
                     warning(f"Next button step {step_num + 1} failed: {e}")
@@ -4949,9 +5772,9 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             try:
                 radio_buttons = driver.find_elements(By.XPATH, YOUTUBE_RADIO_BUTTON_XPATH)
                 if len(radio_buttons) >= 3:
-                    radio_buttons[2].click()  # 0=Private, 1=Unlisted, 2=Public — but YT may reorder
+                    self._robust_click(driver, radio_buttons[2], "visibility radio")  # 0=Private, 1=Unlisted, 2=Public
                 elif len(radio_buttons) >= 2:
-                    radio_buttons[1].click()  # Try unlisted
+                    self._robust_click(driver, radio_buttons[1], "visibility radio (fallback idx 1)")
                 time.sleep(1)
             except Exception as e:
                 warning(f"Could not set visibility: {e}")
@@ -4962,9 +5785,10 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
             try:
                 done_btn = wait.until(
-                    EC.element_to_be_clickable((By.ID, YOUTUBE_DONE_BUTTON_ID))
+                    EC.presence_of_element_located((By.ID, YOUTUBE_DONE_BUTTON_ID))
                 )
-                done_btn.click()
+                if not self._robust_click(driver, done_btn, "Done button"):
+                    warning("Done button could not be clicked.")
             except Exception as e:
                 warning(f"Done button failed: {e}")
 
@@ -4980,6 +5804,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 "url": "uploading...",
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "thumbnail_path": getattr(self, "thumbnail_path", "") or "",
+                "is_short": not is_long_video,
             }
             try:
                 self.add_video(cache_entry)

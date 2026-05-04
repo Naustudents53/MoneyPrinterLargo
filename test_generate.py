@@ -1,5 +1,5 @@
 """
-MoneyPrinterV2 - YouTube Short Generator (standalone test)
+MoneyPrinterPro - YouTube Short Generator (standalone test)
 Canal: Mind Glitch | Nicho: Science & Mystery Facts
 Voz: Carlos (es-MX) | 100% FREE tools
 """
@@ -28,7 +28,7 @@ set_llm_provider("pollinations")
 select_model("openai")
 
 print("=" * 55)
-print("  MoneyPrinterV2 - YouTube Short Generator")
+print("  MoneyPrinterPro - YouTube Short Generator")
 print("  Canal: Mind Glitch | Voz: Carlos (es-MX)")
 print("  Imagenes: AI Horde (paralelo) + fallbacks")
 print("=" * 55)

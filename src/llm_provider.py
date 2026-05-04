@@ -1,7 +1,7 @@
 import requests
 from contextlib import contextmanager
 
-from config import get_ollama_base_url, get_llm_provider, get_pollinations_text_model, get_nanobanana2_api_key, get_gemini_model, get_gemini_models
+from config import get_ollama_base_url, get_llm_provider, get_pollinations_text_model, get_gemini_api_key, get_gemini_model, get_gemini_models
 
 _selected_model: str | None = None
 _llm_provider: str | None = None
@@ -230,8 +230,8 @@ def generate_text(prompt: str, model_name: str = None) -> str:
     if provider == "gemini":
         providers = [
             ("gemini", lambda: _generate_text_gemini(prompt)),
-            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
             ("ollama", lambda: _generate_text_ollama(prompt, None)),
+            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
         ]
     elif provider == "pollinations":
         providers = [
@@ -379,9 +379,9 @@ def _generate_text_ollama(prompt: str, model: str = None) -> str:
 
 def _generate_text_gemini(prompt: str) -> str:
     """Generate text using Google Gemini API (free tier), cascading through models."""
-    api_key = get_nanobanana2_api_key()
+    api_key = get_gemini_api_key()
     if not api_key:
-        raise RuntimeError("No Gemini API key configured (nanobanana2_api_key)")
+        raise RuntimeError("No Gemini API key configured")
 
     models = get_gemini_models()
 
