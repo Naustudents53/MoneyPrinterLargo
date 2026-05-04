@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Loader2, Sparkles, Rocket, ChevronDown, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getSeries, getAccounts, getVoices, getPresets, createPreset, createJob } from "@/lib/api";
+import { useProductionStore } from "@/stores/production";
 
 interface ConfigStageProps {
   onComplete?: () => void;
@@ -15,7 +17,7 @@ interface SeriesItem {
 }
 
 interface AccountItem {
-  uuid: string;
+  id: string;
   nickname: string;
 }
 
@@ -48,16 +50,19 @@ export function ConfigStage({ onComplete }: ConfigStageProps) {
   useEffect(() => {
     let mounted = true;
     Promise.all([
-      fetch("http://localhost:8000/api/config/series").catch(() => null),
-      fetch("http://localhost:8000/api/accounts").catch(() => null),
-      fetch("http://localhost:8000/api/config/voices").catch(() => null),
-      fetch("http://localhost:8000/api/presets").catch(() => null),
-    ]).then(async ([seriesRes, accountsRes, voicesRes, presetsRes]) => {
+      getSeries().catch(() => [] as SeriesItem[]),
+      getAccounts().catch(() => [] as AccountItem[]),
+      getVoices().catch(() => ({ voices: [] as VoiceItem[], default: "" })),
+      getPresets().catch(() => [] as PresetItem[]),
+    ]).then(([series, accountsData, voicesData, presets]) => {
       if (!mounted) return;
-      if (seriesRes?.ok) setSeriesList(await seriesRes.json());
-      if (accountsRes?.ok) setAccounts(await accountsRes.json());
-      if (voicesRes?.ok) setVoices(await voicesRes.json());
-      if (presetsRes?.ok) setPresets(await presetsRes.json());
+      if (Array.isArray(series)) setSeriesList(series as SeriesItem[]);
+      if (Array.isArray(accountsData)) setAccounts(accountsData as AccountItem[]);
+      if (voicesData && Array.isArray(voicesData.voices)) {
+        setVoices(voicesData.voices as VoiceItem[]);
+        if (voicesData.default) setSelectedVoice(voicesData.default);
+      }
+      if (Array.isArray(presets)) setPresets(presets as PresetItem[]);
     }).catch(() => {
       if (mounted) setError("Some configuration data failed to load.");
     }).finally(() => {
@@ -66,28 +71,29 @@ export function ConfigStage({ onComplete }: ConfigStageProps) {
     return () => { mounted = false; };
   }, []);
 
+  const production = useProductionStore((s) =>
+    s.productions.find((p) => p.id === s.currentProductionId)
+  );
+  const prodType = production?.config.type || "short";
+
   const handleSavePreset = useCallback(async () => {
     try {
       setSavingPreset(true);
-      await fetch("http://localhost:8000/api/presets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: `Preset ${presets.length + 1}`,
-          topic,
-          series: selectedSeries,
-          account: selectedAccount,
-          voice: selectedVoice,
-          imageStyle,
-          imageMode,
-        }),
+      await createPreset({
+        name: `Preset ${presets.length + 1}`,
+        config: {
+          type: prodType,
+          voice_id: selectedVoice,
+          image_style: imageStyle,
+          image_mode: imageMode === "AI" ? "ai" : "photos",
+        },
       });
     } catch {
       // silent fail for now
     } finally {
       setSavingPreset(false);
     }
-  }, [presets.length, topic, selectedSeries, selectedAccount, selectedVoice, imageStyle, imageMode]);
+  }, [presets.length, selectedVoice, imageStyle, imageMode, prodType]);
 
   if (loading) {
     return (
@@ -153,7 +159,7 @@ export function ConfigStage({ onComplete }: ConfigStageProps) {
           >
             <option value="">Select account</option>
             {accounts.map((a) => (
-              <option key={a.uuid} value={a.uuid}>{a.nickname}</option>
+              <option key={a.id} value={a.id}>{a.nickname}</option>
             ))}
           </select>
           <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" size={16} />
@@ -252,7 +258,30 @@ export function ConfigStage({ onComplete }: ConfigStageProps) {
             "flex items-center gap-2 rounded-xl bg-accent-purple px-5 py-2.5 text-sm font-medium text-white shadow-glow-purple transition-colors",
             "hover:bg-accent-purple-deep"
           )}
-          onClick={onComplete}
+          onClick={async () => {
+            useProductionStore.getState().updateConfig({
+              topic,
+              seriesId: selectedSeries,
+              accountId: selectedAccount,
+              voiceId: selectedVoice,
+              imageStyle,
+              imageMode: imageMode === "AI" ? "ai" : "photos",
+              presetId: selectedPreset,
+            });
+            useProductionStore.getState().clearArtifacts();
+            const { job_id } = await createJob({
+              type: prodType,
+              topic,
+              series_id: selectedSeries,
+              account_id: selectedAccount,
+              voice_id: selectedVoice,
+              image_mode: imageMode === "AI" ? "ai" : "photos",
+              image_style: imageStyle,
+              preset_id: selectedPreset,
+            });
+            useProductionStore.getState().setJobId(job_id);
+            onComplete?.();
+          }}
           whileHover={{ scale: 1.03 }}
           whileTap={{ scale: 0.97 }}
         >

@@ -1,23 +1,56 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { useEffect, useState } from "react";
 import { useUiStore } from "@/stores/ui";
 import { useProjectStore } from "@/stores/project";
-import { Film, Settings, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { Film, Settings, ChevronLeft, ChevronRight, Plus, Activity } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { listJobs } from "@/lib/api";
 
 const NAV_ITEMS = [
   { id: "studio", icon: Film, label: "Studio", href: "/" },
   { id: "shorts", icon: Film, label: "Shorts", href: "/shorts" },
   { id: "long", icon: Film, label: "Long", href: "/long" },
+  { id: "tasks", icon: Activity, label: "Tasks", href: "/tasks" },
   { id: "settings", icon: Settings, label: "Settings", href: "/settings" },
 ];
 
 export function Sidebar() {
   const { sidebarExpanded, toggleSidebar } = useUiStore();
   const { currentProjectId, projects, setCurrentProject, createProject } = useProjectStore();
+  // Live count of jobs that need user attention (running, uploading, awaiting
+  // a gate, or queued). Polled every 4s so the badge in the Tasks nav entry
+  // stays accurate even when the user isn't on the /tasks page.
+  const [activeCount, setActiveCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      try {
+        const data = await listJobs();
+        if (cancelled) return;
+        const count = data.jobs.filter((j) =>
+          j.status === "running" ||
+          j.status === "uploading" ||
+          j.status === "queued" ||
+          !!j.awaiting
+        ).length;
+        setActiveCount(count);
+      } catch {
+        // silent — sidebar shouldn't error if API is down
+      } finally {
+        if (!cancelled) timer = setTimeout(tick, 4000);
+      }
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
 
   return (
     <motion.aside
@@ -111,6 +144,19 @@ export function Sidebar() {
                 >
                   {item.label}
                 </motion.span>
+                {item.id === "tasks" && activeCount > 0 && (
+                  <span
+                    className={cn(
+                      "ml-auto inline-flex items-center justify-center rounded-full bg-accent-purple text-white font-semibold",
+                      sidebarExpanded
+                        ? "min-w-[20px] h-5 px-1.5 text-[10px]"
+                        : "absolute top-1 right-1 w-2 h-2 text-[0px]"
+                    )}
+                    style={{ boxShadow: "0 0 8px rgba(124,58,237,0.5)" }}
+                  >
+                    {sidebarExpanded ? activeCount : ""}
+                  </span>
+                )}
                 {item.id === "studio" && (
                   <motion.div
                     className="absolute left-0 w-[2px] h-5 rounded-r-full"

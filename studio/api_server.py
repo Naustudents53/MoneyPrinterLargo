@@ -8,6 +8,8 @@ Provides:
   - Preset CRUD
   - Job lifecycle + SSE streaming for async pipeline steps
   - TTS preview endpoint
+  - Artifact serving (script, prompts, metadata, images, thumbnail, audio, video)
+  - Upload endpoint (spawns Selenium upload on a cached instance)
 """
 
 import json
@@ -19,21 +21,46 @@ import threading
 import random
 from typing import Any
 
+# ---------------------------------------------------------------------------
+# 1. sys.path fix — module-level
+#
+# `config.ROOT_DIR` is computed as `os.path.dirname(sys.path[0])` at import
+# time. If we run uvicorn from `studio/`, sys.path[0] would be `studio/`
+# and ROOT_DIR would resolve to the parent of the project — one level too
+# high — so `cache.get_youtube_cache_path()` would point at a non-existent
+# `.mp/` dir.
+#
+# We replace sys.path[0] with `<project>/src` so `config.ROOT_DIR =
+# dirname(sys.path[0])` lands on the actual project root. We also keep
+# `studio/` reachable so this module can still `from runners import ...`.
+# ---------------------------------------------------------------------------
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC_DIR = os.path.join(ROOT_DIR, "src")
+STUDIO_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path[0] = SRC_DIR
+for p in (ROOT_DIR, STUDIO_DIR):
+    if p not in sys.path:
+        sys.path.insert(1, p)
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 
 app = FastAPI(title="MoneyPrinter Studio API")
 
+# 4. Update CORS origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_DIR = os.path.join(ROOT_DIR, ".mp")
 CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 PRESETS_PATH = os.path.join(CACHE_DIR, "presets.json")
@@ -67,7 +94,7 @@ def save_json(path, data):
 
 
 # ---------------------------------------------------------------------------
-# job manager (in-memory)
+# 9. Extend JobManager
 # ---------------------------------------------------------------------------
 
 class JobManager:
@@ -77,6 +104,21 @@ class JobManager:
         self._clients = {}
         self._status = {}
         self._results = {}
+        self._instances = {}  # job_id -> YouTube/MovieSummary instance
+        # Per-job gate state. The runner thread blocks on `_gates[job_id]`
+        # at editable stages (script / prompts / thumbnail / narration);
+        # the user releases it via POST /api/jobs/{job_id}/continue.
+        self._gates = {}        # job_id -> threading.Event
+        self._gate_stage = {}   # job_id -> str (stage name currently waiting)
+        self._gate_payload = {} # job_id -> dict (last payload posted via /continue)
+        # Summary state used by GET /api/jobs (the task monitor list view).
+        # We update these via emit() so we don't have to rescan every event.
+        self._created_at = {}    # job_id -> ISO timestamp
+        self._current_stage = {} # job_id -> last "stage.start" or "stage.progress"
+        self._stage_message = {} # job_id -> message of the current stage event
+        self._stage_percent = {} # job_id -> int (0..100), only when emitted
+        self._last_log = {}      # job_id -> last "log" event message
+        self._final_url = {}     # job_id -> str (set on stage.done for "upload")
 
     def create(self):
         job_id = str(uuid.uuid4())
@@ -84,8 +126,93 @@ class JobManager:
             self._events[job_id] = []
             self._clients[job_id] = []
             self._status[job_id] = "queued"
-            self._results[job_id] = {}
+            self._results[job_id] = {"artifacts": {}}
+            self._gates[job_id] = threading.Event()
+            self._gate_stage[job_id] = None
+            self._gate_payload[job_id] = None
+            self._created_at[job_id] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            self._current_stage[job_id] = None
+            self._stage_message[job_id] = ""
+            self._stage_percent[job_id] = None
+            self._last_log[job_id] = ""
+            self._final_url[job_id] = None
         return job_id
+
+    def list_jobs(self):
+        """Snapshot of every job in memory, in creation order. Used by the
+        Task Monitor page to render its card grid."""
+        out = []
+        with self._lock:
+            for jid in self._events.keys():
+                cfg = self._results.get(jid, {}) or {}
+                artifacts = cfg.get("artifacts", {}) if isinstance(cfg, dict) else {}
+                out.append({
+                    "job_id": jid,
+                    "type": cfg.get("type", "short"),
+                    "topic": cfg.get("topic", ""),
+                    "account_id": cfg.get("account_id", ""),
+                    "status": self._status.get(jid, "unknown"),
+                    "current_stage": self._current_stage.get(jid),
+                    "stage_message": self._stage_message.get(jid, ""),
+                    "stage_percent": self._stage_percent.get(jid),
+                    "awaiting": self._gate_stage.get(jid),
+                    "last_log": self._last_log.get(jid, ""),
+                    "created_at": self._created_at.get(jid),
+                    "video_url": self._final_url.get(jid),
+                    "has_video": bool(artifacts.get("video")),
+                    "has_thumbnail": bool(artifacts.get("thumbnail")),
+                })
+        # Newest first so the active job is at the top
+        out.sort(key=lambda j: (j.get("created_at") or "", j["job_id"]), reverse=True)
+        return out
+
+    # ---- pause / continue gates -------------------------------------------
+
+    def pause_at(self, job_id, stage):
+        """Mark `stage` as awaiting user confirmation. Emits a SSE event so
+        the UI can switch its Continue button into enabled state, then
+        blocks the runner thread until release_gate is called."""
+        with self._lock:
+            evt = self._gates.get(job_id)
+            if evt is None:
+                return False
+            self._gate_stage[job_id] = stage
+            self._gate_payload[job_id] = None
+            evt.clear()
+        self.emit(job_id, {
+            "type": "stage.awaiting",
+            "stage": stage,
+            "message": f"Awaiting user review for stage '{stage}'",
+        })
+        evt.wait()  # block runner thread
+        with self._lock:
+            payload = self._gate_payload.get(job_id) or {}
+            self._gate_stage[job_id] = None
+        return payload
+
+    def release_gate(self, job_id, stage, payload=None):
+        """Called by /api/jobs/{job_id}/continue. Returns True if the gate
+        was waiting on this stage, False if the gate is closed or on a
+        different stage (caller should 400)."""
+        with self._lock:
+            evt = self._gates.get(job_id)
+            current = self._gate_stage.get(job_id)
+            if evt is None:
+                return False
+            if current and stage and current != stage:
+                return False
+            self._gate_payload[job_id] = payload or {}
+            evt.set()
+        self.emit(job_id, {
+            "type": "stage.resumed",
+            "stage": stage or current,
+            "message": f"User confirmed stage '{stage or current}', resuming",
+        })
+        return True
+
+    def gate_status(self, job_id):
+        with self._lock:
+            return self._gate_stage.get(job_id)
 
     def emit(self, job_id, event):
         with self._lock:
@@ -94,6 +221,33 @@ class JobManager:
             self._events[job_id].append(event)
             for client_queue in self._clients.get(job_id, []):
                 client_queue.append(event)
+            # Mirror summary state so /api/jobs (the task monitor list) doesn't
+            # have to walk the full event log on each poll.
+            etype = event.get("type", "")
+            if etype == "stage.start":
+                self._current_stage[job_id] = event.get("stage")
+                self._stage_message[job_id] = event.get("message", "")
+                self._stage_percent[job_id] = None
+            elif etype == "stage.progress":
+                self._current_stage[job_id] = event.get("stage")
+                self._stage_message[job_id] = event.get("message", "")
+                pct = event.get("percent")
+                if isinstance(pct, (int, float)) and pct > 0:
+                    self._stage_percent[job_id] = int(pct)
+            elif etype == "stage.done":
+                if event.get("stage") == "upload":
+                    url = (event.get("artifacts") or {}).get("upload_url")
+                    if url:
+                        self._final_url[job_id] = url
+            elif etype == "log":
+                msg = event.get("message", "")
+                if msg:
+                    self._last_log[job_id] = msg
+            elif etype == "done":
+                arts = event.get("artifacts") or {}
+                v = arts.get("video")
+                if isinstance(v, str) and v.startswith("http"):
+                    self._final_url[job_id] = v
 
     def status(self, job_id):
         with self._lock:
@@ -112,6 +266,17 @@ class JobManager:
         with self._lock:
             return self._results.get(job_id)
 
+    # 7. Add _add_artifact → set_artifact
+    def set_artifact(self, job_id, key, path):
+        with self._lock:
+            if job_id not in self._results:
+                return
+            self._results[job_id].setdefault("artifacts", {})[key] = path
+
+    def get_artifact(self, job_id, key):
+        with self._lock:
+            return self._results.get(job_id, {}).get("artifacts", {}).get(key)
+
     def cancel(self, job_id):
         with self._lock:
             if job_id not in self._status:
@@ -119,7 +284,8 @@ class JobManager:
             if self._status[job_id] in ("done", "error"):
                 return False
             self._status[job_id] = "cancelled"
-        self.emit(job_id, {"type": "cancel", "message": "Job cancelled by user"})
+        # 12. SSE taxonomy: use "cancelled"
+        self.emit(job_id, {"type": "cancelled", "message": "Job cancelled by user"})
         return True
 
     def _client_stream(self, job_id):
@@ -162,6 +328,45 @@ class JobManager:
                 "X-Accel-Buffering": "no",
             },
         )
+
+    def cleanup(self, job_id):
+        """Remove job state and temporary files after terminal status."""
+        with self._lock:
+            self._events.pop(job_id, None)
+            self._clients.pop(job_id, None)
+            self._status.pop(job_id, None)
+            self._results.pop(job_id, None)
+            instance = self._instances.pop(job_id, None)
+            # Release any waiting gate so the runner thread can unblock
+            # and exit cleanly during cleanup.
+            evt = self._gates.pop(job_id, None)
+            if evt is not None:
+                evt.set()
+            self._gate_stage.pop(job_id, None)
+            self._gate_payload.pop(job_id, None)
+            # Drop summary state so /api/jobs stops listing this job.
+            self._created_at.pop(job_id, None)
+            self._current_stage.pop(job_id, None)
+            self._stage_message.pop(job_id, None)
+            self._stage_percent.pop(job_id, None)
+            self._last_log.pop(job_id, None)
+            self._final_url.pop(job_id, None)
+        # Best-effort temp dir cleanup for Firefox profiles held by instances
+        if instance is not None:
+            try:
+                temp_dir = getattr(instance, "_temp_profile_dir", None)
+                if temp_dir and os.path.isdir(temp_dir):
+                    import shutil
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+    def schedule_cleanup(self, job_id, delay_seconds=3600):
+        """Schedule cleanup after a delay for terminal jobs."""
+        def _do():
+            time.sleep(delay_seconds)
+            self.cleanup(job_id)
+        threading.Thread(target=_do, daemon=True).start()
 
 
 jobs = JobManager()
@@ -369,14 +574,13 @@ def _fallback_data():
 
 
 # ---------------------------------------------------------------------------
-# Config inference
+# 2. Update _infer_voices() and _infer_accounts()
 # ---------------------------------------------------------------------------
 
 def _infer_voices():
     voice = "Jasper"
     try:
-        sys.path.insert(0, ROOT_DIR)
-        from src.config import get_tts_voice
+        from config import get_tts_voice
         voice = get_tts_voice()
     except Exception:
         pass
@@ -408,6 +612,7 @@ def _infer_accounts():
     data = load_json(os.path.join(CACHE_DIR, "youtube.json"), {"accounts": []})
     accounts = []
     for a in data.get("accounts", []):
+        fp_path = a.get("firefox_profile", "")
         accounts.append({
             "id": a.get("id"),
             "nickname": a.get("nickname", "Unknown"),
@@ -416,6 +621,10 @@ def _infer_accounts():
             "image_style": a.get("image_style", ""),
             "short_voice": a.get("short_voice", ""),
             "long_voice": a.get("long_voice", ""),
+            "profile_ready": bool(fp_path and os.path.isdir(fp_path)),
+            "firefox_profile": fp_path,
+            "hook_profile": a.get("hook_profile", ""),
+            "voice_drama": a.get("voice_drama", False),
         })
     return accounts
 
@@ -445,14 +654,21 @@ def get_youtube_videos():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# 3. Update /api/health
 @app.get("/api/health")
 def health_check():
+    from config import get_imagemagick_path
     fp = _get_firefox_profile()
     has_profile = bool(fp and os.path.isdir(fp))
+    try:
+        imagemagick_ok = os.path.isfile(get_imagemagick_path())
+    except Exception:
+        imagemagick_ok = False
     return {
         "status": "ok",
         "version": "2.0.0",
         "firefox_profile_ready": has_profile,
+        "imagemagick_ok": imagemagick_ok,
         "accounts_configured": len(_infer_accounts()),
         "presets_saved": len(_load_presets()),
     }
@@ -565,22 +781,33 @@ def delete_preset(preset_id: str):
 
 # --- Jobs ------------------------------------------------------------------
 
+# 6. Update POST /api/jobs body parsing
 @app.post("/api/jobs")
 def create_job(data: dict):
     job_id = jobs.create()
-    jobs.set_result(job_id, {
+    cfg = {
         "type": data.get("type", "short"),
         "account_id": data.get("account_id"),
         "topic": data.get("topic", ""),
         "series_id": data.get("series_id"),
+        "voice_id": data.get("voice_id", ""),
         "image_mode": data.get("image_mode", "ai"),
+        "image_style": data.get("image_style", ""),
         "preset_id": data.get("preset_id"),
-    })
+    }
+    jobs.set_result(job_id, cfg)
     jobs.emit(job_id, {"type": "queued", "message": "Job queued", "job_id": job_id})
-    result = jobs.get_result(job_id)
-    thread = threading.Thread(target=_run_pipeline, args=(job_id, result), daemon=True)
+    thread = threading.Thread(target=_run_pipeline, args=(job_id, cfg), daemon=True)
     thread.start()
     return {"job_id": job_id}
+
+
+# Task Monitor — list view. Returns ALL jobs currently in memory (running,
+# awaiting user input, or recently terminal but not yet cleaned up). Newest
+# first. The frontend polls this every 2s.
+@app.get("/api/jobs")
+def list_jobs():
+    return {"jobs": jobs.list_jobs()}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -588,7 +815,12 @@ def get_job(job_id: str):
     result = jobs.get_result(job_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    return {"job_id": job_id, "status": jobs.status(job_id), "config": result}
+    return {
+        "job_id": job_id,
+        "status": jobs.status(job_id),
+        "config": result,
+        "artifacts": result.get("artifacts", {}),
+    }
 
 
 @app.get("/api/jobs/{job_id}/events")
@@ -604,8 +836,55 @@ def cancel_job(job_id: str):
     return {"cancelled": True}
 
 
+# 8b. POST /api/jobs/{job_id}/continue
+#
+# Releases the per-stage gate held by the runner thread. Body shape:
+#
+#   { "stage": "script", "payload": { "script": "...edited text..." } }
+#
+# Supported stages and payload keys:
+#   - "script"     → { "script": str } (overrides yt.script before next stage)
+#   - "metadata"   → { "title": str, "description": str }
+#   - "prompts"    → { "prompts": [str, ...] } (overrides yt.image_prompts)
+#   - "thumbnail"  → { "title": str, "overlay": str, "font": str, "theme": str }
+#   - "narration"  → { "voice_id": str, "drama": int, "pacing": int }
+#
+# Stage names not waiting → 400. The runner reads the payload via
+# `JobManager.pause_at(...)` which returns it from the wait.
+@app.post("/api/jobs/{job_id}/continue")
+def continue_job(job_id: str, data: dict):
+    if jobs.status(job_id) == "unknown":
+        raise HTTPException(status_code=404, detail="Job not found")
+    stage = data.get("stage")
+    payload = data.get("payload", {}) or {}
+    current = jobs.gate_status(job_id)
+    if current is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Job is not currently awaiting user confirmation",
+        )
+    if stage and stage != current:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job is awaiting stage '{current}', not '{stage}'",
+        )
+    ok = jobs.release_gate(job_id, stage or current, payload)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Gate could not be released")
+    return {"resumed": True, "stage": stage or current}
+
+
+@app.get("/api/jobs/{job_id}/gate")
+def get_gate_status(job_id: str):
+    """Lets the UI re-sync the gate state on reconnect (e.g. after refresh)."""
+    if jobs.status(job_id) == "unknown":
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"awaiting": jobs.gate_status(job_id)}
+
+
 # --- TTS -------------------------------------------------------------------
 
+# 5. Update POST /api/tts/preview
 @app.post("/api/tts/preview")
 def tts_preview(data: dict):
     text = data.get("text", "")
@@ -613,8 +892,7 @@ def tts_preview(data: dict):
     if not text:
         raise HTTPException(status_code=400, detail="text required")
     try:
-        sys.path.insert(0, ROOT_DIR)
-        from src.classes.Tts import TTS
+        from classes.Tts import TTS
         tts = TTS()
         preview_path = os.path.join(CACHE_DIR, f"preview_{int(time.time())}.wav")
         tts.synthesize(text[:150], output_file=preview_path, voice_id=voice_id)
@@ -623,45 +901,322 @@ def tts_preview(data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- Artifact routes -------------------------------------------------------
+
+def _artifact_file_path(job_id: str, key: str) -> str:
+    """Return the on-disk path for an artifact key, guarding against traversal."""
+    path = jobs.get_artifact(job_id, key)
+    if not path:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    real = os.path.abspath(os.path.normpath(path))
+    root = os.path.abspath(ROOT_DIR)
+    # Prevent escaping above project root
+    if not real.startswith(root + os.sep) and real != root:
+        raise HTTPException(status_code=400, detail="Invalid artifact path")
+    if not os.path.isfile(real):
+        raise HTTPException(status_code=404, detail="Artifact file not found")
+    return real
+
+
+@app.get("/api/jobs/{job_id}/artifact/script")
+def get_artifact_script(job_id: str):
+    result = jobs.get_result(job_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Job not found")
+    path = _artifact_file_path(job_id, "script")
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+    sections = [p.strip() for p in text.split("\n\n") if p.strip()]
+    return {"script": text, "sections": sections}
+
+
+@app.get("/api/jobs/{job_id}/artifact/prompts")
+def get_artifact_prompts(job_id: str):
+    path = _artifact_file_path(job_id, "prompts")
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return {"prompts": data}
+
+
+@app.get("/api/jobs/{job_id}/artifact/metadata")
+def get_artifact_metadata(job_id: str):
+    path = _artifact_file_path(job_id, "metadata")
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data
+
+
+@app.get("/api/jobs/{job_id}/artifact/image/{idx}")
+def get_artifact_image(job_id: str, idx: int):
+    path = _artifact_file_path(job_id, f"image/{idx}")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get("/api/jobs/{job_id}/artifact/thumbnail")
+def get_artifact_thumbnail(job_id: str):
+    path = _artifact_file_path(job_id, "thumbnail")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get("/api/jobs/{job_id}/artifact/audio")
+def get_artifact_audio(job_id: str):
+    path = _artifact_file_path(job_id, "audio")
+    return FileResponse(path, media_type="audio/wav")
+
+
+@app.get("/api/jobs/{job_id}/artifact/video")
+def get_artifact_video(job_id: str):
+    path = _artifact_file_path(job_id, "video")
+    # FileResponse natively supports HTTP Range requests (206 Partial Content)
+    return FileResponse(path, media_type="video/mp4")
+
+
+# 11. POST /api/jobs/{job_id}/upload
+#
+# Body: { "confirm": true, "account_id": "<optional override>" }
+#
+# Spawns the Selenium upload on the cached YouTube instance for `job_id`.
+# If the instance was lost (server restart, or job created via the recap
+# pipeline that doesn't keep one around), reconstruct one from the artifacts
+# we persisted under .mp/jobs/<job_id>/. Emits per-substep progress so
+# UploadStage can show a meaningful banner instead of just a spinner.
+@app.post("/api/jobs/{job_id}/upload")
+def upload_job(job_id: str, data: dict):
+    result = jobs.get_result(job_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not data.get("confirm"):
+        raise HTTPException(status_code=400, detail="confirm: true required")
+
+    override_account_id = data.get("account_id")
+
+    artifacts = result.get("artifacts", {}) or {}
+    instance = jobs._instances.get(job_id)
+    if not instance:
+        cfg = dict(result)
+        if override_account_id:
+            cfg["account_id"] = override_account_id
+        account = next((a for a in _infer_accounts() if a.get("id") == cfg.get("account_id")), None)
+        if not account:
+            ready = [a for a in _infer_accounts() if a.get("profile_ready")]
+            account = ready[0] if ready else None
+        if not account:
+            raise HTTPException(status_code=400, detail="No account configured for upload")
+        from runners import _build_yt_kwargs
+        from classes.YouTube import YouTube
+        yt = YouTube(**_build_yt_kwargs(account, cfg))
+        if "video" in artifacts:
+            yt.video_path = artifacts["video"]
+        if "thumbnail" in artifacts:
+            yt.thumbnail_path = artifacts["thumbnail"]
+        if "script" in artifacts:
+            yt.subject = cfg.get("topic", "")
+        try:
+            meta_path = artifacts.get("metadata")
+            if meta_path and os.path.isfile(meta_path):
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    yt.metadata = json.load(f)
+        except Exception:
+            pass
+        instance = yt
+        with jobs._lock:
+            jobs._instances[job_id] = instance
+
+    # Defensive hydration when an instance survived from the runner but
+    # the runner forgot to pin paths/metadata onto it (regression caught
+    # in the real-run smoke test). Always prefer existing instance values
+    # so we don't clobber edits, but fill anything that's empty.
+    if not getattr(instance, "video_path", None) and artifacts.get("video"):
+        instance.video_path = artifacts["video"]
+    if not getattr(instance, "thumbnail_path", None) and artifacts.get("thumbnail"):
+        instance.thumbnail_path = artifacts["thumbnail"]
+    if not getattr(instance, "subject", None):
+        instance.subject = (result.get("topic") or "").strip()
+    if not getattr(instance, "metadata", None) and artifacts.get("metadata"):
+        try:
+            with open(artifacts["metadata"], "r", encoding="utf-8") as f:
+                instance.metadata = json.load(f)
+        except Exception:
+            pass
+
+    # Pre-flight checks so we can return a clean 400 instead of
+    # spawning a thread that immediately bails inside upload_video().
+    vpath = getattr(instance, "video_path", "") or ""
+    if not vpath or not os.path.isfile(vpath):
+        raise HTTPException(
+            status_code=400,
+            detail=f"No rendered video available to upload (video_path='{vpath}'). "
+                   "The render stage must complete successfully first."
+        )
+
+    account_id = override_account_id or result.get("account_id") or ""
+
+    def _do_upload():
+        # Stream key checkpoints by hooking the status module so the user
+        # sees the same progress the CLI prints. We patch info/success
+        # for the duration of upload_video() and forward each call as a
+        # stage.progress event.
+        from status import info as _orig_info, success as _orig_success, warning as _orig_warning
+        import status as _status_mod
+
+        def _emit(level, msg):
+            jobs.emit(job_id, {
+                "type": "log", "level": level,
+                "message": str(msg),
+                "account_id": account_id,
+            })
+            # Heuristic upload-stage progress hints from the status text.
+            text = str(msg).lower()
+            stage_msg = None
+            if "channel id" in text or "navigating to upload" in text:
+                stage_msg = "Opening YouTube Studio"
+            elif "uploading file" in text:
+                stage_msg = "Uploading video file"
+            elif "setting title" in text:
+                stage_msg = "Setting title"
+            elif "setting description" in text:
+                stage_msg = "Setting description"
+            elif "uploading thumbnail" in text or "thumbnail upload attempt" in text:
+                stage_msg = "Uploading custom thumbnail"
+            elif "next button" in text or "clicking next" in text:
+                stage_msg = "Advancing wizard"
+            elif "setting visibility" in text:
+                stage_msg = "Setting visibility"
+            elif "clicking done" in text:
+                stage_msg = "Submitting upload"
+            elif "polling listing" in text or "still waiting" in text:
+                stage_msg = "Waiting for YouTube to process"
+            elif "upload + processing finished" in text:
+                stage_msg = "Upload finished"
+            elif "uploaded video:" in text:
+                stage_msg = "Got public URL"
+            if stage_msg:
+                jobs.emit(job_id, {
+                    "type": "stage.progress",
+                    "stage": "upload",
+                    "current": 0,
+                    "total": 0,
+                    "percent": 0,
+                    "message": stage_msg,
+                    "account_id": account_id,
+                })
+
+        def _patched_info(msg, *args, **kwargs):
+            _emit("info", msg)
+            return _orig_info(msg, *args, **kwargs)
+
+        def _patched_success(msg, *args, **kwargs):
+            _emit("info", msg)
+            return _orig_success(msg, *args, **kwargs)
+
+        def _patched_warning(msg, *args, **kwargs):
+            _emit("warn", msg)
+            return _orig_warning(msg, *args, **kwargs)
+
+        _status_mod.info = _patched_info
+        _status_mod.success = _patched_success
+        _status_mod.warning = _patched_warning
+
+        try:
+            jobs.emit(job_id, {
+                "type": "stage.start", "stage": "upload",
+                "message": "Starting Selenium upload to YouTube...",
+                "account_id": account_id,
+            })
+            jobs.set_status(job_id, "uploading")
+            ok = instance.upload_video()
+            uploaded_url = getattr(instance, "uploaded_video_url", "") or ""
+            # YouTubeUploader.upload_video() returns bool — False means the
+            # Selenium flow refused (missing file, missing subject, …) but
+            # didn't raise. We MUST treat that as an error or the job ends
+            # up "done" with nothing actually uploaded.
+            if ok is False:
+                msg = (
+                    "upload_video() returned False — Selenium flow did not "
+                    "complete the upload (check server logs for the reason)."
+                )
+                jobs.emit(job_id, {
+                    "type": "stage.error", "stage": "upload",
+                    "message": msg, "account_id": account_id,
+                })
+                jobs.emit(job_id, {"type": "error", "message": msg})
+                jobs.set_status(job_id, "error")
+                jobs.schedule_cleanup(job_id)
+                return
+            jobs.emit(job_id, {
+                "type": "stage.done",
+                "stage": "upload",
+                "artifacts": {"upload_url": uploaded_url} if uploaded_url else {},
+                "account_id": account_id,
+            })
+            jobs.set_status(job_id, "done")
+            jobs.emit(job_id, {
+                "type": "done",
+                "message": "Upload complete" + (f" — {uploaded_url}" if uploaded_url else ""),
+                "artifacts": result.get("artifacts", {}),
+            })
+            jobs.schedule_cleanup(job_id)
+        except Exception as e:
+            jobs.emit(job_id, {
+                "type": "stage.error", "stage": "upload",
+                "message": str(e), "account_id": account_id,
+            })
+            jobs.emit(job_id, {"type": "error", "message": str(e)})
+            jobs.set_status(job_id, "error")
+            jobs.schedule_cleanup(job_id)
+        finally:
+            _status_mod.info = _orig_info
+            _status_mod.success = _orig_success
+            _status_mod.warning = _orig_warning
+
+    t = threading.Thread(target=_do_upload, daemon=True)
+    t.start()
+    return {"uploading": True, "account_id": account_id}
+
+
 # ---------------------------------------------------------------------------
-# Pipeline simulation
+# 7. Replace _run_pipeline with a dispatcher
 # ---------------------------------------------------------------------------
 
 def _run_pipeline(job_id: str, config: dict) -> None:
-    """Run a simulated pipeline that emits SSE events."""
-    stages = [
-        ("script", 3, "Generating script..."),
-        ("images", 12, "Generating images ({current}/{total})..."),
-        ("thumbnail", 1, "Generating thumbnail..."),
-        ("tts", 1, "Generating narration..."),
-        ("render", 5, "Rendering video ({current}/{total})..."),
-    ]
+    from runners import run_short_job, run_long_job, run_recap_job
 
-    for stage, total, template in stages:
-        if jobs.status(job_id) == "cancelled":
-            return
+    def _set_instance(jid, inst):
+        with jobs._lock:
+            jobs._instances[jid] = inst
 
-        jobs.set_status(job_id, "running")
-        for current in range(1, total + 1):
-            if jobs.status(job_id) == "cancelled":
-                return
-            message = template.format(current=current, total=total)
-            jobs.emit(job_id, {
-                "type": "progress",
-                "stage": stage,
-                "current": current,
-                "total": total,
-                "message": message,
-                "percent": int((current / total) * 100),
-            })
-            time.sleep(random.uniform(0.3, 1.0))
+    common_kwargs = dict(
+        emit=jobs.emit,
+        set_status=jobs.set_status,
+        set_artifact=jobs.set_artifact,
+        get_status=jobs.status,
+        set_instance=_set_instance,
+        pause_at=jobs.pause_at,
+    )
 
-    jobs.set_status(job_id, "done")
-    jobs.emit(job_id, {
-        "type": "done",
-        "message": "Pipeline complete",
-        "video_path": f".mp/{job_id}_final.mp4",
-    })
+    try:
+        cfg_type = config.get("type", "short")
+        if cfg_type == "short":
+            run_short_job(job_id, config, **common_kwargs)
+        elif cfg_type == "long":
+            run_long_job(job_id, config, **common_kwargs)
+        elif cfg_type == "recap":
+            run_recap_job(job_id, config, **common_kwargs)
+        else:
+            raise ValueError(f"Unknown job type: {cfg_type}")
+        jobs.schedule_cleanup(job_id)
+    except Exception as e:
+        # Print to server stderr so the operator sees the actual cause; the
+        # SSE channel only carries the message.
+        import traceback
+        print(f"[API] Pipeline crashed for job {job_id}:", file=sys.stderr)
+        traceback.print_exc()
+        jobs.emit(job_id, {
+            "type": "error",
+            "message": f"{type(e).__name__}: {e}",
+        })
+        jobs.set_status(job_id, "error")
+        jobs.schedule_cleanup(job_id)
 
 
 # ---------------------------------------------------------------------------

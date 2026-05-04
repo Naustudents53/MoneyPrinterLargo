@@ -1,9 +1,17 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Wand2, ArrowRight, ChevronDown } from "lucide-react";
+import { ArrowRight, ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useProductionStore } from "@/stores/production";
+import { useJobEvents } from "@/lib/useJobEvents";
+import {
+  API_BASE,
+  continueJob,
+  getGateStatus,
+  type Stage,
+} from "@/lib/api";
 
 interface ThumbnailStageProps {
   onComplete?: () => void;
@@ -29,13 +37,74 @@ export function ThumbnailStage({ onComplete }: ThumbnailStageProps) {
   const [overlay, setOverlay] = useState("Episode 1");
   const [font, setFont] = useState(FONTS[0].value);
   const [theme, setTheme] = useState("dark");
+  const [thumbnailReady, setThumbnailReady] = useState(false);
+  const [awaitingStage, setAwaitingStage] = useState<Stage | null>(null);
+  const [resuming, setResuming] = useState(false);
+  const [cacheBuster, setCacheBuster] = useState(0);
 
-  const handleGenerate = useCallback(() => {
-    // Hook for API call later
-  }, []);
+  const production = useProductionStore((s) =>
+    s.productions.find((p) => p.id === s.currentProductionId)
+  );
+  const jobId = production?.jobId;
+
+  // Hydrate gate state on mount in case the awaiting event already fired.
+  useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    getGateStatus(jobId)
+      .then(({ awaiting }) => {
+        if (!cancelled) setAwaitingStage(awaiting);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId]);
+
+  useJobEvents(jobId ?? null, {
+    "stage.done": (e) => {
+      if (e.stage === "thumbnail") {
+        setThumbnailReady(true);
+        setCacheBuster(Date.now());
+      }
+    },
+    "stage.awaiting": (e) => setAwaitingStage(e.stage),
+    "stage.resumed": (e) => {
+      if (e.stage === awaitingStage) setAwaitingStage(null);
+    },
+  });
+
+  const handleContinue = async () => {
+    if (!jobId) {
+      onComplete?.();
+      return;
+    }
+    if (awaitingStage !== "thumbnail") {
+      onComplete?.();
+      return;
+    }
+    setResuming(true);
+    try {
+      // Thumbnail edits are advisory for now (the rendered thumbnail PNG
+      // already exists on disk). The runner doesn't re-render — it just
+      // releases the gate so TTS+render can proceed.
+      await continueJob(jobId, "thumbnail", { title, overlay, font, theme });
+      onComplete?.();
+    } finally {
+      setResuming(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-6 p-6">
+      {awaitingStage === "thumbnail" && (
+        <div className="flex justify-end">
+          <span className="rounded-full border border-accent-purple/30 bg-accent-purple/10 px-3 py-1 text-[11px] text-accent-purple-soft">
+            Review thumbnail before TTS
+          </span>
+        </div>
+      )}
+
       {/* Preview */}
       <motion.div
         className="relative aspect-video w-full overflow-hidden rounded-2xl border border-border-ghost shadow-float"
@@ -43,19 +112,36 @@ export function ThumbnailStage({ onComplete }: ThumbnailStageProps) {
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
       >
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-6">
-          <span
-            className="text-center text-3xl font-extrabold text-text-primary drop-shadow-lg md:text-5xl"
-            style={{ fontFamily: font === "bold_font" ? "bold_font" : font === "Poppins-Black" ? "Poppins" : "Montserrat" }}
-          >
-            {title}
-          </span>
-          <span className="text-sm font-medium text-text-secondary">{overlay}</span>
-        </div>
-        <div className="scanline pointer-events-none absolute inset-0" />
+        {thumbnailReady && jobId ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={`${API_BASE}/api/jobs/${jobId}/artifact/thumbnail?t=${cacheBuster}`}
+            alt="Thumbnail"
+            className="w-full rounded-2xl"
+          />
+        ) : (
+          <>
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-6">
+              <span
+                className="text-center text-3xl font-extrabold text-text-primary drop-shadow-lg md:text-5xl"
+                style={{
+                  fontFamily:
+                    font === "bold_font"
+                      ? "bold_font"
+                      : font === "Poppins-Black"
+                        ? "Poppins"
+                        : "Montserrat",
+                }}
+              >
+                {title}
+              </span>
+              <span className="text-sm font-medium text-text-secondary">{overlay}</span>
+            </div>
+            <div className="scanline pointer-events-none absolute inset-0" />
+          </>
+        )}
       </motion.div>
 
-      {/* Controls */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="flex flex-col gap-2">
           <label className="text-sm text-text-secondary">Title</label>
@@ -84,10 +170,15 @@ export function ThumbnailStage({ onComplete }: ThumbnailStageProps) {
               onChange={(e) => setFont(e.target.value)}
             >
               {FONTS.map((f) => (
-                <option key={f.value} value={f.value}>{f.label}</option>
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
               ))}
             </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" size={16} />
+            <ChevronDown
+              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted"
+              size={16}
+            />
           </div>
         </div>
 
@@ -100,39 +191,32 @@ export function ThumbnailStage({ onComplete }: ThumbnailStageProps) {
               onChange={(e) => setTheme(e.target.value)}
             >
               {THEMES.map((t) => (
-                <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                <option key={t} value={t}>
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                </option>
               ))}
             </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" size={16} />
+            <ChevronDown
+              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted"
+              size={16}
+            />
           </div>
         </div>
       </div>
 
-      <div className="flex items-center justify-between pt-2">
-        <motion.button
-          className={cn(
-            "flex items-center gap-2 rounded-xl bg-accent-purple px-4 py-2.5 text-sm font-medium text-white shadow-glow-purple transition-colors",
-            "hover:bg-accent-purple-deep"
-          )}
-          onClick={handleGenerate}
-          whileHover={{ scale: 1.03 }}
-          whileTap={{ scale: 0.97 }}
-        >
-          <Wand2 size={16} />
-          Generate
-        </motion.button>
-
+      <div className="flex items-center justify-end pt-2">
         <motion.button
           className={cn(
             "flex items-center gap-2 rounded-xl bg-accent-blue px-5 py-2.5 text-sm font-medium text-white shadow-glow-blue transition-colors",
-            "hover:bg-accent-blue-soft"
+            "hover:bg-accent-blue-soft disabled:opacity-50"
           )}
-          onClick={onComplete}
+          onClick={handleContinue}
+          disabled={resuming}
           whileHover={{ scale: 1.03 }}
           whileTap={{ scale: 0.97 }}
         >
-          Continue
-          <ArrowRight size={16} />
+          {resuming ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
+          {awaitingStage === "thumbnail" ? "Continue to narration" : "Continue"}
         </motion.button>
       </div>
     </div>

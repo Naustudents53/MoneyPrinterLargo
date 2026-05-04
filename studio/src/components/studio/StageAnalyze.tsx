@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Download, Mic, Clapperboard, Users, Palette, Brain } from "lucide-react";
+import { Download, Mic, Clapperboard, Users, Palette, Brain, Info } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
 interface AnalysisNode { id: string; label: string; icon: React.ReactNode; status: "pending" | "running" | "complete"; }
@@ -147,6 +147,12 @@ export function StageAnalyze({ onComplete }: { onComplete?: () => void }) {
           <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Live Log</span>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-1 font-mono text-[11px]">
+          <div className="flex items-start gap-2 rounded-lg border px-2 py-1.5 mb-2"
+            style={{ borderColor: "rgba(59,130,246,0.2)", background: "rgba(59,130,246,0.06)", color: "#60A5FA" }}
+          >
+            <Info size={12} className="shrink-0 mt-0.5" />
+            <span className="text-[10px]">Analysis will be streamed during export.</span>
+          </div>
           {logs.map((log, i) => (
             <motion.div
               key={i}

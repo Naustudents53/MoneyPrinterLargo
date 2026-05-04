@@ -57,6 +57,33 @@
   "font": "bold_font.ttf",
   "imagemagick_path": "Path to magick.exe or on linux/macOS just /usr/bin/convert",
   "script_sentence_length": 8,
+  "youtube_upload": {
+    "thumbnail": {
+      "max_attempts": 3,
+      "verify_timeout_s": 180,
+      "retry_backoff_s": 30,
+      "verify_poll_s": 2,
+      "max_bytes": 2097152
+    },
+    "short_polling": {
+      "max_wait_s": 1800,
+      "poll_s": 8,
+      "refresh_s": 60,
+      "max_studio_error_retries": 5
+    },
+    "long_polling": {
+      "max_wait_s": 10800,
+      "poll_s": 15,
+      "refresh_s": 120,
+      "max_studio_error_retries": 5
+    },
+    "title_max_chars": 100,
+    "description_max_chars": 5000,
+    "stale_uploading_hours": 6,
+    "page_load_timeout_s": 90,
+    "script_timeout_s": 60,
+    "default_wait_s": 30
+  },
   "series": [
     {
       "id": "un_dia_en_la_historia",

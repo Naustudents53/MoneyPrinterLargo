@@ -1,59 +1,137 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
-import { Eye, RotateCcw, ArrowRight, Image as ImageIcon } from "lucide-react";
+import { ArrowRight, Image as ImageIcon, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useProductionStore } from "@/stores/production";
+import { useJobEvents } from "@/lib/useJobEvents";
+import {
+  API_BASE,
+  continueJob,
+  getGateStatus,
+  type Stage,
+} from "@/lib/api";
 
 interface ImagesStageProps {
   onComplete?: () => void;
 }
 
-const SAMPLE_PROMPTS = [
-  "Cinematic wide shot of an abandoned neon-lit library at midnight, rain on glass, cyberpunk palette",
-  "Close-up of a glowing cassette tape resting on a rusty metal desk, soft volumetric lighting",
-  "Aerial shot of a sprawling megacity at dusk, holographic ads reflecting off rooftops",
-  "Silhouette of a hooded figure running through a steam-filled tunnel, red backlights",
-  "Macro shot of crystalline data shards scattered on cracked concrete, purple and cyan glow",
-  "Interior of a hidden server room, fiber-optic cables pulsing like bioluminescent vines",
-];
-
+// Image-prompts editor + preview grid. The backend pauses at the "prompts"
+// gate after generating the prompt list — the user can edit/replace each
+// prompt before image generation kicks in. Once the user clicks Continue,
+// `continueJob` posts the (possibly edited) array back and the runner
+// proceeds with `generate_images_batch`.
+//
+// After images are generated (`stage.done` for "images") the previews
+// hydrate from /api/jobs/{id}/artifact/image/{i}.
 export function ImagesStage({ onComplete }: ImagesStageProps) {
-  const [prompts, setPrompts] = useState<string[]>(SAMPLE_PROMPTS);
-  const [previewMap, setPreviewMap] = useState<Record<number, boolean>>({});
+  const production = useProductionStore((s) =>
+    s.productions.find((p) => p.id === s.currentProductionId)
+  );
+  const jobId = production?.jobId;
+  // Memoize so it doesn't change identity each render (the `?? []` literal
+  // would otherwise create a fresh array reference each call, which makes
+  // the useCallback dep array invalidate every render).
+  const imagePrompts = useMemo(
+    () => production?.config.imagePrompts ?? [],
+    [production?.config.imagePrompts]
+  );
+  const [imagesReady, setImagesReady] = useState(false);
+  const [readyMap, setReadyMap] = useState<Record<number, boolean>>({});
+  const [awaitingStage, setAwaitingStage] = useState<Stage | null>(null);
+  const [resuming, setResuming] = useState(false);
 
-  const togglePreview = useCallback((index: number) => {
-    setPreviewMap((prev) => ({ ...prev, [index]: !prev[index] }));
+  // Hydrate the gate state on mount in case the SSE awaiting event fired
+  // before the component was rendered.
+  useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    getGateStatus(jobId)
+      .then(({ awaiting }) => {
+        if (!cancelled) setAwaitingStage(awaiting);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId]);
+
+  useJobEvents(jobId ?? null, {
+    "stage.partial": (e) => {
+      // Backend emits one stage.partial per image prompt as it's produced.
+      // We push them into the production store so the user sees them
+      // populate live before the gate opens.
+      if (e.stage === "prompts" && typeof e.chunk === "string") {
+        const store = useProductionStore.getState();
+        const cur = store.productions.find((p) => p.id === store.currentProductionId)
+          ?.config.imagePrompts ?? [];
+        const next = [...cur];
+        next[e.index] = e.chunk;
+        store.setImagePrompts(next);
+      }
+    },
+    "stage.progress": (e) => {
+      if (e.stage === "images" && typeof e.current === "number") {
+        // 1-indexed in the event; convert to 0-indexed for the readyMap.
+        setReadyMap((prev) => ({ ...prev, [e.current - 1]: true }));
+      }
+    },
+    "stage.done": (e) => {
+      if (e.stage === "images") setImagesReady(true);
+    },
+    "stage.awaiting": (e) => setAwaitingStage(e.stage),
+    "stage.resumed": (e) => {
+      if (e.stage === awaitingStage) setAwaitingStage(null);
+    },
+  });
+
+  const handlePromptChange = useCallback((index: number, value: string) => {
+    const store = useProductionStore.getState();
+    const cur = store.productions.find((p) => p.id === store.currentProductionId)
+      ?.config.imagePrompts ?? [];
+    const next = cur.map((p, i) => (i === index ? value : p));
+    store.setImagePrompts(next);
   }, []);
 
-  const handleRegenerateAll = useCallback(() => {
-    setPrompts((prev) =>
-      prev.map((p, i) => `Regenerated prompt ${i + 1}: ${p.split(" ").slice(0, 6).join(" ")}...`)
-    );
-  }, []);
+  const handleContinue = useCallback(async () => {
+    if (!jobId) {
+      onComplete?.();
+      return;
+    }
+    if (awaitingStage !== "prompts") {
+      onComplete?.();
+      return;
+    }
+    setResuming(true);
+    try {
+      await continueJob(jobId, "prompts", { prompts: imagePrompts });
+      onComplete?.();
+    } finally {
+      setResuming(false);
+    }
+  }, [jobId, awaitingStage, imagePrompts, onComplete]);
 
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-text-secondary">Image Prompts</h3>
-        <motion.button
-          className={cn(
-            "flex items-center gap-2 rounded-xl border border-border-subtle px-4 py-2 text-xs text-text-secondary transition-colors",
-            "hover:bg-surface-overlay hover:text-text-primary"
-          )}
-          onClick={handleRegenerateAll}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.97 }}
-        >
-          <RotateCcw size={14} />
-          Regenerate All
-        </motion.button>
+        <h3 className="text-sm font-medium text-text-secondary">
+          Image Prompts ({imagePrompts.length})
+        </h3>
+        {awaitingStage === "prompts" && (
+          <span className="rounded-full border border-accent-purple/30 bg-accent-purple/10 px-3 py-1 text-[11px] text-accent-purple-soft">
+            Edit prompts before generating images
+          </span>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {prompts.map((prompt, index) => {
-          const showPreview = previewMap[index];
-          return (
+      {imagePrompts.length === 0 ? (
+        <div className="rounded-xl border border-border-ghost bg-surface-raised p-6 text-center text-sm text-text-tertiary">
+          Generating prompts...
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {imagePrompts.map((prompt, index) => (
             <motion.div
               key={index}
               className="flex flex-col gap-3 rounded-xl border border-border-ghost bg-surface-raised p-4 shadow-panel"
@@ -61,66 +139,53 @@ export function ImagesStage({ onComplete }: ImagesStageProps) {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.05 }}
             >
-              {/* Prompt text */}
+              <div className="text-[10px] uppercase tracking-wider text-text-muted">
+                Prompt {index + 1}
+              </div>
               <textarea
-                className="w-full resize-none bg-transparent text-xs leading-relaxed text-text-primary outline-none"
+                className="w-full resize-y bg-transparent text-xs leading-relaxed text-text-primary outline-none"
                 rows={3}
                 value={prompt}
-                onChange={(e) =>
-                  setPrompts((prev) => prev.map((p, i) => (i === index ? e.target.value : p)))
-                }
+                onChange={(e) => handlePromptChange(index, e.target.value)}
               />
 
-              {/* Preview area */}
-              {showPreview && (
-                <motion.div
+              {(imagesReady || readyMap[index]) && jobId ? (
+                // Bypass next/image so we don't have to whitelist the API host
+                // in next.config.ts; the studio is dev-only / single user.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={`${API_BASE}/api/jobs/${jobId}/artifact/image/${index}`}
+                  alt={`Image ${index + 1}`}
+                  className="aspect-video w-full rounded-lg object-cover"
+                />
+              ) : (
+                <div
                   className="relative aspect-video w-full overflow-hidden rounded-lg"
-                  style={{
-                    background: "linear-gradient(135deg, #1E1E32, #0E0E18)",
-                  }}
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  transition={{ duration: 0.3 }}
+                  style={{ background: "linear-gradient(135deg, #1E1E32, #0E0E18)" }}
                 >
                   <div className="flex h-full items-center justify-center text-text-muted">
                     <ImageIcon size={24} />
                   </div>
-                </motion.div>
+                </div>
               )}
-
-              {/* Actions */}
-              <div className="flex justify-end">
-                <motion.button
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-1.5 text-xs text-text-secondary transition-colors",
-                    showPreview && "border-accent-purple/30 text-accent-purple-soft bg-accent-purple/5",
-                    !showPreview && "hover:bg-surface-overlay hover:text-text-primary"
-                  )}
-                  onClick={() => togglePreview(index)}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.97 }}
-                >
-                  <Eye size={12} />
-                  {showPreview ? "Hide" : "Preview"}
-                </motion.button>
-              </div>
             </motion.div>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      )}
 
       <div className="flex justify-end pt-2">
         <motion.button
           className={cn(
             "flex items-center gap-2 rounded-xl bg-accent-blue px-5 py-2.5 text-sm font-medium text-white shadow-glow-blue transition-colors",
-            "hover:bg-accent-blue-soft"
+            "hover:bg-accent-blue-soft disabled:opacity-50"
           )}
-          onClick={onComplete}
+          onClick={handleContinue}
+          disabled={resuming}
           whileHover={{ scale: 1.03 }}
           whileTap={{ scale: 0.97 }}
         >
-          Continue
-          <ArrowRight size={16} />
+          {resuming ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
+          {awaitingStage === "prompts" ? "Apply edits & generate" : "Continue"}
         </motion.button>
       </div>
     </div>

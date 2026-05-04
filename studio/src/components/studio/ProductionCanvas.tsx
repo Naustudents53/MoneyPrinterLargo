@@ -2,6 +2,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { useProjectStore } from "@/stores/project";
+import { useProductionStore } from "@/stores/production";
 import { ProductionStepper } from "@/components/studio/ProductionStepper";
 import { StageSelectMovie } from "@/components/studio/StageSelectMovie";
 import { StageAnalyze } from "@/components/studio/StageAnalyze";
@@ -10,6 +11,15 @@ import { StageClips } from "@/components/studio/StageClips";
 import { StageNarration } from "@/components/studio/StageNarration";
 import { StageTimeline } from "@/components/studio/StageTimeline";
 import { StageExport } from "@/components/studio/StageExport";
+import { ConfigStage } from "@/components/studio/steps/ConfigStage";
+import { ScriptStage } from "@/components/studio/steps/ScriptStage";
+import { ImagesStage } from "@/components/studio/steps/ImagesStage";
+import { ThumbnailStage } from "@/components/studio/steps/ThumbnailStage";
+import { NarrationStage } from "@/components/studio/steps/NarrationStage";
+import { RenderStage } from "@/components/studio/steps/RenderStage";
+import { UploadStage } from "@/components/studio/steps/UploadStage";
+import { JobAdopter } from "@/components/studio/JobAdopter";
+import { Suspense } from "react";
 import { Film, Rocket } from "lucide-react";
 
 const STAGES = [
@@ -22,9 +32,28 @@ const STAGES = [
   { key: "export", component: StageExport },
 ];
 
+const SHORT_STAGES = [
+  { key: "config", component: ConfigStage },
+  { key: "script", component: ScriptStage },
+  { key: "images", component: ImagesStage },
+  { key: "thumbnail", component: ThumbnailStage },
+  { key: "narration", component: NarrationStage },
+  { key: "render", component: RenderStage },
+  { key: "upload", component: UploadStage },
+];
+
 export function ProductionCanvas({ type }: { type?: "short" | "long" | "recap" }) {
-  const { projects, currentProjectId, updateStep, completeStep, createProject } = useProjectStore();
+  const isShortLong = type === "short" || type === "long";
+
+  const projectStore = useProjectStore();
+  const productionStore = useProductionStore();
+
+  const { projects, currentProjectId, updateStep, completeStep, createProject } = projectStore;
+  const { productions, currentProductionId, updateStep: updateProdStep, completeStep: completeProdStep, createProduction } = productionStore;
+
   const project = projects.find((p) => p.id === currentProjectId);
+  const production = productions.find((p) => p.id === currentProductionId);
+  const activeEntity = isShortLong ? production : project;
 
   const heading =
     type === "short"
@@ -40,13 +69,21 @@ export function ProductionCanvas({ type }: { type?: "short" | "long" | "recap" }
       ? "AI-powered long-form video production"
       : "AI-powered movie recap production";
 
-  if (!project) {
+  if (!activeEntity) {
     return (
       <motion.div
         className="flex-1 flex items-center justify-center relative"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
       >
+        {/* Adopt ?job=<id> from the URL when the user lands here from the
+            Task Monitor. Wrapped in Suspense because next/navigation's
+            useSearchParams suspends during prerender. */}
+        {isShortLong && type && (
+          <Suspense fallback={null}>
+            <JobAdopter type={type} />
+          </Suspense>
+        )}
         {/* Atmósfera de fondo */}
         <div className="absolute inset-0 pointer-events-none">
           <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[500px] h-[500px] rounded-full bg-accent-purple/5 blur-[150px]"
@@ -107,7 +144,11 @@ export function ProductionCanvas({ type }: { type?: "short" | "long" | "recap" }
                 "0 0 45px rgba(124,58,237,0.4), inset 0 1px 0 rgba(255,255,255,0.15)",
             }}
             whileTap={{ scale: 0.97 }}
-            onClick={() => createProject("New Production")}
+            onClick={() =>
+              isShortLong && type
+                ? createProduction(type, "New Production")
+                : createProject("New Production")
+            }
           >
             <Rocket size={16} />
             New Production
@@ -117,18 +158,37 @@ export function ProductionCanvas({ type }: { type?: "short" | "long" | "recap" }
     );
   }
 
-  const StageComponent = STAGES[project.currentStep]?.component || STAGES[0].component;
+  const activeStages = isShortLong ? SHORT_STAGES : STAGES;
+  const currentStep = activeEntity.currentStep;
+  const completedSteps = activeEntity.completedSteps;
+  const StageComponent = activeStages[currentStep]?.component || activeStages[0].component;
+
+  const handleComplete = () => {
+    if (isShortLong) {
+      completeProdStep(currentStep);
+      if (currentStep < 6) updateProdStep(currentStep + 1);
+    } else {
+      completeStep(currentStep);
+      if (currentStep < 6) updateStep(currentStep + 1);
+    }
+  };
 
   return (
     <div className="flex-1 flex flex-col min-h-0 relative">
+      {isShortLong && type && (
+        <Suspense fallback={null}>
+          <JobAdopter type={type} />
+        </Suspense>
+      )}
       <ProductionStepper
-        currentStep={project.currentStep}
-        completedSteps={project.completedSteps}
-        onStepClick={updateStep}
+        currentStep={currentStep}
+        completedSteps={completedSteps}
+        onStepClick={isShortLong ? updateProdStep : updateStep}
+        variant={isShortLong && type ? type : "default"}
       />
       <AnimatePresence mode="wait">
         <motion.div
-          key={project.currentStep}
+          key={currentStep}
           className="flex-1 overflow-hidden"
           initial={{ opacity: 0, x: 60, filter: "blur(4px)" }}
           animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
@@ -136,10 +196,7 @@ export function ProductionCanvas({ type }: { type?: "short" | "long" | "recap" }
           transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
         >
           <StageComponent
-            onComplete={() => {
-              completeStep(project.currentStep);
-              if (project.currentStep < 6) updateStep(project.currentStep + 1);
-            }}
+            onComplete={handleComplete}
           />
         </motion.div>
       </AnimatePresence>

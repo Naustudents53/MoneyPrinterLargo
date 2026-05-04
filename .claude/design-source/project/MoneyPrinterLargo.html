@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MoneyPrinterLargo — UI Design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; background: #0B0B0D; }
+  body { font-family: 'Geist Sans', Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 4px; }
+  input, select, textarea, button { font-family: inherit; }
+  ::selection { background: rgba(232,162,79,0.3); }
+</style>
+</head>
+<body>
+<div id="root" style="height:100vh; overflow:hidden;"></div>
+
+<script type="text/babel" src="mpl-shared.jsx"></script>
+<script type="text/babel" src="mpl-frame1.jsx"></script>
+<script type="text/babel" src="mpl-frame2.jsx"></script>
+<script type="text/babel" src="mpl-frame3.jsx"></script>
+<script type="text/babel" src="mpl-frame4.jsx"></script>
+<script type="text/babel" src="mpl-frame5.jsx"></script>
+<script type="text/babel" src="mpl-frame6.jsx"></script>
+<script type="text/babel" src="mpl-frame7.jsx"></script>
+<script type="text/babel" src="mpl-components.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+
+<script type="text/babel">
+// ─────────────────────────────────────────────────────────────────────────────
+// ROOT APP — navigation shell + tweaks
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accentColor": "#E8A24F",
+  "darkMode": true,
+  "sidebarExpanded": true,
+  "compactFrame2": false,
+  "showComponents": false
+}/*EDITMODE-END*/;
+
+function App() {
+  const { tweaks: rawTweaks, setTweak } = useTweaks(TWEAK_DEFAULTS);
+  const tweaks = rawTweaks || TWEAK_DEFAULTS;
+  const [frame, setFrame] = React.useState('home');
+
+  // Apply accent color dynamically
+  const accent = (tweaks && tweaks.accentColor) || '#E8A24F';
+
+  const frameMap = {
+    'home':       <FrameHome      onNav={setFrame}/>,
+    'new-short':  <FrameNewShort  onNav={setFrame} compact={tweaks.compactFrame2}/>,
+    'render':     <FrameRender    onNav={setFrame}/>,
+    'library':    <FrameLibrary   onNav={setFrame}/>,
+    'series':     <FrameSeries    onNav={setFrame}/>,
+    'schedule':   <FrameHome      onNav={setFrame}/>,
+    'accounts':   <FrameAccounts  onNav={setFrame}/>,
+    'settings':   <FrameSettings  onNav={setFrame}/>,
+    'components': <ComponentsStrip/>,
+  };
+
+  // Map nav item IDs to frame IDs
+  const navToFrame = {
+    'home': 'home',
+    'library': 'library',
+    'series': 'series',
+    'schedule': 'home',
+    'accounts': 'accounts',
+    'settings': 'settings',
+  };
+
+  const handleNav = (id) => {
+    setFrame(navToFrame[id] || id);
+  };
+
+  // Determine which sidebar item is "active"
+  const activeNav = Object.keys(navToFrame).find(k => navToFrame[k] === frame) || 'home';
+
+  // Tab bar for quick frame switching (design-canvas style)
+  const frames = [
+    { id:'home',       label:'① Home' },
+    { id:'new-short',  label:'② New Short' },
+    { id:'render',     label:'③ Render' },
+    { id:'library',    label:'④ Library' },
+    { id:'series',     label:'⑤ Series' },
+    { id:'accounts',   label:'⑥ Accounts' },
+    { id:'settings',   label:'⑦ Settings' },
+    { id:'components', label:'◎ System' },
+  ];
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', height: '100vh',
+      background: '#0B0B0D', color: '#F5F5F4',
+      fontFamily: "'Geist Sans', Inter, system-ui, sans-serif",
+    }}>
+      {/* ── Frame switcher tab bar ─────────────────────────────────── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 0,
+        background: '#0B0B0D', borderBottom: '1px solid rgba(255,255,255,0.07)',
+        padding: '0 16px', flexShrink: 0, overflowX: 'auto',
+        height: 40,
+      }}>
+        <span style={{ fontSize: 10, color: '#57534E', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', marginRight: 16, flexShrink: 0 }}>
+          MPL Frames
+        </span>
+        {frames.map(f => (
+          <button key={f.id} onClick={() => setFrame(f.id)} style={{
+            padding: '0 14px', height: 40, background: 'none', border: 'none',
+            borderBottom: `2px solid ${frame === f.id ? accent : 'transparent'}`,
+            color: frame === f.id ? accent : '#57534E',
+            fontSize: 11, fontWeight: frame === f.id ? 600 : 400,
+            cursor: 'pointer', flexShrink: 0, transition: 'all 120ms',
+            letterSpacing: '-0.01em',
+          }}>{f.label}</button>
+        ))}
+        {/* 1024px compact toggle */}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <button onClick={() => setTweak('compactFrame2', !tweaks.compactFrame2)} style={{
+            padding: '4px 10px', borderRadius: 6, border: `1px solid ${tweaks.compactFrame2 ? accent+'44' : 'rgba(255,255,255,0.07)'}`,
+            background: tweaks.compactFrame2 ? `${accent}15` : 'transparent',
+            color: tweaks.compactFrame2 ? accent : '#57534E',
+            fontSize: 10, cursor: 'pointer', fontWeight: 500,
+          }}>
+            {tweaks.compactFrame2 ? '1024px ✓' : '1024px'}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Main app shell ─────────────────────────────────────────── */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        {/* Sidebar — hidden for components strip */}
+        {frame !== 'components' && (
+          <Sidebar activeFrame={activeNav} onNav={handleNav}/>
+        )}
+
+        {/* Frame content */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {frameMap[frame] || frameMap['home']}
+        </div>
+      </div>
+
+      {/* ── Tweaks panel ──────────────────────────────────────────── */}
+      <TweaksPanel>
+        <TweakSection title="Appearance">
+          <TweakColor label="Accent color" tKey="accentColor"/>
+          <TweakToggle label="Dark mode" tKey="darkMode"/>
+        </TweakSection>
+        <TweakSection title="Frame 2 · New Short">
+          <TweakToggle label="1024px compact layout" tKey="compactFrame2"/>
+        </TweakSection>
+        <TweakSection title="Navigation">
+          <TweakRadio label="Active frame" tKey="activeFrame"
+            options={[
+              { label:'Home', value:'home' },
+              { label:'Short', value:'new-short' },
+              { label:'Render', value:'render' },
+              { label:'Library', value:'library' },
+            ]}
+            onChange={(v) => setFrame(v)}
+          />
+          <TweakRadio label="More frames" tKey="activeFrame2"
+            options={[
+              { label:'Series', value:'series' },
+              { label:'Accounts', value:'accounts' },
+              { label:'Settings', value:'settings' },
+              { label:'System', value:'components' },
+            ]}
+            onChange={(v) => setFrame(v)}
+          />
+        </TweakSection>
+      </TweaksPanel>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App/>);
+</script>
+</body>
+</html>

@@ -963,6 +963,17 @@ if __name__ == "__main__":
     rem_temp_files()
     fetch_songs()
 
+    # Reconcile any "uploading..." cache entries left behind by crashed
+    # runs. Anything older than the configured grace window is marked
+    # "stale" so the cache doesn't accumulate forever-pending placeholders.
+    try:
+        from classes.YouTubeUploader import reconcile_pending_uploads
+        reconciled = reconcile_pending_uploads()
+        if reconciled:
+            warning(f" => Reconciled {reconciled} stale 'uploading...' cache entries.")
+    except Exception as _reconcile_err:
+        warning(f"Cache reconciliation skipped: {_reconcile_err}")
+
     llm_provider = get_llm_provider()
     set_llm_provider(llm_provider)
 

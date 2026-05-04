@@ -1037,13 +1037,25 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
         return image_prompts
 
-    def _persist_image(self, image_bytes: bytes, provider_label: str) -> str:
+    def _persist_image(self, image_bytes: bytes, provider_label: str, *, append: bool = True) -> str:
         """
         Writes generated image bytes to a PNG file in .mp.
+
+        Normalizes the image to RGB at write-time. MoviePy's blit assumes
+        3-channel arrays — LA / P / RGBA images crash combine() with
+        `could not broadcast (H,W,2) into (H,W,3)`. Doing the conversion
+        here (once, at download) means combine() never has to re-open
+        every image to check + re-save its mode (saves ~50ms per image
+        per render and avoids redundant disk writes).
 
         Args:
             image_bytes (bytes): Image payload
             provider_label (str): Label for logging
+            append (bool): If True (default, legacy behavior), the new
+                image path is appended to `self.images`. The parallel
+                image generators pass `append=False` because they need
+                to assemble `self.images` in prompt order, not in the
+                order downloads happen to finish.
 
         Returns:
             path (str): Absolute image path
@@ -1053,10 +1065,22 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         with open(image_path, "wb") as image_file:
             image_file.write(image_bytes)
 
+        # Normalize to RGB on disk so the renderer never has to.
+        try:
+            with _PIL_Image.open(image_path) as _im:
+                if _im.mode != "RGB":
+                    _im.convert("RGB").save(image_path)
+        except Exception:
+            # Don't fail the whole pipeline if PIL can't read it; the
+            # combine() loop has its own (now redundant but defensive)
+            # PIL re-check that will skip broken images gracefully.
+            pass
+
         if get_verbose():
             info(f' => Wrote image from {provider_label} to "{image_path}"')
 
-        self.images.append(image_path)
+        if append:
+            self.images.append(image_path)
         return image_path
 
     def _try_huggingface(self, prompt: str) -> bytes:
@@ -1880,6 +1904,13 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             prompts: List of image prompts / search queries.
             image_mode: "ai" → AI generators first, stock photos as fallback (default).
                         "photos" → Wikimedia / stock photos first, AI as last-resort fallback.
+
+        Performance: image generation is network-bound (each provider
+        call waits 5-30s on a remote API). We parallelize across prompts
+        with `get_threads()` workers, but each prompt still walks its
+        own provider cascade serially — so order in `self.images` always
+        matches `prompts`, and combine()'s duration distribution remains
+        correct.
         """
         self._image_mode = image_mode
         if image_mode == "photos":
@@ -1918,31 +1949,64 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 ("Pixabay", self._try_pixabay, "stock"),
             ]
 
-        for i, prompt in enumerate(prompts):
-            print(colored(f"\n  Image {i+1}/{len(prompts)}", "blue"))
-            saved = False
+        def _one(idx: int, prompt: str) -> str:
+            """Resolve a single prompt to one persisted image path."""
+            print(colored(f"  Image {idx+1}/{len(prompts)}", "blue"))
             for name, fn, kind in providers:
                 try:
-                    # In photos mode the LLM produces short search queries — AI providers need cinematic context to render well.
                     effective_prompt = prompt
                     if image_mode == "photos" and kind == "ai":
                         effective_prompt = self._augment_for_ai_fallback(prompt)
                     elif kind == "ai":
-                        # AI mode: append per-channel image style suffix (if any).
                         effective_prompt = self._apply_channel_style(prompt)
                     img_bytes = fn(effective_prompt)
                     if img_bytes and len(img_bytes) > 1000:
-                        self._persist_image(img_bytes, name)
-                        saved = True
-                        break
+                        # append=False: parallel orchestrator below
+                        # rebuilds self.images in prompt order.
+                        return self._persist_image(img_bytes, name, append=False)
                 except Exception as e:
                     if get_verbose():
-                        warning(f"    {name} failed: {str(e)[:100]}")
+                        warning(f"    [{idx+1}] {name} failed: {str(e)[:100]}")
                     time.sleep(1)
-            if not saved:
+            # All providers failed — fallback returns a path AND appends
+            # to self.images. Roll back the append so we can re-add in
+            # order at the end. If the fallback ALSO fails, return ""
+            # and let the orchestrator drop this slot.
+            before = list(self.images)
+            try:
                 self._generate_fallback_image(prompt)
+            except Exception as fallback_err:
+                warning(f"    [{idx+1}] fallback also failed: {fallback_err}")
+                self.images = before
+                return ""
+            new_path = self.images[-1] if self.images and self.images != before else ""
+            self.images = before  # rollback; will reassemble in order
+            return new_path
 
-        success(f"All {len(prompts)} images ready!")
+        threads = max(1, get_threads())
+        results: list[str] = [""] * len(prompts)
+        if threads <= 1 or len(prompts) <= 1:
+            # Preserve serial behavior when threads disabled (debugging).
+            for i, p in enumerate(prompts):
+                results[i] = _one(i, p)
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            print(colored(f"  [Images] Running with {threads} parallel workers...", "blue"))
+            with ThreadPoolExecutor(max_workers=threads) as pool:
+                futures = {pool.submit(_one, i, p): i for i, p in enumerate(prompts)}
+                for fut in as_completed(futures):
+                    i = futures[fut]
+                    try:
+                        results[i] = fut.result()
+                    except Exception as e:
+                        warning(f"    [Image {i+1}] worker raised: {e}")
+                        results[i] = ""
+
+        # Reassemble self.images in the original prompt order, dropping
+        # any slot whose worker returned "" (couldn't produce any image).
+        self.images = [p for p in results if p]
+
+        success(f"All {len(self.images)}/{len(prompts)} images ready!")
 
     def generate_image(self, prompt: str) -> str:
         """
@@ -2038,31 +2102,23 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
     def add_video(self, video: dict) -> None:
         """
-        Adds a video to the cache.
-
-        Args:
-            video (dict): The video to add
-
-        Returns:
-            None
+        Append a video entry to this account's `videos` list in the cache.
+        Atomic: cache is replaced via tempfile + os.replace, never half-written.
         """
-        videos = self.get_videos()
-        videos.append(video)
+        from youtube_upload.cache_io import read_json, write_atomic
 
         cache = get_youtube_cache_path()
+        data = read_json(cache, default={"accounts": []})
 
-        with open(cache, "r", encoding="utf-8") as file:
-            previous_json = json.loads(file.read())
+        if "accounts" not in data or not isinstance(data.get("accounts"), list):
+            data = {"accounts": []}
 
-            # Find our account
-            accounts = previous_json["accounts"]
-            for account in accounts:
-                if account["id"] == self._account_uuid:
-                    account["videos"].append(video)
+        for account in data["accounts"]:
+            if account.get("id") == self._account_uuid:
+                account.setdefault("videos", []).append(video)
+                break
 
-            # Commit changes
-            with open(cache, "w", encoding="utf-8") as f:
-                f.write(json.dumps(previous_json))
+        write_atomic(cache, data)
 
     def generate_subtitles(self, audio_path: str) -> str:
         """
@@ -2399,169 +2455,203 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
             return
         meta["description"] = (desc.rstrip() + "\n\n" + line).lstrip()
 
+    @staticmethod
+    def _close_clips_safely(clips) -> None:
+        """
+        Close every MoviePy clip in `clips`, swallowing any per-clip
+        error. Closing releases the underlying ffmpeg pipe and frees the
+        decoded frame buffer — without this, each render leaks file
+        handles and ~5-15 MB per image clip, which on long videos balloons
+        into hundreds of MB and on Windows leaves source files locked
+        (so a re-run can't overwrite them).
+        """
+        for c in clips:
+            try:
+                c.close()
+            except Exception:
+                pass
+
     def combine(self) -> str:
         """
         Combines everything into the final video.
 
         Returns:
             path (str): The path to the generated MP4 File.
+
+        Memory: every MoviePy clip opened here keeps a file handle and a
+        decoded frame buffer alive. We track them in `_open_clips` and
+        close them all in the `finally` block so a failed render doesn't
+        leak hundreds of MB or lock source files on Windows.
         """
         combined_image_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".mp4")
         threads = get_threads()
         tts_clip = AudioFileClip(self.tts_path)
         max_duration = tts_clip.duration
 
-        print(colored("[+] Combining images...", "blue"))
+        # Clips registered here are closed in the `finally` at the end.
+        _open_clips: list = [tts_clip]
 
-        # Verify all images exist BEFORE computing duration distribution —
-        # stale paths would inflate n_imgs and shrink req_dur, leaving a
-        # black tail where clips run out before the TTS does.
-        valid_images = [p for p in self.images if os.path.exists(p)]
-        if not valid_images:
-            raise FileNotFoundError("No valid images found for video combination")
-        if len(valid_images) != len(self.images):
-            missing = [p for p in self.images if not os.path.exists(p)]
-            if get_verbose():
-                warning(f"Missing {len(missing)} images, using {len(valid_images)} valid ones")
-            self.images = valid_images
-
-        # Crossfade overlap between clips — compensate so the composed total == max_duration
-        crossfade = 0.4
-        n_imgs = len(self.images)
-        total_overlap = crossfade * max(0, n_imgs - 1)
-        req_dur = (max_duration + total_overlap) / n_imgs
-
-        clips = []
-        tot_dur = 0
-        target_total = max_duration + total_overlap
-        # Add each image once, distributing duration evenly across the full TTS length
-        for idx, image_path in enumerate(self.images):
-            # Last clip absorbs any float remainder so composed total == max_duration exactly
-            if idx == n_imgs - 1:
-                this_dur = target_total - tot_dur
-            else:
-                this_dur = req_dur
-            if this_dur <= 0:
-                break
-            # MoviePy's blit assumes 3-channel arrays; LA/P/RGBA images cause
-            # `could not broadcast (H,W,2) into (H,W,3)`. Force RGB on disk.
-            try:
-                with _PIL_Image.open(image_path) as _im:
-                    if _im.mode != "RGB":
-                        _im.convert("RGB").save(image_path)
-            except Exception:
-                pass
-            clip = ImageClip(image_path).set_duration(this_dur).set_fps(30)
-
-            # Not all images are same size,
-            # so we need to resize them
-            if round((clip.w / clip.h), 4) < 0.5625:
-                if get_verbose():
-                    info(f" => Resizing Image: {image_path} to 1080x1920")
-                clip = crop(
-                    clip,
-                    width=clip.w,
-                    height=round(clip.w / 0.5625),
-                    x_center=clip.w / 2,
-                    y_center=clip.h / 2,
-                )
-            else:
-                if get_verbose():
-                    info(f" => Resizing Image: {image_path} to 1920x1080")
-                clip = crop(
-                    clip,
-                    width=round(0.5625 * clip.h),
-                    height=clip.h,
-                    x_center=clip.w / 2,
-                    y_center=clip.h / 2,
-                )
-            clip = clip.resize((1080, 1920))
-
-            # Ken Burns: subtle zoom (alternating in/out per image for variety).
-            # Pre-scale to 1.06x so zoom never reveals empty edges, then animate scale
-            # between 1.00 (fit) and ~1.06 (fill+zoom). We wrap in a fixed-size
-            # CompositeVideoClip so the output stays a deterministic 1080x1920 —
-            # this is critical: variable-size clips make concatenate_videoclips
-            # miscompute timing, which caused all images to play in the first half.
-            base = clip.resize(1.06).set_position("center")
-            if idx % 2 == 0:
-                # Zoom in: 0.943 → 1.000 (relative to the 1.06x base → 1.00 → 1.06 effective)
-                kb = base.resize(lambda t, d=this_dur: (1 / 1.06) + (1 - 1 / 1.06) * (t / d))
-            else:
-                # Zoom out: 1.000 → 0.943
-                kb = base.resize(lambda t, d=this_dur: 1 - (1 - 1 / 1.06) * (t / d))
-            kb = kb.set_position("center")
-
-            clip = CompositeVideoClip([kb], size=(1080, 1920)).set_duration(this_dur)
-
-            # Subtle crossfade in (except first clip) for smooth transitions
-            if idx > 0 and this_dur > crossfade:
-                clip = clip.crossfadein(crossfade)
-
-            # Re-assert duration just in case
-            clip = clip.set_duration(this_dur)
-
-            clips.append(clip)
-            tot_dur += this_dur
-
-        # Negative padding overlaps clips by `crossfade` seconds for smooth blending.
-        # Duration was pre-compensated so composed total == max_duration (no black tail).
-        padding = -crossfade if len(clips) > 1 else 0
-        final_clip = concatenate_videoclips(clips, padding=padding, method="compose")
-        final_clip = final_clip.set_fps(30)
-        # Trim any float drift so video matches TTS exactly
-        if final_clip.duration > max_duration:
-            final_clip = final_clip.subclip(0, max_duration)
-        random_song = choose_random_song(getattr(self, "subject", ""))
-        if is_soundimage_track(random_song):
-            self._append_music_attribution(MATYAS_ATTRIBUTION)
-
-        subtitles = None
         try:
-            print(colored("[+] Building karaoke subtitles...", "blue"), flush=True)
+            print(colored("[+] Combining images...", "blue"))
 
-            # If TTS didn't provide word timestamps, estimate them
-            if not self.word_timestamps:
-                self.word_timestamps = self._estimate_word_timestamps(max_duration)
+            # Verify all images exist BEFORE computing duration distribution —
+            # stale paths would inflate n_imgs and shrink req_dur, leaving a
+            # black tail where clips run out before the TTS does.
+            valid_images = [p for p in self.images if os.path.exists(p)]
+            if not valid_images:
+                raise FileNotFoundError("No valid images found for video combination")
+            if len(valid_images) != len(self.images):
+                missing = [p for p in self.images if not os.path.exists(p)]
+                if get_verbose():
+                    warning(f"Missing {len(missing)} images, using {len(valid_images)} valid ones")
+                self.images = valid_images
 
-            subtitles = self._build_karaoke_subtitles(max_duration)
+            # Crossfade overlap between clips — compensate so the composed total == max_duration
+            crossfade = 0.4
+            n_imgs = len(self.images)
+            total_overlap = crossfade * max(0, n_imgs - 1)
+            req_dur = (max_duration + total_overlap) / n_imgs
+
+            clips = []
+            tot_dur = 0
+            target_total = max_duration + total_overlap
+            # Add each image once, distributing duration evenly across the full TTS length
+            for idx, image_path in enumerate(self.images):
+                # Last clip absorbs any float remainder so composed total == max_duration exactly
+                if idx == n_imgs - 1:
+                    this_dur = target_total - tot_dur
+                else:
+                    this_dur = req_dur
+                if this_dur <= 0:
+                    break
+                # MoviePy's blit assumes 3-channel arrays; LA/P/RGBA images cause
+                # `could not broadcast (H,W,2) into (H,W,3)`. Force RGB on disk.
+                try:
+                    with _PIL_Image.open(image_path) as _im:
+                        if _im.mode != "RGB":
+                            _im.convert("RGB").save(image_path)
+                except Exception:
+                    pass
+                clip = ImageClip(image_path).set_duration(this_dur).set_fps(30)
+                _open_clips.append(clip)
+
+                # Not all images are same size,
+                # so we need to resize them
+                if round((clip.w / clip.h), 4) < 0.5625:
+                    if get_verbose():
+                        info(f" => Resizing Image: {image_path} to 1080x1920")
+                    clip = crop(
+                        clip,
+                        width=clip.w,
+                        height=round(clip.w / 0.5625),
+                        x_center=clip.w / 2,
+                        y_center=clip.h / 2,
+                    )
+                else:
+                    if get_verbose():
+                        info(f" => Resizing Image: {image_path} to 1920x1080")
+                    clip = crop(
+                        clip,
+                        width=round(0.5625 * clip.h),
+                        height=clip.h,
+                        x_center=clip.w / 2,
+                        y_center=clip.h / 2,
+                    )
+                clip = clip.resize((1080, 1920))
+
+                # Ken Burns: subtle zoom (alternating in/out per image for variety).
+                # Pre-scale to 1.06x so zoom never reveals empty edges, then animate scale
+                # between 1.00 (fit) and ~1.06 (fill+zoom). We wrap in a fixed-size
+                # CompositeVideoClip so the output stays a deterministic 1080x1920 —
+                # this is critical: variable-size clips make concatenate_videoclips
+                # miscompute timing, which caused all images to play in the first half.
+                base = clip.resize(1.06).set_position("center")
+                if idx % 2 == 0:
+                    # Zoom in: 0.943 → 1.000 (relative to the 1.06x base → 1.00 → 1.06 effective)
+                    kb = base.resize(lambda t, d=this_dur: (1 / 1.06) + (1 - 1 / 1.06) * (t / d))
+                else:
+                    # Zoom out: 1.000 → 0.943
+                    kb = base.resize(lambda t, d=this_dur: 1 - (1 - 1 / 1.06) * (t / d))
+                kb = kb.set_position("center")
+
+                clip = CompositeVideoClip([kb], size=(1080, 1920)).set_duration(this_dur)
+                _open_clips.append(clip)
+
+                # Subtle crossfade in (except first clip) for smooth transitions
+                if idx > 0 and this_dur > crossfade:
+                    clip = clip.crossfadein(crossfade)
+
+                # Re-assert duration just in case
+                clip = clip.set_duration(this_dur)
+
+                clips.append(clip)
+                tot_dur += this_dur
+
+            # Negative padding overlaps clips by `crossfade` seconds for smooth blending.
+            # Duration was pre-compensated so composed total == max_duration (no black tail).
+            padding = -crossfade if len(clips) > 1 else 0
+            final_clip = concatenate_videoclips(clips, padding=padding, method="compose")
+            _open_clips.append(final_clip)
+            final_clip = final_clip.set_fps(30)
+            # Trim any float drift so video matches TTS exactly
+            if final_clip.duration > max_duration:
+                final_clip = final_clip.subclip(0, max_duration)
+            random_song = choose_random_song(getattr(self, "subject", ""))
+            if is_soundimage_track(random_song):
+                self._append_music_attribution(MATYAS_ATTRIBUTION)
+
+            subtitles = None
+            try:
+                print(colored("[+] Building karaoke subtitles...", "blue"), flush=True)
+
+                # If TTS didn't provide word timestamps, estimate them
+                if not self.word_timestamps:
+                    self.word_timestamps = self._estimate_word_timestamps(max_duration)
+
+                subtitles = self._build_karaoke_subtitles(max_duration)
+
+                if subtitles is not None:
+                    print(colored("[+] Karaoke subtitles ready.", "green"), flush=True)
+            except Exception as e:
+                warning(f"Failed to generate subtitles, continuing without subtitles: {e}")
+
+            print(colored("[+] Mixing audio...", "blue"), flush=True)
+            random_song_clip = AudioFileClip(random_song).set_fps(44100)
+            _open_clips.append(random_song_clip)
+
+            # Loop background music if shorter than TTS, then trim to match
+            if random_song_clip.duration < tts_clip.duration:
+                loops_needed = int(tts_clip.duration // random_song_clip.duration) + 1
+                random_song_clip = concatenate_audioclips([random_song_clip] * loops_needed)
+            random_song_clip = random_song_clip.subclip(0, tts_clip.duration)
+
+            # Background music at 15% volume (audible but won't overpower voice)
+            random_song_clip = random_song_clip.fx(afx.volumex, 0.15)
+            comp_audio = CompositeAudioClip([tts_clip.set_fps(44100), random_song_clip])
+            _open_clips.append(comp_audio)
+
+            final_clip = final_clip.set_audio(comp_audio)
+            # Force exact duration match so no black frames can appear at the tail
+            final_clip = final_clip.set_duration(max_duration)
 
             if subtitles is not None:
-                print(colored("[+] Karaoke subtitles ready.", "green"), flush=True)
-        except Exception as e:
-            warning(f"Failed to generate subtitles, continuing without subtitles: {e}")
+                # Clamp subtitles to video duration so they can't extend the composite
+                # past the last image (which would produce a black tail with subs visible).
+                subtitles = subtitles.set_duration(max_duration)
+                _open_clips.append(subtitles)
+                final_clip = CompositeVideoClip(
+                    [final_clip, subtitles], size=(1080, 1920)
+                ).set_duration(max_duration)
+                _open_clips.append(final_clip)
 
-        print(colored("[+] Mixing audio...", "blue"), flush=True)
-        random_song_clip = AudioFileClip(random_song).set_fps(44100)
+            print(colored("[+] Rendering final video (this may take a minute)...", "blue"), flush=True)
+            final_clip.write_videofile(combined_image_path, threads=threads)
 
-        # Loop background music if shorter than TTS, then trim to match
-        if random_song_clip.duration < tts_clip.duration:
-            loops_needed = int(tts_clip.duration // random_song_clip.duration) + 1
-            random_song_clip = concatenate_audioclips([random_song_clip] * loops_needed)
-        random_song_clip = random_song_clip.subclip(0, tts_clip.duration)
+            success(f'Wrote Video to "{combined_image_path}"')
 
-        # Background music at 15% volume (audible but won't overpower voice)
-        random_song_clip = random_song_clip.fx(afx.volumex, 0.15)
-        comp_audio = CompositeAudioClip([tts_clip.set_fps(44100), random_song_clip])
-
-        final_clip = final_clip.set_audio(comp_audio)
-        # Force exact duration match so no black frames can appear at the tail
-        final_clip = final_clip.set_duration(max_duration)
-
-        if subtitles is not None:
-            # Clamp subtitles to video duration so they can't extend the composite
-            # past the last image (which would produce a black tail with subs visible).
-            subtitles = subtitles.set_duration(max_duration)
-            final_clip = CompositeVideoClip(
-                [final_clip, subtitles], size=(1080, 1920)
-            ).set_duration(max_duration)
-
-        print(colored("[+] Rendering final video (this may take a minute)...", "blue"), flush=True)
-        final_clip.write_videofile(combined_image_path, threads=threads)
-
-        success(f'Wrote Video to "{combined_image_path}"')
-
-        return combined_image_path
+            return combined_image_path
+        finally:
+            self._close_clips_safely(_open_clips)
 
     def generate_video(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai") -> str:
         """
@@ -3643,38 +3733,70 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
     def generate_long_images(self, prompts: List[str]) -> None:
         """
         Generate images for long video in 16:9 landscape format (1920x1080).
-        Cascade: Leonardo AI → Pollinations FLUX → HuggingFace → Pillow fallback.
+        Cascade: Nano Banana 2 → Leonardo AI → Pollinations FLUX → HuggingFace → Pillow fallback.
+
+        Performance: same parallelism strategy as `generate_images_batch`
+        (one worker per prompt, each worker walks its provider cascade
+        serially). Long videos have ~50 prompts so this is the single
+        biggest wall-clock improvement in the long pipeline.
         """
         print(colored(f"\n  [Long Video] Generating {len(prompts)} images (1920x1080)...", "blue"))
 
-        for i, prompt in enumerate(prompts):
-            print(colored(f"\n  Image {i+1}/{len(prompts)}", "blue"))
-            saved = False
+        providers = [
+            ("Nano Banana 2 16:9", self._try_nanobanana2_landscape),
+            ("Leonardo AI", self._try_leonardo_landscape),
+            ("Pollinations.ai FLUX", self._try_pollinations_landscape),
+            ("HuggingFace", self._try_huggingface),
+        ]
 
-            # Apply per-channel style suffix to AI prompts.
+        def _one(idx: int, prompt: str) -> str:
+            print(colored(f"  Image {idx+1}/{len(prompts)}", "blue"))
             styled_prompt = self._apply_channel_style(prompt)
-
-            for name, fn in [
-                ("Nano Banana 2 16:9", lambda p: self._try_nanobanana2_landscape(p)),
-                ("Leonardo AI", lambda p: self._try_leonardo_landscape(p)),
-                ("Pollinations.ai FLUX", lambda p: self._try_pollinations_landscape(p)),
-                ("HuggingFace", self._try_huggingface),
-            ]:
+            for name, fn in providers:
                 try:
                     img_bytes = fn(styled_prompt)
                     if img_bytes and len(img_bytes) > 1000:
-                        self._persist_image(img_bytes, name)
-                        saved = True
-                        break
+                        return self._persist_image(img_bytes, name, append=False)
                 except Exception as e:
                     if get_verbose():
-                        warning(f"    {name} failed: {str(e)[:100]}")
+                        warning(f"    [{idx+1}] {name} failed: {str(e)[:100]}")
                     time.sleep(1)
-
-            if not saved:
+            # All providers failed — landscape fallback also appends to
+            # self.images; roll back so we keep prompt-order. If the
+            # fallback ALSO fails, return "" and let the orchestrator
+            # drop this slot.
+            before = list(self.images)
+            try:
                 self._generate_fallback_image_landscape(prompt)
+            except Exception as fallback_err:
+                warning(f"    [{idx+1}] landscape fallback also failed: {fallback_err}")
+                self.images = before
+                return ""
+            new_path = self.images[-1] if self.images and self.images != before else ""
+            self.images = before
+            return new_path
 
-        success(f"All {len(self.images)} long video images ready!")
+        threads = max(1, get_threads())
+        results: list[str] = [""] * len(prompts)
+        if threads <= 1 or len(prompts) <= 1:
+            for i, p in enumerate(prompts):
+                results[i] = _one(i, p)
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            print(colored(f"  [Long Video] Running with {threads} parallel workers...", "blue"))
+            with ThreadPoolExecutor(max_workers=threads) as pool:
+                futures = {pool.submit(_one, i, p): i for i, p in enumerate(prompts)}
+                for fut in as_completed(futures):
+                    i = futures[fut]
+                    try:
+                        results[i] = fut.result()
+                    except Exception as e:
+                        warning(f"    [Image {i+1}] worker raised: {e}")
+                        results[i] = ""
+
+        self.images = [p for p in results if p]
+
+        success(f"All {len(self.images)}/{len(prompts)} long video images ready!")
 
     def _try_pollinations_landscape(self, prompt: str) -> bytes:
         """Pollinations.ai in 16:9 landscape for long videos."""
@@ -3879,163 +4001,178 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         """
         Combines images and audio into a long-form 16:9 landscape video.
         No subtitles, cinematic Ken Burns effect (slow zoom/pan), smooth transitions.
+
+        Memory: long videos open ~50+ ImageClips, plus the music and the
+        composite. Without explicit close() each one leaks file handles
+        and decoded frame buffers — on a 20-min render that's hundreds of
+        MB and Windows file locks. We register every clip into `_open_clips`
+        and close them all in `finally`.
         """
         combined_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".mp4")
         threads = get_threads()
         tts_clip = AudioFileClip(self.tts_path)
         max_duration = tts_clip.duration
 
+        _open_clips: list = [tts_clip]
+
         t_total = time.time()
-        print(colored(f"[+] Combining {len(self.images)} images into long video ({max_duration:.0f}s)...", "blue"), flush=True)
+        try:
+            print(colored(f"[+] Combining {len(self.images)} images into long video ({max_duration:.0f}s)...", "blue"), flush=True)
 
-        valid_images = [p for p in self.images if os.path.exists(p)]
-        if not valid_images:
-            raise FileNotFoundError("No valid images found")
-        self.images = valid_images
+            valid_images = [p for p in self.images if os.path.exists(p)]
+            if not valid_images:
+                raise FileNotFoundError("No valid images found")
+            self.images = valid_images
 
-        clips = []
-        tot_dur = 0
-        clip_idx = 0
-        n_total = len(self.images)
+            clips = []
+            tot_dur = 0
+            clip_idx = 0
+            n_total = len(self.images)
 
-        # Compensate req_dur for the crossfade overlap so the VISIBLE duration matches
-        # the audio exactly. Each of the (n-1) crossfades eats CROSSFADE_DUR seconds, so
-        # we extend each clip a bit. Without this, the last ~23s of audio play over a
-        # black screen because the visible video ends early.
-        # Also reserve EXTRA_TAIL extra seconds on the last clip so it can fade out gracefully.
-        CROSSFADE_DUR = 0.8
-        EXTRA_TAIL = 1.5  # the last clip lingers 1.5s for the fade-out
-        overlap_total = CROSSFADE_DUR * (n_total - 1) if n_total > 1 else 0
-        req_dur = (max_duration + overlap_total + EXTRA_TAIL) / n_total
+            # Compensate req_dur for the crossfade overlap so the VISIBLE duration matches
+            # the audio exactly. Each of the (n-1) crossfades eats CROSSFADE_DUR seconds, so
+            # we extend each clip a bit. Without this, the last ~23s of audio play over a
+            # black screen because the visible video ends early.
+            # Also reserve EXTRA_TAIL extra seconds on the last clip so it can fade out gracefully.
+            CROSSFADE_DUR = 0.8
+            EXTRA_TAIL = 1.5  # the last clip lingers 1.5s for the fade-out
+            overlap_total = CROSSFADE_DUR * (n_total - 1) if n_total > 1 else 0
+            req_dur = (max_duration + overlap_total + EXTRA_TAIL) / n_total
 
-        t_phase = time.time()
-        from itertools import cycle
-        # Safety cap so a malformed image list (e.g. one image looping with tiny req_dur)
-        # cannot spin forever; in practice the clip_dur < 0.5 break exits well before this.
-        max_iterations = max(n_total * 4, 200)
-        target_total = max_duration + overlap_total + EXTRA_TAIL
-        for iteration, image_path in enumerate(cycle(self.images)):
-            if iteration >= max_iterations:
-                warning(f"    [Build] safety cap hit at {iteration} iterations; stopping.")
-                break
-            if tot_dur >= target_total - 0.01:  # float-tolerant termination
-                break
+            t_phase = time.time()
+            from itertools import cycle
+            # Safety cap so a malformed image list (e.g. one image looping with tiny req_dur)
+            # cannot spin forever; in practice the clip_dur < 0.5 break exits well before this.
+            max_iterations = max(n_total * 4, 200)
+            target_total = max_duration + overlap_total + EXTRA_TAIL
+            for iteration, image_path in enumerate(cycle(self.images)):
+                if iteration >= max_iterations:
+                    warning(f"    [Build] safety cap hit at {iteration} iterations; stopping.")
+                    break
+                if tot_dur >= target_total - 0.01:  # float-tolerant termination
+                    break
 
-            clip_dur = min(req_dur, target_total - tot_dur)
-            if clip_dur < 0.5:
-                break
+                clip_dur = min(req_dur, target_total - tot_dur)
+                if clip_dur < 0.5:
+                    break
 
-            try:
-                clip_idx += 1
-                print(colored(f"    [Build] Clip {clip_idx}/{n_total} ({clip_dur:.1f}s)...", "cyan"), flush=True)
-                # MoviePy's blit assumes 3-channel arrays; LA/P/RGBA images cause
-                # `could not broadcast (H,W,2) into (H,W,3)`. Force RGB on disk.
                 try:
-                    with _PIL_Image.open(image_path) as _im:
-                        if _im.mode != "RGB":
-                            _im.convert("RGB").save(image_path)
-                except Exception:
-                    pass
-                img_clip = ImageClip(image_path).set_duration(clip_dur)
+                    clip_idx += 1
+                    print(colored(f"    [Build] Clip {clip_idx}/{n_total} ({clip_dur:.1f}s)...", "cyan"), flush=True)
+                    # MoviePy's blit assumes 3-channel arrays; LA/P/RGBA images cause
+                    # `could not broadcast (H,W,2) into (H,W,3)`. Force RGB on disk.
+                    try:
+                        with _PIL_Image.open(image_path) as _im:
+                            if _im.mode != "RGB":
+                                _im.convert("RGB").save(image_path)
+                    except Exception:
+                        pass
+                    img_clip = ImageClip(image_path).set_duration(clip_dur)
+                    _open_clips.append(img_clip)
 
-                # Resize to 1920x1080
-                w, h = img_clip.size
-                aspect = w / h
-                target_aspect = 1920 / 1080
+                    # Resize to 1920x1080
+                    w, h = img_clip.size
+                    aspect = w / h
+                    target_aspect = 1920 / 1080
 
-                if aspect > target_aspect:
-                    img_clip = img_clip.resize(height=1080)
-                    img_clip = crop(img_clip, x_center=img_clip.w / 2, y_center=540, width=1920, height=1080)
-                else:
-                    img_clip = img_clip.resize(width=1920)
-                    img_clip = crop(img_clip, x_center=960, y_center=img_clip.h / 2, width=1920, height=1080)
+                    if aspect > target_aspect:
+                        img_clip = img_clip.resize(height=1080)
+                        img_clip = crop(img_clip, x_center=img_clip.w / 2, y_center=540, width=1920, height=1080)
+                    else:
+                        img_clip = img_clip.resize(width=1920)
+                        img_clip = crop(img_clip, x_center=960, y_center=img_clip.h / 2, width=1920, height=1080)
 
-                # Ken Burns: gentle slow zoom (1.0x → 1.08x over clip duration)
-                # Use default arg to capture clip_dur in the closure
-                img_clip = img_clip.resize(lambda t, d=clip_dur: 1 + 0.08 * (t / d))
+                    # Ken Burns: gentle slow zoom (1.0x → 1.08x over clip duration)
+                    # Use default arg to capture clip_dur in the closure
+                    img_clip = img_clip.resize(lambda t, d=clip_dur: 1 + 0.08 * (t / d))
 
-                # Crossfade between images
-                if clip_dur > 2.0:
-                    img_clip = img_clip.crossfadein(0.8)
+                    # Crossfade between images
+                    if clip_dur > 2.0:
+                        img_clip = img_clip.crossfadein(0.8)
 
-                img_clip = img_clip.set_fps(24)
-                clips.append(img_clip)
-                tot_dur += clip_dur
+                    img_clip = img_clip.set_fps(24)
+                    clips.append(img_clip)
+                    tot_dur += clip_dur
 
-            except Exception as e:
-                if get_verbose():
-                    warning(f"Skipping image {image_path}: {e}")
-                continue
-        print(colored(f"    [Build] {len(clips)} clips ready in {time.time() - t_phase:.1f}s", "green"), flush=True)
+                except Exception as e:
+                    if get_verbose():
+                        warning(f"Skipping image {image_path}: {e}")
+                    continue
+            print(colored(f"    [Build] {len(clips)} clips ready in {time.time() - t_phase:.1f}s", "green"), flush=True)
 
-        if not clips:
-            raise RuntimeError("No clips could be created from images")
+            if not clips:
+                raise RuntimeError("No clips could be created from images")
 
-        # Concatenate with crossfade overlap between clips
-        print(colored("[+] Applying transitions...", "blue"), flush=True)
-        t_phase = time.time()
-        padding = -CROSSFADE_DUR if len(clips) > 1 else 0
-        final_clip = concatenate_videoclips(clips, padding=padding, method="compose")
-        final_clip = final_clip.set_fps(24)
+            # Concatenate with crossfade overlap between clips
+            print(colored("[+] Applying transitions...", "blue"), flush=True)
+            t_phase = time.time()
+            padding = -CROSSFADE_DUR if len(clips) > 1 else 0
+            final_clip = concatenate_videoclips(clips, padding=padding, method="compose")
+            _open_clips.append(final_clip)
+            final_clip = final_clip.set_fps(24)
 
-        # The video should now last about (audio + EXTRA_TAIL); cap to (audio + EXTRA_TAIL)
-        # so we have a small visual tail beyond the last narration word that fades out.
-        target_visual_duration = max_duration + EXTRA_TAIL
-        if final_clip.duration > target_visual_duration:
-            final_clip = final_clip.subclip(0, target_visual_duration)
+            # The video should now last about (audio + EXTRA_TAIL); cap to (audio + EXTRA_TAIL)
+            # so we have a small visual tail beyond the last narration word that fades out.
+            target_visual_duration = max_duration + EXTRA_TAIL
+            if final_clip.duration > target_visual_duration:
+                final_clip = final_clip.subclip(0, target_visual_duration)
 
-        # Smooth fade-to-black at the very end so the closing doesn't cut abruptly.
-        final_clip = final_clip.fadeout(EXTRA_TAIL)
-        print(colored(f"    [Transitions] done in {time.time() - t_phase:.1f}s", "green"), flush=True)
+            # Smooth fade-to-black at the very end so the closing doesn't cut abruptly.
+            final_clip = final_clip.fadeout(EXTRA_TAIL)
+            print(colored(f"    [Transitions] done in {time.time() - t_phase:.1f}s", "green"), flush=True)
 
-        # Audio: TTS + background music
-        print(colored("[+] Mixing audio...", "blue"), flush=True)
-        t_phase = time.time()
-        random_song = choose_random_song(getattr(self, "subject", ""))
-        if is_soundimage_track(random_song):
-            self._append_music_attribution(MATYAS_ATTRIBUTION)
-        music_clip = AudioFileClip(random_song).set_fps(44100)
+            # Audio: TTS + background music
+            print(colored("[+] Mixing audio...", "blue"), flush=True)
+            t_phase = time.time()
+            random_song = choose_random_song(getattr(self, "subject", ""))
+            if is_soundimage_track(random_song):
+                self._append_music_attribution(MATYAS_ATTRIBUTION)
+            music_clip = AudioFileClip(random_song).set_fps(44100)
+            _open_clips.append(music_clip)
 
-        # Total audio runs slightly past the narration so the closing fade has music under it.
-        total_dur = max_duration + EXTRA_TAIL
+            # Total audio runs slightly past the narration so the closing fade has music under it.
+            total_dur = max_duration + EXTRA_TAIL
 
-        # Loop music if shorter than the full timeline (narration + fade tail)
-        if music_clip.duration < total_dur:
-            loops_needed = int(total_dur // music_clip.duration) + 1
-            music_clip = concatenate_audioclips([music_clip] * loops_needed)
-        music_clip = music_clip.subclip(0, total_dur)
+            # Loop music if shorter than the full timeline (narration + fade tail)
+            if music_clip.duration < total_dur:
+                loops_needed = int(total_dur // music_clip.duration) + 1
+                music_clip = concatenate_audioclips([music_clip] * loops_needed)
+            music_clip = music_clip.subclip(0, total_dur)
 
-        # Background music at 10% volume for long videos (subtle ambient)
-        music_clip = music_clip.fx(afx.volumex, 0.10)
+            # Background music at 10% volume for long videos (subtle ambient)
+            music_clip = music_clip.fx(afx.volumex, 0.10)
 
-        # Music fades in over 3s at start; fades out across the EXTRA_TAIL closing window
-        # in sync with the visual fade-to-black.
-        music_clip = music_clip.audio_fadein(3.0).audio_fadeout(EXTRA_TAIL + 1.0)
+            # Music fades in over 3s at start; fades out across the EXTRA_TAIL closing window
+            # in sync with the visual fade-to-black.
+            music_clip = music_clip.audio_fadein(3.0).audio_fadeout(EXTRA_TAIL + 1.0)
 
-        comp_audio = CompositeAudioClip([tts_clip.set_fps(44100), music_clip])
+            comp_audio = CompositeAudioClip([tts_clip.set_fps(44100), music_clip])
+            _open_clips.append(comp_audio)
 
-        # Set audio THEN duration — order matters for MoviePy
-        final_clip = final_clip.set_duration(total_dur)
-        final_clip = final_clip.set_audio(comp_audio)
-        print(colored(f"    [Audio] mixed in {time.time() - t_phase:.1f}s", "green"), flush=True)
+            # Set audio THEN duration — order matters for MoviePy
+            final_clip = final_clip.set_duration(total_dur)
+            final_clip = final_clip.set_audio(comp_audio)
+            print(colored(f"    [Audio] mixed in {time.time() - t_phase:.1f}s", "green"), flush=True)
 
-        print(colored("[+] Rendering long video (ffmpeg)...", "blue"), flush=True)
-        t_phase = time.time()
-        final_clip.write_videofile(
-            combined_path,
-            threads=threads,
-            fps=24,
-            codec="libx264",
-            audio_codec="aac",
-            preset="ultrafast",
-            audio=True,
-            logger="bar",
-        )
-        print(colored(f"    [Render] done in {time.time() - t_phase:.1f}s", "green"), flush=True)
-        print(colored(f"[+] Total combine_long: {time.time() - t_total:.1f}s", "blue"), flush=True)
+            print(colored("[+] Rendering long video (ffmpeg)...", "blue"), flush=True)
+            t_phase = time.time()
+            final_clip.write_videofile(
+                combined_path,
+                threads=threads,
+                fps=24,
+                codec="libx264",
+                audio_codec="aac",
+                preset="ultrafast",
+                audio=True,
+                logger="bar",
+            )
+            print(colored(f"    [Render] done in {time.time() - t_phase:.1f}s", "green"), flush=True)
+            print(colored(f"[+] Total combine_long: {time.time() - t_total:.1f}s", "blue"), flush=True)
 
-        success(f'Wrote long video to "{combined_path}"')
-        return combined_path
+            success(f'Wrote long video to "{combined_path}"')
+            return combined_path
+        finally:
+            self._close_clips_safely(_open_clips)
 
     def generate_long_video(self, tts_instance: TTS, custom_topic: str = "") -> str:
         """
@@ -4067,6 +4204,17 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         info("  LONG VIDEO GENERATION PIPELINE")
         info("=" * 50)
 
+        # Reset per-video state. Without this, a 2nd run in the same session
+        # inherits stale paths from the 1st (whose PNGs were wiped by
+        # rem_temp_files()), inflating n_imgs in combine_long() and producing
+        # missing-file warnings or silent black tails.
+        self.images = []
+        self.image_prompts = []
+        self.word_timestamps = None
+        self.tts_path = None
+        self.subtitles_path = None
+        self._used_stock_urls = set()
+        self.thumbnail_path = ""
         # Mark this as a long video so upload_video knows to wait longer for the upload to finish.
         self._is_long_video = True
 
@@ -4189,9 +4337,10 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
     def _save_metadata_sidecar(self) -> None:
         """
-        Persist {title, description, subject, language} as `<video>.meta.json`
-        next to the rendered .mp4. Called right after rendering so that if the
-        Selenium upload later crashes, the metadata is not lost.
+        Persist {title, description, subject, language, thumbnail_path} as
+        `<video>.meta.json` next to the rendered .mp4. Called right after
+        rendering so that if the Selenium upload later crashes, the
+        metadata (including the custom thumbnail path) is not lost.
         """
         if not getattr(self, "video_path", None):
             return
@@ -4206,6 +4355,7 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                         "description": self.metadata.get("description", ""),
                         "subject": getattr(self, "subject", "") or "",
                         "language": getattr(self, "_language", "") or "",
+                        "thumbnail_path": getattr(self, "thumbnail_path", "") or "",
                     },
                     f,
                     ensure_ascii=False,
@@ -4279,6 +4429,10 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 "title": sidecar["title"],
                 "description": sidecar["description"],
             }
+            saved_thumb = sidecar.get("thumbnail_path") or ""
+            if saved_thumb and os.path.isfile(saved_thumb):
+                self.thumbnail_path = saved_thumb
+                info(f" => Restored thumbnail from sidecar: {saved_thumb}")
             info(" => Loaded saved metadata from sidecar.")
             success(f" => Title: {self.metadata['title']}")
             return self.upload_video()
@@ -4341,25 +4495,19 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
     def get_videos(self) -> List[dict]:
         """
-        Gets the uploaded videos from the YouTube Channel.
-
-        Returns:
-            videos (List[dict]): The uploaded videos.
+        Returns this account's previously uploaded videos from the cache.
+        Creates the cache file (with the correct `{"accounts": []}` shape)
+        if it doesn't exist yet.
         """
-        if not os.path.exists(get_youtube_cache_path()):
-            # Create the cache file
-            with open(get_youtube_cache_path(), "w", encoding="utf-8") as file:
-                json.dump({"videos": []}, file, indent=4)
+        from youtube_upload.cache_io import read_json, write_atomic
+
+        cache_path = get_youtube_cache_path()
+        if not os.path.exists(cache_path):
+            write_atomic(cache_path, {"accounts": []})
             return []
 
-        videos = []
-        # Read the cache file
-        with open(get_youtube_cache_path(), "r", encoding="utf-8") as file:
-            previous_json = json.loads(file.read())
-            # Find our account
-            accounts = previous_json["accounts"]
-            for account in accounts:
-                if account["id"] == self._account_uuid:
-                    videos = account["videos"]
-
-        return videos
+        data = read_json(cache_path, default={"accounts": []})
+        for account in data.get("accounts", []) or []:
+            if account.get("id") == self._account_uuid:
+                return account.get("videos", []) or []
+        return []

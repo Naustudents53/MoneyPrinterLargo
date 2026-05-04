@@ -5,6 +5,7 @@ import { Search, Upload, Eye, ThumbsUp, MessageCircle, Film, RefreshCw } from "l
 import { useProjectStore } from "@/stores/project";
 import { StudioCard } from "@/components/studio/StudioCard";
 import { useState, useEffect, useCallback } from "react";
+import { getYoutubeVideos } from "@/lib/api";
 
 interface YouTubeVideo {
   id: string;
@@ -28,10 +29,22 @@ export function StageSelectMovie() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("http://localhost:8000/api/youtube/videos", { signal: AbortSignal.timeout(8000) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setVideos(data.videos || []);
+      const signal = AbortSignal.timeout(8000);
+      const data = await getYoutubeVideos(signal);
+      const mapped: YouTubeVideo[] = (data.videos || []).map((v: unknown) => {
+        const anyV = v as Record<string, unknown>;
+        return {
+          id: String(anyV.id ?? crypto.randomUUID()),
+          title: String(anyV.title ?? "Untitled"),
+          thumbnail: String(anyV.thumbnail ?? ""),
+          url: String(anyV.url ?? ""),
+          views: String(anyV.views ?? "—"),
+          likes: String(anyV.likes ?? "—"),
+          comments: String(anyV.comments ?? "—"),
+          published: String(anyV.published ?? ""),
+        };
+      });
+      setVideos(mapped);
     } catch {
       setVideos(FALLBACK_VIDEOS);
     } finally {
@@ -194,7 +207,7 @@ export function StageSelectMovie() {
                     selected={selected === video.id}
                     onClick={() => {
                       setSelected(video.id);
-                      createProject(video.title, video.title, video.url);
+                      createProject(video.title, video.title, video.url ?? "");
                     }}
                   >
                     <div className="relative w-full h-full"

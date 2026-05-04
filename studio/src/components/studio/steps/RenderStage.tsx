@@ -1,51 +1,92 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { XCircle, ArrowRight, CheckCircle2, FileVideo } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useProductionStore } from "@/stores/production";
+import { useJobEvents } from "@/lib/useJobEvents";
+import { cancelJob, API_BASE, type Stage } from "@/lib/api";
 
 interface RenderStageProps {
   onComplete?: () => void;
 }
 
-const STATUSES = [
-  "Queued...",
-  "Generating script...",
-  "Generating images (3/12)...",
-  "Rendering...",
-  "Encoding audio...",
-  "Export complete",
-];
+const STAGE_LABELS: Record<string, string> = {
+  topic: "Topic",
+  script: "Script",
+  metadata: "Metadata",
+  prompts: "Image prompts",
+  images: "Images",
+  thumbnail: "Thumbnail",
+  tts: "Narration",
+  render: "Final video",
+};
 
 export function RenderStage({ onComplete }: RenderStageProps) {
-  const [progress, setProgress] = useState(0);
-  const [statusIndex, setStatusIndex] = useState(0);
-  const [cancelled, setCancelled] = useState(false);
-  const [done, setDone] = useState(false);
+  const production = useProductionStore((s) =>
+    s.productions.find((p) => p.id === s.currentProductionId)
+  );
+  const jobId = production?.jobId;
+  const jobStatus = production?.jobStatus;
+  const jobProgress = production?.jobProgress ?? 0;
 
-  useEffect(() => {
-    if (cancelled || done) return;
-    const interval = setInterval(() => {
-      setProgress((prev) => {
-        const next = prev + Math.random() * 12;
-        if (next >= 100) {
-          clearInterval(interval);
-          setStatusIndex(STATUSES.length - 1);
-          setDone(true);
-          return 100;
-        }
-        const nextIndex = Math.min(Math.floor((next / 100) * (STATUSES.length - 1)), STATUSES.length - 2);
-        setStatusIndex(nextIndex);
-        return next;
-      });
-    }, 800);
-    return () => clearInterval(interval);
-  }, [cancelled, done]);
+  const [activeStage, setActiveStage] = useState<Stage | null>(null);
+  const [activeMessage, setActiveMessage] = useState<string>("");
+
+  useJobEvents(jobId ?? null, {
+    "stage.start": (e) => {
+      setActiveStage(e.stage);
+      setActiveMessage(e.message);
+    },
+    "stage.progress": (e) => {
+      // For "render" the percent is meaningful; for "images" it's the
+      // image counter. Either way we treat it as the headline progress
+      // for the bar.
+      if (typeof e.percent === "number" && e.percent > 0) {
+        useProductionStore.getState().setJobProgress(Number(e.percent));
+      }
+      setActiveStage(e.stage);
+      setActiveMessage(e.message);
+    },
+    "stage.done": (e) => {
+      if (e.stage === "render") {
+        useProductionStore.getState().setJobStatus("done");
+        useProductionStore
+          .getState()
+          .setVideoPath(`${API_BASE}/api/jobs/${jobId}/artifact/video`);
+      }
+    },
+    "stage.error": (e) => {
+      useProductionStore.getState().setJobStatus("error");
+      setActiveMessage(e.message);
+    },
+    done: (e) => {
+      useProductionStore.getState().setJobStatus("done");
+      const url = (e.artifacts as Record<string, string> | undefined)?.video;
+      if (url) useProductionStore.getState().setVideoPath(url);
+    },
+    cancelled: () => {
+      useProductionStore.getState().setJobStatus("cancelled");
+    },
+  });
+
+  const statusText = useMemo(() => {
+    if (jobStatus === "done") return "Render Complete";
+    if (jobStatus === "error") return "Render Error";
+    if (jobStatus === "cancelled") return "Cancelled by user";
+    if (activeStage && STAGE_LABELS[activeStage]) {
+      return `${STAGE_LABELS[activeStage]}${activeMessage ? " — " + activeMessage : ""}`;
+    }
+    if (jobStatus === "running") return "Rendering...";
+    return "Waiting...";
+  }, [jobStatus, activeStage, activeMessage]);
+
+  const done = jobStatus === "done";
+  const cancelled = jobStatus === "cancelled";
 
   return (
     <div className="flex flex-col items-center gap-8 p-6">
-      {/* Progress bar */}
       <div className="w-full max-w-2xl">
         <div className="h-2 w-full overflow-hidden rounded-full bg-surface-sunken">
           <motion.div
@@ -55,23 +96,24 @@ export function RenderStage({ onComplete }: RenderStageProps) {
               boxShadow: "0 0 20px rgba(124,58,237,0.2)",
             }}
             initial={{ width: 0 }}
-            animate={{ width: `${progress}%` }}
+            animate={{ width: `${Math.min(jobProgress, 100)}%` }}
             transition={{ duration: 0.5, ease: "easeOut" }}
           />
         </div>
         <div className="mt-2 flex items-center justify-between text-xs text-text-tertiary">
-          <span>{Math.round(progress)}%</span>
-          <span className="text-text-secondary">{STATUSES[statusIndex]}</span>
+          <span>{Math.round(jobProgress)}%</span>
+          <span className="text-text-secondary">{statusText}</span>
         </div>
       </div>
 
-      {/* Status card */}
       <motion.div
         className={cn(
           "flex w-full max-w-2xl flex-col items-center gap-4 rounded-2xl border p-8 text-center shadow-panel",
           done
             ? "border-success/20 bg-success/5"
-            : "border-border-ghost bg-surface-raised"
+            : cancelled
+              ? "border-error/20 bg-error/5"
+              : "border-border-ghost bg-surface-raised"
         )}
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -95,14 +137,12 @@ export function RenderStage({ onComplete }: RenderStageProps) {
         )}
 
         <div className="flex flex-col gap-1">
-          <span className="text-lg font-medium text-text-primary">
-            {done ? "Export Complete" : STATUSES[statusIndex]}
-          </span>
+          <span className="text-lg font-medium text-text-primary">{statusText}</span>
           {done && (
             <span className="text-xs text-text-tertiary">
               <span className="inline-flex items-center gap-1.5">
                 <FileVideo size={12} />
-                /projects/output/final_video.mp4
+                Video ready
               </span>
             </span>
           )}
@@ -114,7 +154,9 @@ export function RenderStage({ onComplete }: RenderStageProps) {
               "flex items-center gap-2 rounded-xl border border-error/20 bg-error/10 px-4 py-2 text-xs text-error transition-colors",
               "hover:bg-error/20"
             )}
-            onClick={() => setCancelled(true)}
+            onClick={() => {
+              if (jobId) cancelJob(jobId);
+            }}
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.97 }}
           >
@@ -123,10 +165,16 @@ export function RenderStage({ onComplete }: RenderStageProps) {
           </motion.button>
         )}
 
-        {cancelled && (
-          <span className="text-xs text-error">Cancelled by user</span>
-        )}
+        {cancelled && <span className="text-xs text-error">Cancelled by user</span>}
       </motion.div>
+
+      {production?.config.videoPath && (
+        <video
+          src={production.config.videoPath}
+          controls
+          className="w-full max-w-2xl rounded-xl"
+        />
+      )}
 
       {done && (
         <motion.div

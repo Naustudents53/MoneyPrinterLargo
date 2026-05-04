@@ -2,8 +2,18 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Play, ArrowRight, Loader2, Volume2, ChevronDown } from "lucide-react";
+import { Play, ArrowRight, Loader2, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useProductionStore } from "@/stores/production";
+import { useJobEvents } from "@/lib/useJobEvents";
+import {
+  API_BASE,
+  continueJob,
+  getGateStatus,
+  getVoices,
+  ttsPreview,
+  type Stage,
+} from "@/lib/api";
 
 interface NarrationStageProps {
   onComplete?: () => void;
@@ -15,49 +25,113 @@ interface VoiceItem {
 }
 
 export function NarrationStage({ onComplete }: NarrationStageProps) {
+  const production = useProductionStore((s) =>
+    s.productions.find((p) => p.id === s.currentProductionId)
+  );
+  const jobId = production?.jobId;
+  const configVoiceId = production?.config.voiceId ?? "";
+  const previewText =
+    production?.config.script?.split("\n\n")[0]?.slice(0, 140) ??
+    "This is a preview of the selected voice.";
+
   const [voices, setVoices] = useState<VoiceItem[]>([]);
-  const [selectedVoice, setSelectedVoice] = useState("");
+  const [selectedVoice, setSelectedVoice] = useState(configVoiceId);
   const [drama, setDrama] = useState(50);
   const [pacing, setPacing] = useState(50);
   const [previewing, setPreviewing] = useState(false);
-  const [generating, setGenerating] = useState(false);
+  const [audioReady, setAudioReady] = useState(false);
+  const [awaitingStage, setAwaitingStage] = useState<Stage | null>(null);
+  const [resuming, setResuming] = useState(false);
 
   useEffect(() => {
-    fetch("http://localhost:8000/api/config/voices")
-      .then((r) => r.ok ? r.json() : [])
-      .then((data: VoiceItem[]) => setVoices(data))
+    getVoices()
+      .then((data) => {
+        if (data && Array.isArray(data.voices)) {
+          const mapped: VoiceItem[] = data.voices.map((v: unknown) => {
+            const anyV = v as Record<string, unknown>;
+            return {
+              id: String(anyV.id ?? ""),
+              alias: String(anyV.alias ?? anyV.name ?? anyV.id ?? ""),
+            };
+          });
+          setVoices(mapped);
+          if (configVoiceId) setSelectedVoice(configVoiceId);
+          else if (data.default) setSelectedVoice(data.default);
+        }
+      })
       .catch(() => setVoices([]));
-  }, []);
+  }, [configVoiceId]);
 
+  // Hydrate gate state on mount.
+  useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    getGateStatus(jobId)
+      .then(({ awaiting }) => {
+        if (!cancelled) setAwaitingStage(awaiting);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId]);
+
+  useJobEvents(jobId ?? null, {
+    "stage.done": (e) => {
+      if (e.stage === "tts") setAudioReady(true);
+    },
+    "stage.awaiting": (e) => setAwaitingStage(e.stage),
+    "stage.resumed": (e) => {
+      if (e.stage === awaitingStage) setAwaitingStage(null);
+    },
+  });
+
+  // BUG FIX (S6): the previous version called ttsPreview(voiceId, text) —
+  // the signature is ttsPreview(text, voice_id).
   const handlePreview = useCallback(async () => {
     if (!selectedVoice) return;
     try {
       setPreviewing(true);
-      await fetch("http://localhost:8000/api/tts/preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ voice: selectedVoice, text: "This is a preview of the selected voice." }),
-      });
+      await ttsPreview(previewText, selectedVoice);
     } catch {
-      // noop
+      // noop — preview is non-essential
     } finally {
       setPreviewing(false);
     }
-  }, [selectedVoice]);
+  }, [selectedVoice, previewText]);
 
-  const handleGenerateFull = useCallback(async () => {
-    try {
-      setGenerating(true);
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      // Hook for real full generation later
-    } finally {
-      setGenerating(false);
+  const handleContinue = useCallback(async () => {
+    if (!jobId) {
+      onComplete?.();
+      return;
     }
-  }, []);
+    if (awaitingStage !== "narration") {
+      onComplete?.();
+      return;
+    }
+    setResuming(true);
+    try {
+      await continueJob(jobId, "narration", {
+        voice_id: selectedVoice,
+        drama,
+        pacing,
+      });
+      onComplete?.();
+    } finally {
+      setResuming(false);
+    }
+  }, [jobId, awaitingStage, selectedVoice, drama, pacing, onComplete]);
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      {/* Voice selector */}
+      {awaitingStage === "narration" && (
+        <div className="flex justify-end">
+          <span className="rounded-full border border-accent-purple/30 bg-accent-purple/10 px-3 py-1 text-[11px] text-accent-purple-soft">
+            Listen, then continue to render
+          </span>
+        </div>
+      )}
+
       <div className="flex flex-col gap-2">
         <label className="text-sm text-text-secondary">Voice</label>
         <div className="relative">
@@ -68,14 +142,18 @@ export function NarrationStage({ onComplete }: NarrationStageProps) {
           >
             <option value="">Select voice</option>
             {voices.map((v) => (
-              <option key={v.id} value={v.id}>{v.alias}</option>
+              <option key={v.id} value={v.id}>
+                {v.alias}
+              </option>
             ))}
           </select>
-          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" size={16} />
+          <ChevronDown
+            className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted"
+            size={16}
+          />
         </div>
       </div>
 
-      {/* Preview voice */}
       <motion.button
         className={cn(
           "flex w-full items-center justify-center gap-2 rounded-xl border border-border-subtle px-4 py-3 text-sm text-text-secondary transition-colors",
@@ -90,7 +168,6 @@ export function NarrationStage({ onComplete }: NarrationStageProps) {
         Preview Voice
       </motion.button>
 
-      {/* Sliders */}
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
@@ -123,49 +200,31 @@ export function NarrationStage({ onComplete }: NarrationStageProps) {
         </div>
       </div>
 
-      {/* Generate full narration */}
-      <motion.button
-        className={cn(
-          "flex items-center justify-center gap-2 rounded-xl bg-accent-purple px-4 py-3 text-sm font-medium text-white shadow-glow-purple transition-colors",
-          "hover:bg-accent-purple-deep disabled:opacity-50"
-        )}
-        onClick={handleGenerateFull}
-        disabled={generating}
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.97 }}
-      >
-        {generating ? <Loader2 size={16} className="animate-spin" /> : <Volume2 size={16} />}
-        Generate Full Narration
-      </motion.button>
-
-      {/* Audio player placeholder */}
-      <div className="flex items-center gap-3 rounded-xl border border-border-ghost bg-surface-raised p-4">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-overlay text-text-muted">
-          <Play size={14} />
+      {audioReady && jobId ? (
+        <audio
+          src={`${API_BASE}/api/jobs/${jobId}/artifact/audio`}
+          controls
+          className="w-full"
+        />
+      ) : (
+        <div className="rounded-lg border border-border-subtle bg-surface-raised px-4 py-3 text-xs text-text-secondary">
+          Narration is being generated. The audio player will appear when it&apos;s ready.
         </div>
-        <div className="flex flex-1 flex-col gap-1.5">
-          <div className="h-1.5 w-full rounded bg-surface-sunken">
-            <div className="h-full w-0 rounded bg-accent-purple" />
-          </div>
-          <div className="flex justify-between text-[10px] text-text-muted">
-            <span>00:00</span>
-            <span>00:00</span>
-          </div>
-        </div>
-      </div>
+      )}
 
       <div className="flex justify-end pt-2">
         <motion.button
           className={cn(
             "flex items-center gap-2 rounded-xl bg-accent-blue px-5 py-2.5 text-sm font-medium text-white shadow-glow-blue transition-colors",
-            "hover:bg-accent-blue-soft"
+            "hover:bg-accent-blue-soft disabled:opacity-50"
           )}
-          onClick={onComplete}
+          onClick={handleContinue}
+          disabled={resuming}
           whileHover={{ scale: 1.03 }}
           whileTap={{ scale: 0.97 }}
         >
-          Continue
-          <ArrowRight size={16} />
+          {resuming ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
+          {awaitingStage === "narration" ? "Continue to render" : "Continue"}
         </motion.button>
       </div>
     </div>

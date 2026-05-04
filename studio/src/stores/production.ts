@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import type { Stage } from "@/lib/api";
 
 export type ProductionType = "short" | "long" | "recap";
 
@@ -9,6 +10,12 @@ export interface ThumbnailConfig {
   font: string;
   overlayText?: string;
   colorTheme: "dark" | "cosmic" | "war" | "neon";
+}
+
+export interface MetadataConfig {
+  title: string;
+  description: string;
+  tags: string[];
 }
 
 export interface ProductionConfig {
@@ -26,6 +33,13 @@ export interface ProductionConfig {
   script?: string;
   narrationUrl?: string;
   videoPath?: string;
+  metadata?: MetadataConfig;
+  presetId?: string;
+}
+
+export interface StageStatus {
+  status: "idle" | "running" | "done" | "error";
+  message?: string;
 }
 
 export interface Production {
@@ -37,12 +51,17 @@ export interface Production {
   jobId?: string;
   jobStatus?: "queued" | "running" | "done" | "error" | "cancelled";
   jobProgress?: number;
+  stages?: Record<Stage, StageStatus>;
 }
 
 interface ProductionState {
   productions: Production[];
   currentProductionId: string | null;
-  createProduction: (type: ProductionType, name: string, config?: Partial<ProductionConfig>) => void;
+  createProduction: (
+    type: ProductionType,
+    name: string,
+    config?: Partial<ProductionConfig>
+  ) => void;
   setCurrentProduction: (id: string) => void;
   updateConfig: (partial: Partial<ProductionConfig>) => void;
   updateStep: (step: number) => void;
@@ -54,6 +73,24 @@ interface ProductionState {
   setImagePrompts: (prompts: string[]) => void;
   setNarrationUrl: (url: string) => void;
   setVideoPath: (path: string) => void;
+  appendScriptChunk: (chunk: string) => void;
+  setMetadata: (meta: MetadataConfig) => void;
+  setStageStatus: (
+    stage: Stage,
+    status: StageStatus["status"],
+    message?: string
+  ) => void;
+  clearArtifacts: () => void;
+  // Adopt a backend job into the local store. Used by the deep-link
+  // wizard (`/shorts?job=<id>`) when the user opens an in-progress task
+  // from the Task Monitor — we hydrate the local Production with the
+  // job's existing artifacts/state and reuse its job_id so SSE works.
+  adoptJob: (
+    type: ProductionType,
+    jobId: string,
+    seed: Partial<ProductionConfig>,
+    initialStep?: number
+  ) => void;
 }
 
 const DEFAULT_THUMBNAIL: ThumbnailConfig = {
@@ -87,11 +124,17 @@ export const useProductionStore = create<ProductionState>((set) => ({
           script: config.script,
           narrationUrl: config.narrationUrl,
           videoPath: config.videoPath,
+          metadata: config.metadata,
+          presetId: config.presetId,
         },
         currentStep: 0,
         completedSteps: [],
+        stages: {} as Record<Stage, StageStatus>,
       };
-      return { productions: [...state.productions, production], currentProductionId: id };
+      return {
+        productions: [...state.productions, production],
+        currentProductionId: id,
+      };
     }),
 
   setCurrentProduction: (id) => set({ currentProductionId: id }),
@@ -99,7 +142,9 @@ export const useProductionStore = create<ProductionState>((set) => ({
   updateConfig: (partial) =>
     set((state) => ({
       productions: state.productions.map((p) =>
-        p.id === state.currentProductionId ? { ...p, config: { ...p.config, ...partial } } : p
+        p.id === state.currentProductionId
+          ? { ...p, config: { ...p.config, ...partial } }
+          : p
       ),
     })),
 
@@ -143,7 +188,9 @@ export const useProductionStore = create<ProductionState>((set) => ({
   setScript: (script) =>
     set((state) => ({
       productions: state.productions.map((p) =>
-        p.id === state.currentProductionId ? { ...p, config: { ...p.config, script } } : p
+        p.id === state.currentProductionId
+          ? { ...p, config: { ...p.config, script } }
+          : p
       ),
     })),
 
@@ -168,7 +215,119 @@ export const useProductionStore = create<ProductionState>((set) => ({
   setVideoPath: (path) =>
     set((state) => ({
       productions: state.productions.map((p) =>
-        p.id === state.currentProductionId ? { ...p, config: { ...p.config, videoPath: path } } : p
+        p.id === state.currentProductionId
+          ? { ...p, config: { ...p.config, videoPath: path } }
+          : p
       ),
     })),
+
+  appendScriptChunk: (chunk) =>
+    set((state) => ({
+      productions: state.productions.map((p) =>
+        p.id === state.currentProductionId
+          ? {
+              ...p,
+              config: { ...p.config, script: (p.config.script || "") + chunk },
+            }
+          : p
+      ),
+    })),
+
+  setMetadata: (meta) =>
+    set((state) => ({
+      productions: state.productions.map((p) =>
+        p.id === state.currentProductionId
+          ? { ...p, config: { ...p.config, metadata: meta } }
+          : p
+      ),
+    })),
+
+  setStageStatus: (stage, status, message) =>
+    set((state) => ({
+      productions: state.productions.map((p) =>
+        p.id === state.currentProductionId
+          ? {
+              ...p,
+              stages: {
+                ...(p.stages || {}),
+                [stage]: { status, message },
+              } as Record<Stage, StageStatus>,
+            }
+          : p
+      ),
+    })),
+
+  clearArtifacts: () =>
+    set((state) => ({
+      productions: state.productions.map((p) =>
+        p.id === state.currentProductionId
+          ? {
+              ...p,
+              config: {
+                ...p.config,
+                script: undefined,
+                imagePrompts: [],
+                narrationUrl: undefined,
+                videoPath: undefined,
+                metadata: undefined,
+              },
+              stages: {} as Record<Stage, StageStatus>,
+              jobProgress: undefined,
+            }
+          : p
+      ),
+    })),
+
+  adoptJob: (type, jobId, seed, initialStep) =>
+    set((state) => {
+      // If we already adopted this job, just bring it back to current.
+      const existing = state.productions.find((p) => p.jobId === jobId);
+      if (existing) {
+        return {
+          ...state,
+          currentProductionId: existing.id,
+          productions: state.productions.map((p) =>
+            p.id === existing.id
+              ? {
+                  ...p,
+                  // Refresh seed fields with the latest server values.
+                  config: { ...p.config, ...seed },
+                  currentStep: initialStep ?? p.currentStep,
+                }
+              : p
+          ),
+        };
+      }
+      const id = crypto.randomUUID();
+      const production: Production = {
+        id,
+        name: seed.topic || `Job ${jobId.slice(0, 8)}`,
+        config: {
+          type,
+          topic: seed.topic || "",
+          seriesId: seed.seriesId,
+          accountId: seed.accountId,
+          voiceId: seed.voiceId || "",
+          imageMode: seed.imageMode || "ai",
+          imageStyle: seed.imageStyle || "",
+          imagePrompts: seed.imagePrompts || [],
+          thumbnail: seed.thumbnail || DEFAULT_THUMBNAIL,
+          musicTrack: seed.musicTrack,
+          narrativePrompt: seed.narrativePrompt,
+          script: seed.script,
+          narrationUrl: seed.narrationUrl,
+          videoPath: seed.videoPath,
+          metadata: seed.metadata,
+          presetId: seed.presetId,
+        },
+        currentStep: initialStep ?? 1,
+        completedSteps: [],
+        jobId,
+        stages: {} as Record<Stage, StageStatus>,
+      };
+      return {
+        productions: [...state.productions, production],
+        currentProductionId: id,
+      };
+    }),
 }));
