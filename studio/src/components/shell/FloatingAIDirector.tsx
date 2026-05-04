@@ -48,8 +48,8 @@ export function FloatingAIDirector() {
       <motion.button
         className="fixed bottom-6 right-6 w-3 h-3 rounded-full z-50"
         style={{
-          background: "linear-gradient(135deg, #7C3AED, #3B82F6)",
-          boxShadow: "0 0 16px rgba(124,58,237,0.5)",
+          background: "linear-gradient(135deg, #E8A24F, #3B82F6)",
+          boxShadow: "0 0 16px rgba(232,162,79,0.5)",
         }}
         onClick={() => setMinimized(false)}
         whileHover={{ scale: 2.5 }}
@@ -65,9 +65,9 @@ export function FloatingAIDirector() {
             className="absolute bottom-16 right-0 w-[320px] overflow-hidden"
             style={{
               background: "linear-gradient(180deg, rgba(28,28,43,0.98), rgba(20,20,35,0.98))",
-              border: "1px solid rgba(124,58,237,0.2)",
+              border: "1px solid rgba(232,162,79,0.2)",
               borderRadius: "16px",
-              boxShadow: "0 24px 64px rgba(0,0,0,0.6), 0 0 40px rgba(124,58,237,0.1)",
+              boxShadow: "0 24px 64px rgba(0,0,0,0.6), 0 0 40px rgba(232,162,79,0.1)",
             }}
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -109,8 +109,8 @@ export function FloatingAIDirector() {
                   style={
                     msg.role === "user"
                       ? {
-                          background: "linear-gradient(135deg, rgba(124,58,237,0.15), rgba(59,130,246,0.08))",
-                          border: "1px solid rgba(124,58,237,0.15)",
+                          background: "linear-gradient(135deg, rgba(232,162,79,0.15), rgba(96,165,250,0.08))",
+                          border: "1px solid rgba(232,162,79,0.15)",
                           color: "#E8E8F0",
                         }
                       : {
@@ -163,11 +163,11 @@ export function FloatingAIDirector() {
       <motion.button
         className="w-12 h-12 rounded-full flex items-center justify-center relative overflow-hidden"
         style={{
-          background: "linear-gradient(135deg, #7C3AED, #5B21B6)",
+          background: "linear-gradient(135deg, #E8A24F, #C47A28)",
           boxShadow: thinking
-            ? "0 0 30px rgba(124,58,237,0.5)"
-            : "0 0 20px rgba(124,58,237,0.3)",
-          border: "1px solid rgba(124,58,237,0.3)",
+            ? "0 0 30px rgba(232,162,79,0.5)"
+            : "0 0 20px rgba(232,162,79,0.3)",
+          border: "1px solid rgba(232,162,79,0.3)",
         }}
         onClick={() => setExpanded(!expanded)}
         whileHover={{ scale: 1.08 }}
@@ -176,9 +176,9 @@ export function FloatingAIDirector() {
           thinking
             ? {
                 boxShadow: [
-                  "0 0 20px rgba(124,58,237,0.3)",
-                  "0 0 45px rgba(124,58,237,0.6)",
-                  "0 0 20px rgba(124,58,237,0.3)",
+                  "0 0 20px rgba(232,162,79,0.3)",
+                  "0 0 45px rgba(232,162,79,0.6)",
+                  "0 0 20px rgba(232,162,79,0.3)",
                 ],
               }
             : {}

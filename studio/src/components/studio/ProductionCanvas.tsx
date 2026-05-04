@@ -20,7 +20,7 @@ import { RenderStage } from "@/components/studio/steps/RenderStage";
 import { UploadStage } from "@/components/studio/steps/UploadStage";
 import { JobAdopter } from "@/components/studio/JobAdopter";
 import { Suspense } from "react";
-import { Film, Rocket } from "lucide-react";
+import { Film, Plus } from "lucide-react";
 
 const STAGES = [
   { key: "select", component: StageSelectMovie },
@@ -48,8 +48,20 @@ export function ProductionCanvas({ type }: { type?: "short" | "long" | "recap" }
   const projectStore = useProjectStore();
   const productionStore = useProductionStore();
 
-  const { projects, currentProjectId, updateStep, completeStep, createProject } = projectStore;
-  const { productions, currentProductionId, updateStep: updateProdStep, completeStep: completeProdStep, createProduction } = productionStore;
+  const {
+    projects,
+    currentProjectId,
+    updateStep,
+    completeStep,
+    createProject,
+  } = projectStore;
+  const {
+    productions,
+    currentProductionId,
+    updateStep: updateProdStep,
+    completeStep: completeProdStep,
+    createProduction,
+  } = productionStore;
 
   const project = projects.find((p) => p.id === currentProjectId);
   const production = productions.find((p) => p.id === currentProductionId);
@@ -57,111 +69,77 @@ export function ProductionCanvas({ type }: { type?: "short" | "long" | "recap" }
 
   const heading =
     type === "short"
-      ? "MoneyPrinter Shorts"
+      ? "New Short"
       : type === "long"
-      ? "MoneyPrinter Long"
-      : "MoneyPrinter Studio";
+      ? "New Long-Form"
+      : "Movie Recap";
 
   const subtitle =
     type === "short"
-      ? "AI-powered YouTube Shorts production"
+      ? "Vertical · ~45s · AI images + TTS · YouTube Shorts"
       : type === "long"
-      ? "AI-powered long-form video production"
-      : "AI-powered movie recap production";
+      ? "16:9 · 15–20 minutes · Series-aware long-form"
+      : "Public-domain film → recap video";
 
   if (!activeEntity) {
     return (
-      <motion.div
-        className="flex-1 flex items-center justify-center relative"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-      >
-        {/* Adopt ?job=<id> from the URL when the user lands here from the
-            Task Monitor. Wrapped in Suspense because next/navigation's
-            useSearchParams suspends during prerender. */}
+      <div className="flex-1 flex items-center justify-center relative overflow-hidden">
         {isShortLong && type && (
           <Suspense fallback={null}>
             <JobAdopter type={type} />
           </Suspense>
         )}
-        {/* Atmósfera de fondo */}
-        <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[500px] h-[500px] rounded-full bg-accent-purple/5 blur-[150px]"
-/>
-          <div className="absolute bottom-1/4 right-1/3 w-[400px] h-[300px] rounded-full bg-accent-blue/4 blur-[120px]"
-/>
-        </div>
 
-        <div className="text-center space-y-8 relative z-10">
-          {/* Logo principal */}
-          <motion.div
-            className="relative w-28 h-28 rounded-3xl flex items-center justify-center mx-auto"
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25 }}
+          className="text-center relative z-10 flex flex-col items-center gap-6 max-w-md px-6"
+        >
+          <div
+            className="w-16 h-16 rounded-2xl flex items-center justify-center"
             style={{
-              background: "linear-gradient(135deg, rgba(124,58,237,0.2), rgba(59,130,246,0.15))",
-              border: "1px solid rgba(124,58,237,0.25)",
-              boxShadow: "0 0 60px rgba(124,58,237,0.15), inset 0 1px 0 rgba(255,255,255,0.05)",
+              background: "var(--color-surf-2)",
+              border: "1px solid var(--color-hairline)",
             }}
-            animate={{
-              rotate: [0, 2, -2, 0],
-              scale: [1, 1.02, 1],
-            }}
-            transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
           >
-            <Film size={48} className="text-accent-purple-soft" />
-            {/* Anillo decorativo */}
-            <div className="absolute inset-[-4px] rounded-3xl border border-accent-purple/10 animate-pulse-slow"
-/>
-          </motion.div>
+            <Film size={28} style={{ color: "var(--color-amber)" }} />
+          </div>
 
-          <div className="space-y-3">
-            <h1 className="text-4xl font-bold text-text-primary tracking-tight">
+          <div className="flex flex-col gap-2">
+            <h1 className="text-2xl font-semibold tracking-[-0.02em] text-[var(--color-text-primary)]">
               {heading}
-              <span
-                className="text-transparent bg-clip-text"
-                style={{
-                  backgroundImage: "linear-gradient(135deg, #A78BFA, #60A5FA)",
-                }}
-              >
-                {" "}Studio
-              </span>
             </h1>
-            <p className="text-sm text-text-muted">
+            <p className="text-[13px] text-[var(--color-text-secondary)]">
               {subtitle}
             </p>
           </div>
 
-          <motion.button
-            className="flex items-center gap-2.5 px-7 py-3.5 rounded-xl text-white text-sm font-semibold tracking-wide transition-all mx-auto"
-            style={{
-              background: "linear-gradient(135deg, #7C3AED, #5B21B6)",
-              boxShadow:
-                "0 0 30px rgba(124,58,237,0.3), inset 0 1px 0 rgba(255,255,255,0.1)",
-              border: "1px solid rgba(124,58,237,0.4)",
-            }}
-            whileHover={{
-              scale: 1.04,
-              boxShadow:
-                "0 0 45px rgba(124,58,237,0.4), inset 0 1px 0 rgba(255,255,255,0.15)",
-            }}
-            whileTap={{ scale: 0.97 }}
+          <button
+            type="button"
             onClick={() =>
               isShortLong && type
                 ? createProduction(type, "New Production")
                 : createProject("New Production")
             }
+            className="flex items-center gap-2 px-5 py-[9px] rounded-md text-[13px] font-semibold transition-opacity duration-150"
+            style={{ background: "var(--color-amber)", color: "#0B0B0D" }}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.88")}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
           >
-            <Rocket size={16} />
-            New Production
-          </motion.button>
-        </div>
-      </motion.div>
+            <Plus size={14} strokeWidth={2.5} />
+            Start production
+          </button>
+        </motion.div>
+      </div>
     );
   }
 
   const activeStages = isShortLong ? SHORT_STAGES : STAGES;
   const currentStep = activeEntity.currentStep;
   const completedSteps = activeEntity.completedSteps;
-  const StageComponent = activeStages[currentStep]?.component || activeStages[0].component;
+  const StageComponent =
+    activeStages[currentStep]?.component || activeStages[0].component;
 
   const handleComplete = () => {
     if (isShortLong) {
@@ -190,14 +168,12 @@ export function ProductionCanvas({ type }: { type?: "short" | "long" | "recap" }
         <motion.div
           key={currentStep}
           className="flex-1 overflow-hidden"
-          initial={{ opacity: 0, x: 60, filter: "blur(4px)" }}
-          animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
-          exit={{ opacity: 0, x: -60, filter: "blur(4px)" }}
-          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+          initial={{ opacity: 0, x: 32 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -32 }}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
         >
-          <StageComponent
-            onComplete={handleComplete}
-          />
+          <StageComponent onComplete={handleComplete} />
         </motion.div>
       </AnimatePresence>
     </div>

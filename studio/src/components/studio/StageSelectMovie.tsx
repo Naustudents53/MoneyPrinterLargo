@@ -77,9 +77,9 @@ export function StageSelectMovie() {
           <motion.div
             className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
             style={{
-              background: "linear-gradient(135deg, rgba(124,58,237,0.15), rgba(59,130,246,0.1))",
-              border: "1px solid rgba(124,58,237,0.2)",
-              boxShadow: "0 0 24px rgba(124,58,237,0.1)",
+              background: "linear-gradient(135deg, rgba(232,162,79,0.15), rgba(96,165,250,0.1))",
+              border: "1px solid rgba(232,162,79,0.2)",
+              boxShadow: "0 0 24px rgba(232,162,79,0.1)",
             }}
             whileHover={{ scale: 1.05, rotate: 5 }}
           >
@@ -111,7 +111,7 @@ export function StageSelectMovie() {
             background: "rgba(255,255,255,0.02)",
             border: "1px solid rgba(30,30,50,0.5)",
           }}
-          whileHover={{ borderColor: "rgba(59,130,246,0.25)", background: "rgba(59,130,246,0.04)" }}
+          whileHover={{ borderColor: "rgba(96,165,250,0.25)", background: "rgba(96,165,250,0.04)" }}
           whileTap={{ scale: 0.98 }}
         >
           <Upload size={14} />Importar desde URL
@@ -123,7 +123,7 @@ export function StageSelectMovie() {
             border: "1px solid rgba(30,30,50,0.5)",
           }}
           onClick={fetchVideos}
-          whileHover={{ borderColor: "rgba(124,58,237,0.25)", background: "rgba(124,58,237,0.04)" }}
+          whileHover={{ borderColor: "rgba(232,162,79,0.25)", background: "rgba(232,162,79,0.04)" }}
           whileTap={{ scale: 0.98 }}
         >
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
@@ -143,9 +143,9 @@ export function StageSelectMovie() {
               <motion.div
                 className="w-12 h-12 rounded-2xl mx-auto"
                 style={{
-                  border: "2px solid rgba(124,58,237,0.2)",
-                  borderTopColor: "#7C3AED",
-                  boxShadow: "0 0 20px rgba(124,58,237,0.1)",
+                  border: "2px solid rgba(232,162,79,0.2)",
+                  borderTopColor: "#E8A24F",
+                  boxShadow: "0 0 20px rgba(232,162,79,0.1)",
                 }}
                 animate={{ rotate: 360 }}
                 transition={{ duration: 1.2, repeat: Infinity, ease: "linear" }}
@@ -173,10 +173,10 @@ export function StageSelectMovie() {
                 onClick={fetchVideos}
                 className="px-4 py-2 rounded-lg text-accent-purple-soft text-sm"
                 style={{
-                  background: "rgba(124,58,237,0.08)",
-                  border: "1px solid rgba(124,58,237,0.15)",
+                  background: "rgba(232,162,79,0.08)",
+                  border: "1px solid rgba(232,162,79,0.15)",
                 }}
-                whileHover={{ background: "rgba(124,58,237,0.15)" }}
+                whileHover={{ background: "rgba(232,162,79,0.15)" }}
               >
                 Reintentar
               </motion.button>
@@ -223,7 +223,7 @@ export function StageSelectMovie() {
                       ) : (
                         <div className="absolute inset-0 flex items-center justify-center"
                           style={{
-                            background: "linear-gradient(135deg, rgba(124,58,237,0.15), rgba(59,130,246,0.1), rgba(14,14,24,0.5))",
+                            background: "linear-gradient(135deg, rgba(232,162,79,0.15), rgba(96,165,250,0.1), rgba(14,14,24,0.5))",
                           }}
                         >
                           <Film size={24} className="text-text-muted" />
@@ -256,8 +256,8 @@ export function StageSelectMovie() {
                       <motion.div
                         className="absolute top-3 right-3 w-6 h-6 rounded-full flex items-center justify-center"
                         style={{
-                          background: "linear-gradient(135deg, #7C3AED, #5B21B6)",
-                          boxShadow: "0 0 12px rgba(124,58,237,0.4)",
+                          background: "linear-gradient(135deg, #E8A24F, #C47A28)",
+                          boxShadow: "0 0 12px rgba(232,162,79,0.4)",
                         }}
                         initial={{ scale: 0 }}
                         animate={{ scale: 1 }}

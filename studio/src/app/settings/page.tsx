@@ -1,3 +1,12 @@
+"use client";
+
+import { StudioShell } from "@/components/shell/StudioShell";
+import { SettingsFrame } from "@/components/studio/SettingsFrame";
+
 export default function SettingsPage() {
-  return <div className="p-8 text-text-primary">Settings coming soon.</div>;
+  return (
+    <StudioShell title="Settings" newHref="/shorts">
+      <SettingsFrame />
+    </StudioShell>
+  );
 }

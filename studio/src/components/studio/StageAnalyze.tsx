@@ -59,10 +59,10 @@ export function StageAnalyze({ onComplete }: { onComplete?: () => void }) {
                       }
                     : node.status === "running"
                     ? {
-                        background: "rgba(124,58,237,0.06)",
-                        borderColor: "rgba(124,58,237,0.3)",
-                        color: "#A78BFA",
-                        boxShadow: "0 0 24px rgba(124,58,237,0.1)",
+                        background: "rgba(232,162,79,0.06)",
+                        borderColor: "rgba(232,162,79,0.3)",
+                        color: "#F4C58A",
+                        boxShadow: "0 0 24px rgba(232,162,79,0.1)",
                       }
                     : {
                         background: "rgba(255,255,255,0.02)",
@@ -104,7 +104,7 @@ export function StageAnalyze({ onComplete }: { onComplete?: () => void }) {
                     node.status === "complete"
                       ? "#10B981"
                       : node.status === "running"
-                      ? "#A78BFA"
+                      ? "#F4C58A"
                       : "#3A3A55",
                 }}
               >
@@ -117,8 +117,8 @@ export function StageAnalyze({ onComplete }: { onComplete?: () => void }) {
                   <motion.div
                     className="h-full rounded-full"
                     style={{
-                      background: "linear-gradient(90deg, #7C3AED, #3B82F6)",
-                      boxShadow: "0 0 8px rgba(124,58,237,0.3)",
+                      background: "linear-gradient(90deg, #E8A24F, #3B82F6)",
+                      boxShadow: "0 0 8px rgba(232,162,79,0.3)",
                     }}
                     animate={{ width: ["0%", "100%"] }}
                     transition={{ duration: 1.5, repeat: Infinity }}
@@ -148,7 +148,7 @@ export function StageAnalyze({ onComplete }: { onComplete?: () => void }) {
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-1 font-mono text-[11px]">
           <div className="flex items-start gap-2 rounded-lg border px-2 py-1.5 mb-2"
-            style={{ borderColor: "rgba(59,130,246,0.2)", background: "rgba(59,130,246,0.06)", color: "#60A5FA" }}
+            style={{ borderColor: "rgba(96,165,250,0.2)", background: "rgba(96,165,250,0.06)", color: "#60A5FA" }}
           >
             <Info size={12} className="shrink-0 mt-0.5" />
             <span className="text-[10px]">Analysis will be streamed during export.</span>
@@ -165,7 +165,7 @@ export function StageAnalyze({ onComplete }: { onComplete?: () => void }) {
             </motion.div>
           ))}
           {nodes.some((n) => n.status === "running") && (
-            <div className="animate-pulse" style={{ color: "#A78BFA" }}>
+            <div className="animate-pulse" style={{ color: "#F4C58A" }}>
               {"\u003e Processing..."}
             </div>
           )}

@@ -48,9 +48,9 @@ export function StudioCard({
       style={
         selected
           ? {
-              background: "linear-gradient(135deg, rgba(124,58,237,0.1), rgba(59,130,246,0.05))",
-              border: "1px solid rgba(124,58,237,0.3)",
-              boxShadow: "0 0 30px rgba(124,58,237,0.15), inset 0 1px 0 rgba(255,255,255,0.03)",
+              background: "linear-gradient(135deg, rgba(232,162,79,0.1), rgba(96,165,250,0.05))",
+              border: "1px solid rgba(232,162,79,0.3)",
+              boxShadow: "0 0 30px rgba(232,162,79,0.15), inset 0 1px 0 rgba(255,255,255,0.03)",
             }
           : {
               background: "linear-gradient(135deg, rgba(21,21,32,0.8), rgba(14,14,24,0.9))",
@@ -61,14 +61,14 @@ export function StudioCard({
       whileHover={{
         y: -4,
         borderColor: glow === "purple"
-          ? "rgba(124,58,237,0.25)"
+          ? "rgba(232,162,79,0.25)"
           : glow === "blue"
-          ? "rgba(59,130,246,0.25)"
+          ? "rgba(96,165,250,0.25)"
           : "rgba(30,30,50,0.6)",
         boxShadow: glow === "purple"
-          ? "0 0 30px rgba(124,58,237,0.1), inset 0 1px 0 rgba(255,255,255,0.03)"
+          ? "0 0 30px rgba(232,162,79,0.1), inset 0 1px 0 rgba(255,255,255,0.03)"
           : glow === "blue"
-          ? "0 0 30px rgba(59,130,246,0.1), inset 0 1px 0 rgba(255,255,255,0.03)"
+          ? "0 0 30px rgba(96,165,250,0.1), inset 0 1px 0 rgba(255,255,255,0.03)"
           : "0 8px 32px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.03)",
       }}
       whileTap={{ scale: 0.98 }}
@@ -82,8 +82,8 @@ export function StudioCard({
           style={{
             background:
               glow === "purple"
-                ? "radial-gradient(600px circle at var(--mx, 50%) var(--my, 50%), rgba(124,58,237,0.1), transparent 60%)"
-                : "radial-gradient(600px circle at var(--mx, 50%) var(--my, 50%), rgba(59,130,246,0.1), transparent 60%)",
+                ? "radial-gradient(600px circle at var(--mx, 50%) var(--my, 50%), rgba(232,162,79,0.1), transparent 60%)"
+                : "radial-gradient(600px circle at var(--mx, 50%) var(--my, 50%), rgba(96,165,250,0.1), transparent 60%)",
           }}
         />
       )}

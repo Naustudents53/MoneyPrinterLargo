@@ -175,12 +175,12 @@ export function StageExport({ onComplete }: { onComplete?: () => void }) {
               <div
                 className="absolute inset-0"
                 style={{
-                  background: "linear-gradient(135deg, rgba(124,58,237,0.06), transparent, rgba(59,130,246,0.04))",
+                  background: "linear-gradient(135deg, rgba(232,162,79,0.06), transparent, rgba(96,165,250,0.04))",
                 }}
               />
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center">
-                  <Film size={48} className="mx-auto mb-2" style={{ color: "rgba(124,58,237,0.25)" }} />
+                  <Film size={48} className="mx-auto mb-2" style={{ color: "rgba(232,162,79,0.25)" }} />
                   <span className="text-sm text-text-muted">{project?.movieTitle || "Metropolis — AI Recap"}</span>
                 </div>
               </div>
@@ -214,9 +214,9 @@ export function StageExport({ onComplete }: { onComplete?: () => void }) {
               style={
                 exportSettings.platform === p.id
                   ? {
-                      background: "rgba(124,58,237,0.06)",
-                      border: "1px solid rgba(124,58,237,0.2)",
-                      color: "#A78BFA",
+                      background: "rgba(232,162,79,0.06)",
+                      border: "1px solid rgba(232,162,79,0.2)",
+                      color: "#F4C58A",
                     }
                   : {
                       background: "rgba(255,255,255,0.02)",
@@ -226,7 +226,7 @@ export function StageExport({ onComplete }: { onComplete?: () => void }) {
               }
               whileHover={{
                 y: -2,
-                borderColor: exportSettings.platform === p.id ? "rgba(124,58,237,0.35)" : "rgba(30,30,50,0.8)",
+                borderColor: exportSettings.platform === p.id ? "rgba(232,162,79,0.35)" : "rgba(30,30,50,0.8)",
               }}
               whileTap={{ scale: 0.97 }}
               onClick={() => updateExportSettings({ platform: p.id as typeof exportSettings.platform })}
@@ -247,9 +247,9 @@ export function StageExport({ onComplete }: { onComplete?: () => void }) {
               style={
                 exportSettings.resolution === r
                   ? {
-                      background: "rgba(124,58,237,0.08)",
-                      color: "#A78BFA",
-                      border: "1px solid rgba(124,58,237,0.2)",
+                      background: "rgba(232,162,79,0.08)",
+                      color: "#F4C58A",
+                      border: "1px solid rgba(232,162,79,0.2)",
                     }
                   : {
                       background: "rgba(255,255,255,0.02)",
@@ -351,8 +351,8 @@ export function StageExport({ onComplete }: { onComplete?: () => void }) {
             <div
               className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
               style={{
-                background: "rgba(124,58,237,0.06)",
-                border: "1px solid rgba(124,58,237,0.15)",
+                background: "rgba(232,162,79,0.06)",
+                border: "1px solid rgba(232,162,79,0.15)",
               }}
             >
               <Sparkles size={28} style={{ color: "rgba(167,139,250,0.6)" }} />
@@ -390,13 +390,13 @@ export function StageExport({ onComplete }: { onComplete?: () => void }) {
             <motion.button
               className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-white text-sm font-medium transition-all mb-3"
               style={{
-                background: "linear-gradient(135deg, #7C3AED, #5B21B6)",
-                boxShadow: "0 0 20px rgba(124,58,237,0.2), inset 0 1px 0 rgba(255,255,255,0.1)",
-                border: "1px solid rgba(124,58,237,0.3)",
+                background: "linear-gradient(135deg, #E8A24F, #C47A28)",
+                boxShadow: "0 0 20px rgba(232,162,79,0.2), inset 0 1px 0 rgba(255,255,255,0.1)",
+                border: "1px solid rgba(232,162,79,0.3)",
               }}
               whileHover={{
                 scale: 1.02,
-                boxShadow: "0 0 30px rgba(124,58,237,0.3), inset 0 1px 0 rgba(255,255,255,0.15)",
+                boxShadow: "0 0 30px rgba(232,162,79,0.3), inset 0 1px 0 rgba(255,255,255,0.15)",
               }}
               whileTap={{ scale: 0.98 }}
               disabled={!selectedAccountId || loadingAccounts}

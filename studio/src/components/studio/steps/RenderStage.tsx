@@ -92,8 +92,8 @@ export function RenderStage({ onComplete }: RenderStageProps) {
           <motion.div
             className="h-full rounded-full"
             style={{
-              background: "linear-gradient(90deg, #7C3AED, #3B82F6)",
-              boxShadow: "0 0 20px rgba(124,58,237,0.2)",
+              background: "linear-gradient(90deg, #E8A24F, #3B82F6)",
+              boxShadow: "0 0 20px rgba(232,162,79,0.2)",
             }}
             initial={{ width: 0 }}
             animate={{ width: `${Math.min(jobProgress, 100)}%` }}

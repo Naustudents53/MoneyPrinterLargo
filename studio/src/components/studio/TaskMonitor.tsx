@@ -270,7 +270,7 @@ export function TaskMonitor() {
                       <motion.div
                         className="h-full rounded-full"
                         style={{
-                          background: "linear-gradient(90deg, #7C3AED, #3B82F6)",
+                          background: "linear-gradient(90deg, #E8A24F, #3B82F6)",
                         }}
                         initial={{ width: 0 }}
                         animate={{ width: `${Math.min(job.stage_percent ?? 0, 100)}%` }}

@@ -72,8 +72,8 @@ export function StageScript() {
                 transition={{ delay: i * 0.04 }}
                 whileHover={{
                   x: 4,
-                  borderColor: "rgba(124,58,237,0.15)",
-                  background: "rgba(124,58,237,0.03)",
+                  borderColor: "rgba(232,162,79,0.15)",
+                  background: "rgba(232,162,79,0.03)",
                 }}
               >
                 <GripVertical size={12} className="mt-0.5 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
@@ -92,7 +92,7 @@ export function StageScript() {
                       <motion.div
                         className="h-full rounded-full"
                         style={{
-                          background: "linear-gradient(90deg, #7C3AED, #3B82F6)",
+                          background: "linear-gradient(90deg, #E8A24F, #3B82F6)",
                           width: `${scene.importance * 100}%`,
                         }}
                         initial={{ width: 0 }}
@@ -112,7 +112,7 @@ export function StageScript() {
           <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Script</span>
           <div className="flex items-center gap-1 text-[10px] text-text-muted">
             <span>Metropolis Recap</span>
-            <span className="w-1 h-1 rounded-full" style={{ background: "#7C3AED" }} />
+            <span className="w-1 h-1 rounded-full" style={{ background: "#E8A24F" }} />
             <span>~15 min estimated</span>
           </div>
         </div>
@@ -125,7 +125,7 @@ export function StageScript() {
                   className="rounded-lg px-2 py-1 -mx-2 transition-colors cursor-text"
                   style={{ color: "#9090B0" }}
                   whileHover={{
-                    background: "rgba(124,58,237,0.04)",
+                    background: "rgba(232,162,79,0.04)",
                     color: "#E8E8F0",
                   }}
                   initial={{ opacity: 0, y: 8 }}

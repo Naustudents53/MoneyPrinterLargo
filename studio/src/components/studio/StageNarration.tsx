@@ -106,8 +106,8 @@ export function StageNarration() {
                 style={
                   selectedVoice === voice.id
                     ? {
-                        background: "rgba(124,58,237,0.06)",
-                        border: "1px solid rgba(124,58,237,0.15)",
+                        background: "rgba(232,162,79,0.06)",
+                        border: "1px solid rgba(232,162,79,0.15)",
                       }
                     : {
                         background: "rgba(255,255,255,0.02)",
@@ -116,7 +116,7 @@ export function StageNarration() {
                 }
                 whileHover={{
                   x: 3,
-                  borderColor: "rgba(124,58,237,0.15)",
+                  borderColor: "rgba(232,162,79,0.15)",
                 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={() => setSelectedVoice(voice.id)}
@@ -124,7 +124,7 @@ export function StageNarration() {
                 <div
                   className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
                   style={{
-                    background: "rgba(59,130,246,0.08)",
+                    background: "rgba(96,165,250,0.08)",
                     color: "#60A5FA",
                   }}
                 >
@@ -144,7 +144,7 @@ export function StageNarration() {
           <div>
             <div className="flex justify-between mb-1.5">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Drama</span>
-              <span className="text-[10px] font-mono" style={{ color: "#A78BFA" }}>{dramaLevel}%</span>
+              <span className="text-[10px] font-mono" style={{ color: "#F4C58A" }}>{dramaLevel}%</span>
             </div>
             <input
               type="range"
@@ -170,13 +170,13 @@ export function StageNarration() {
           <motion.button
             className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-white text-sm font-medium transition-all cursor-default"
             style={{
-              background: "linear-gradient(135deg, #7C3AED, #5B21B6)",
-              boxShadow: "0 0 20px rgba(124,58,237,0.2), inset 0 1px 0 rgba(255,255,255,0.1)",
-              border: "1px solid rgba(124,58,237,0.3)",
+              background: "linear-gradient(135deg, #E8A24F, #C47A28)",
+              boxShadow: "0 0 20px rgba(232,162,79,0.2), inset 0 1px 0 rgba(255,255,255,0.1)",
+              border: "1px solid rgba(232,162,79,0.3)",
             }}
             whileHover={{
               scale: 1.02,
-              boxShadow: "0 0 30px rgba(124,58,237,0.3), inset 0 1px 0 rgba(255,255,255,0.15)",
+              boxShadow: "0 0 30px rgba(232,162,79,0.3), inset 0 1px 0 rgba(255,255,255,0.15)",
             }}
             whileTap={{ scale: 0.98 }}
           >
@@ -193,8 +193,8 @@ export function StageNarration() {
               style={
                 playingPreview
                   ? {
-                      background: "linear-gradient(135deg, #7C3AED, #5B21B6)",
-                      boxShadow: "0 0 12px rgba(124,58,237,0.3)",
+                      background: "linear-gradient(135deg, #E8A24F, #C47A28)",
+                      boxShadow: "0 0 12px rgba(232,162,79,0.3)",
                       color: "#fff",
                     }
                   : {
@@ -231,8 +231,8 @@ export function StageNarration() {
               <motion.div
                 className="h-full rounded-full"
                 style={{
-                  background: "linear-gradient(90deg, #7C3AED, #3B82F6)",
-                  boxShadow: "0 0 8px rgba(124,58,237,0.3)",
+                  background: "linear-gradient(90deg, #E8A24F, #3B82F6)",
+                  boxShadow: "0 0 8px rgba(232,162,79,0.3)",
                 }}
                 animate={{ width: playingPreview ? "75%" : "0%" }}
               />
@@ -252,7 +252,7 @@ export function StageNarration() {
                 className="rounded-lg px-2 py-1 -mx-2 transition-colors"
                 style={{ color: "#9090B0" }}
                 whileHover={{
-                  background: "rgba(124,58,237,0.04)",
+                  background: "rgba(232,162,79,0.04)",
                   color: "#E8E8F0",
                 }}
                 initial={{ opacity: 0, y: 6 }}
@@ -260,7 +260,7 @@ export function StageNarration() {
                 transition={{ delay: i * 0.04 }}
               >
                 <span className={playingPreview && i === 2 ? "font-medium" : ""}
-                  style={playingPreview && i === 2 ? { color: "#A78BFA" } : {}}
+                  style={playingPreview && i === 2 ? { color: "#F4C58A" } : {}}
                 >
                   {para}
                 </span>

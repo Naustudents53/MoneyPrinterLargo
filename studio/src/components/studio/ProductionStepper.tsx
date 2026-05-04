@@ -1,135 +1,110 @@
 "use client";
 
-import { motion } from "framer-motion";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-interface Step { id: string; label: string; icon: string; }
+interface Step {
+  id: string;
+  label: string;
+}
 
 const DEFAULT_STEPS: Step[] = [
-  { id: "select", label: "Select", icon: "🎬" },
-  { id: "analyze", label: "Analyze", icon: "🧠" },
-  { id: "script", label: "Script", icon: "📝" },
-  { id: "clips", label: "Clips", icon: "✂️" },
-  { id: "narration", label: "Voice", icon: "🎙️" },
-  { id: "timeline", label: "Timeline", icon: "🎞️" },
-  { id: "export", label: "Export", icon: "📤" },
+  { id: "select",    label: "Select" },
+  { id: "analyze",   label: "Analyze" },
+  { id: "script",    label: "Script" },
+  { id: "clips",     label: "Clips" },
+  { id: "narration", label: "Voice" },
+  { id: "timeline",  label: "Timeline" },
+  { id: "export",    label: "Export" },
 ];
 
 const SHORT_LONG_STEPS: Step[] = [
-  { id: "config", label: "Config", icon: "⚙️" },
-  { id: "script", label: "Script", icon: "📝" },
-  { id: "images", label: "Images", icon: "🖼️" },
-  { id: "thumbnail", label: "Thumbnail", icon: "🎨" },
-  { id: "narration", label: "Voice", icon: "🎙️" },
-  { id: "render", label: "Render", icon: "🎬" },
-  { id: "upload", label: "Upload", icon: "📤" },
+  { id: "config",    label: "Config" },
+  { id: "script",    label: "Script" },
+  { id: "images",    label: "Images" },
+  { id: "thumbnail", label: "Thumbnail" },
+  { id: "narration", label: "Voice" },
+  { id: "render",    label: "Render" },
+  { id: "upload",    label: "Upload" },
 ];
 
-interface ProductionStepperProps {
+interface Props {
   currentStep: number;
   completedSteps: number[];
   onStepClick: (step: number) => void;
   variant?: "default" | "short" | "long";
 }
 
-export function ProductionStepper({ currentStep, completedSteps, onStepClick, variant = "default" }: ProductionStepperProps) {
-  const STEPS = variant === "default" ? DEFAULT_STEPS : SHORT_LONG_STEPS;
-
+export function ProductionStepper({
+  currentStep,
+  completedSteps,
+  onStepClick,
+  variant = "default",
+}: Props) {
+  const steps = variant === "default" ? DEFAULT_STEPS : SHORT_LONG_STEPS;
   return (
-    <nav className="flex items-center gap-1 px-6 py-4 overflow-x-auto relative">
-      {/* Línea de progreso sutil */}
-      <div className="absolute bottom-5 left-6 right-6 h-[1px] bg-border-ghost"
-/>
-      <motion.div
-        className="absolute bottom-5 left-6 h-[1px]"
-        style={{
-          background: "linear-gradient(90deg, #7C3AED, #3B82F6)",
-          boxShadow: "0 0 8px rgba(124,58,237,0.3)",
-        }}
-        initial={false}
-        animate={{
-          width: `${(currentStep / (STEPS.length - 1)) * 100}%`,
-        }}
-        transition={{ duration: 0.6, ease: "easeOut" }}
-      />
-
-      {STEPS.map((step, index) => {
-        const isCompleted = completedSteps.includes(index);
-        const isCurrent = currentStep === index;
-
+    <nav
+      className="flex items-center gap-0 px-6 h-[52px] shrink-0 overflow-x-auto"
+      style={{ borderBottom: "1px solid var(--color-hairline)" }}
+    >
+      {steps.map((step, i) => {
+        const done = completedSteps.includes(i);
+        const active = i === currentStep;
+        const reachable = done || active;
         return (
-          <motion.button
-            key={step.id}
-            className={cn(
-              "flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm shrink-0 transition-all relative z-10",
-              isCurrent && "",
-              isCompleted && "",
-              !isCompleted && !isCurrent && "text-text-muted"
-            )}
-            style={
-              isCurrent
-                ? {
-                    background: "rgba(124,58,237,0.06)",
-                    border: "1px solid rgba(124,58,237,0.15)",
-                    color: "#A78BFA",
-                  }
-                : isCompleted
-                ? {
-                    background: "rgba(16,185,129,0.04)",
-                    border: "1px solid rgba(16,185,129,0.1)",
-                  }
-                : {
-                    background: "transparent",
-                    border: "1px solid transparent",
-                  }
-            }
-            onClick={() => onStepClick(index)}
-            whileHover={
-              !isCurrent
-                ? {
-                    backgroundColor: "rgba(255,255,255,0.02)",
-                  }
-                : {}
-            }
-            whileTap={{ scale: 0.97 }}
-          >
-            <motion.span
+          <div key={step.id} className="flex items-center shrink-0">
+            <button
+              type="button"
+              onClick={() => reachable && onStepClick(i)}
               className={cn(
-                "flex items-center justify-center w-7 h-7 rounded-full text-xs shrink-0 relative",
-                isCompleted
-                  ? "bg-success/15 text-success"
-                  : isCurrent
-                  ? "bg-accent-purple text-white"
-                  : "bg-surface-raised text-text-muted border border-border-ghost"
+                "flex items-center gap-2 px-[10px] py-[6px] rounded-md transition-all duration-150",
+                reachable ? "cursor-pointer" : "cursor-default",
               )}
-              style={
-                isCurrent
-                  ? {
-                      boxShadow: "0 0 12px rgba(124,58,237,0.4)",
-                    }
-                  : {}
-              }
-              animate={
-                isCurrent
-                  ? {
-                      scale: [1, 1.08, 1],
-                      boxShadow: [
-                        "0 0 0px rgba(124,58,237,0)",
-                        "0 0 16px rgba(124,58,237,0.4)",
-                        "0 0 0px rgba(124,58,237,0)",
-                      ],
-                    }
-                  : { scale: 1 }
-              }
-              transition={isCurrent ? { duration: 2, repeat: Infinity } : {}}
+              style={{
+                background: active ? "var(--color-amber-dim)" : "transparent",
+                border: active
+                  ? "1px solid var(--color-amber-ring)"
+                  : "1px solid transparent",
+                color: active
+                  ? "var(--color-amber)"
+                  : done
+                  ? "var(--color-text-primary)"
+                  : "var(--color-text-tertiary)",
+              }}
             >
-              {isCompleted ? <Check size={12} /> : step.icon}
-            </motion.span>
-            <span className="hidden md:inline whitespace-nowrap text-[13px]">
-              {step.label}
-            </span>
-          </motion.button>
+              <span
+                className="flex h-[22px] w-[22px] items-center justify-center rounded-full shrink-0 text-[11px] font-semibold border"
+                style={{
+                  background: active
+                    ? "var(--color-amber)"
+                    : done
+                    ? "var(--color-success-bg)"
+                    : "var(--color-surf-2)",
+                  borderColor: active
+                    ? "var(--color-amber)"
+                    : done
+                    ? "rgba(74,222,128,0.27)"
+                    : "var(--color-hairline)",
+                  color: active
+                    ? "#0B0B0D"
+                    : done
+                    ? "var(--color-success)"
+                    : "var(--color-text-tertiary)",
+                }}
+              >
+                {done ? <Check size={12} /> : i + 1}
+              </span>
+              <span
+                className="text-[12px] whitespace-nowrap"
+                style={{ fontWeight: active ? 600 : 400 }}
+              >
+                {step.label}
+              </span>
+            </button>
+            {i < steps.length - 1 && (
+              <span className="block h-px w-5 bg-[var(--color-hairline)] shrink-0" />
+            )}
+          </div>
         );
       })}
     </nav>

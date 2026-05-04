@@ -1,215 +1,223 @@
 @import "tailwindcss";
 
 /* =========================================================
-   MONEYPRINTER STUDIO — Sistema Visual Retro-Futurista
-   Dirección: Control-misión cinematográfico. Oscuro,
-   denso, intencional. Cada superficie tiene profundidad.
+   MONEYPRINTER LARGO — Warm Ember design system
+   Linear × Vercel × Arc — confident, quiet, editorial
+   Base: #0B0B0D · Accent: #E8A24F (warm ember)
    ========================================================= */
 
 @theme inline {
-  /* --- Capas de superficie (de más profunda a más alta) --- */
-  --color-void: #020205;
-  --color-depth: #08080F;
-  --color-surface-base: #0E0E18;
-  --color-surface-raised: #151520;
-  --color-surface-overlay: #1C1C2B;
-  --color-surface-panel: #222235;
-  --color-surface-sunken: #060610;
+  /* --- Surface stack (deep → high) --- */
+  --color-base: #0B0B0D;
+  --color-surf-1: #131316;
+  --color-surf-2: #1A1A1F;
+  --color-surf-3: #222228;
 
-  /* --- Bordes con intención --- */
-  --color-border-ghost: #131320;
-  --color-border-subtle: #1E1E32;
-  --color-border-default: #2A2A45;
-  --color-border-strong: #3D3D5E;
-  --color-border-glow: rgba(124, 58, 237, 0.25);
-  --color-border-glow-blue: rgba(59, 130, 246, 0.25);
+  /* Aliases kept so legacy components do not break while we migrate. */
+  --color-void: #0B0B0D;
+  --color-depth: #0B0B0D;
+  --color-surface-base: #0B0B0D;
+  --color-surface-raised: #131316;
+  --color-surface-overlay: #1A1A1F;
+  --color-surface-panel: #222228;
+  --color-surface-sunken: #08080A;
 
-  /* --- Texto con jerarquía clara --- */
-  --color-text-primary: #E8E8F0;
-  --color-text-secondary: #9090B0;
-  --color-text-tertiary: #5A5A7A;
-  --color-text-muted: #3A3A55;
-  --color-text-glow: #C4B5FD;
+  /* --- Borders / hairlines --- */
+  --color-hairline: rgba(255, 255, 255, 0.07);
+  --color-hairline-soft: rgba(255, 255, 255, 0.04);
+  --color-border-ghost: rgba(255, 255, 255, 0.04);
+  --color-border-subtle: rgba(255, 255, 255, 0.07);
+  --color-border-default: rgba(255, 255, 255, 0.10);
+  --color-border-strong: rgba(255, 255, 255, 0.16);
+  --color-border-glow: rgba(232, 162, 79, 0.35);
+  --color-border-glow-blue: rgba(96, 165, 250, 0.30);
 
-  /* --- Acentos: púrpura dramático + azul hielo --- */
-  --color-accent-purple: #7C3AED;
-  --color-accent-purple-deep: #5B21B6;
-  --color-accent-purple-soft: #A78BFA;
-  --color-accent-purple-glow: rgba(124, 58, 237, 0.4);
-  --color-accent-blue: #3B82F6;
-  --color-accent-blue-soft: #60A5FA;
-  --color-accent-blue-glow: rgba(59, 130, 246, 0.4);
-  --color-accent-cyan: #06B6D4;
-  --color-accent-cyan-soft: #67E8F9;
+  /* --- Text hierarchy --- */
+  --color-text-primary: #F5F5F4;
+  --color-text-secondary: #A8A29E;
+  --color-text-tertiary: #57534E;
+  --color-text-muted: #57534E;
+  --color-text-glow: #E8A24F;
 
-  /* --- Estados funcionales --- */
-  --color-success: #10B981;
-  --color-success-dim: #059669;
+  /* --- Accent: warm ember --- */
+  --color-amber: #E8A24F;
+  --color-amber-deep: #C47A28;
+  --color-amber-soft: #F4C58A;
+  --color-amber-dim: rgba(232, 162, 79, 0.12);
+  --color-amber-ring: rgba(232, 162, 79, 0.35);
+
+  /* Aliases so existing class names keep working — we mute the old purple
+     vibe by mapping it to the ember accent. */
+  --color-accent-purple: #E8A24F;
+  --color-accent-purple-deep: #C47A28;
+  --color-accent-purple-soft: #F4C58A;
+  --color-accent-purple-glow: rgba(232, 162, 79, 0.30);
+  --color-accent-blue: #60A5FA;
+  --color-accent-blue-soft: #93C5FD;
+  --color-accent-blue-glow: rgba(96, 165, 250, 0.25);
+  --color-accent-cyan: #67E8F9;
+  --color-accent-cyan-soft: #A5F3FC;
+
+  /* --- Status --- */
+  --color-success: #4ADE80;
+  --color-success-bg: rgba(74, 222, 128, 0.10);
+  --color-success-dim: #16A34A;
   --color-warning: #F59E0B;
-  --color-error: #EF4444;
+  --color-warning-bg: rgba(245, 158, 11, 0.10);
+  --color-error: #F87171;
+  --color-error-bg: rgba(248, 113, 113, 0.10);
   --color-error-dim: #B91C1C;
-  --color-info: #6366F1;
+  --color-info: #60A5FA;
+  --color-info-bg: rgba(96, 165, 250, 0.10);
 
-  /* --- Tipografía --- */
-  --font-sans: var(--font-sans, 'Inter', system-ui, sans-serif);
-  --font-mono: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace);
+  /* --- Type --- */
+  --font-sans: var(--font-sans, "Geist Sans", Inter, system-ui, sans-serif);
+  --font-mono: var(--font-mono, "Geist Mono", "JetBrains Mono", "Fira Code", monospace);
 
-  /* --- Sombras de profundidad --- */
-  --shadow-panel: 0 0 0 1px var(--color-border-ghost), 0 8px 32px rgba(0,0,0,0.6);
-  --shadow-float: 0 16px 48px rgba(0,0,0,0.7), 0 0 0 1px var(--color-border-subtle);
-  --shadow-glow-purple: 0 0 30px rgba(124, 58, 237, 0.35), 0 0 60px rgba(124, 58, 237, 0.15);
-  --shadow-glow-blue: 0 0 30px rgba(59, 130, 246, 0.35), 0 0 60px rgba(59, 130, 246, 0.15);
-  --shadow-inset: inset 0 1px 0 rgba(255,255,255,0.03);
+  /* --- Shadows (subtle, no heavy glows) --- */
+  --shadow-panel: 0 0 0 1px var(--color-hairline-soft), 0 1px 0 rgba(0, 0, 0, 0.4);
+  --shadow-float: 0 16px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--color-hairline);
+  --shadow-glow-purple: 0 0 24px rgba(232, 162, 79, 0.25);
+  --shadow-glow-blue: 0 0 24px rgba(96, 165, 250, 0.25);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 
-  /* --- Radios intencionales --- */
+  /* --- Radii (8px input, 12px card) --- */
+  --radius-xs: 4px;
   --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
 }
 
 /* =========================================================
-   RESETS Y BASES
+   Resets & base
    ========================================================= */
 
-*, *::before, *::after {
-  box-sizing: border-box;
-}
+*, *::before, *::after { box-sizing: border-box; }
 
 html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background-color: var(--color-void);
+  background-color: var(--color-base);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  letter-spacing: -0.01em;
 }
 
-/* Atmósfera: gradiente sutil en el fondo global */
-html {
-  background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(124, 58, 237, 0.04), transparent),
-              radial-gradient(ellipse 60% 40% at 80% 100%, rgba(59, 130, 246, 0.03), transparent),
-              var(--color-void);
-}
+/* No more atmospheric purple gradients — flat surface. */
+html { background: var(--color-base); }
 
-/* Scrollbars estilo terminal */
-::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--color-border-default);
-  border-radius: 10px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border-strong);
-}
+/* Thin scrollbars, neutral. */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.10); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); }
 
 /* =========================================================
-   UTILIDADES GLOBALES
+   Utilities
    ========================================================= */
 
-/* Efecto "scan line" sutil para vibe retro */
-.scanline::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0,0,0,0.03) 2px,
-    rgba(0,0,0,0.03) 4px
+/* Stripe placeholder used for thumbnail/image scaffolding */
+.stripes {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.30) 0,
+    rgba(255, 255, 255, 0.30) 1px,
+    transparent 0,
+    transparent 50%
   );
-  pointer-events: none;
-  z-index: 100;
-  opacity: 0.5;
+  background-size: 8px 8px;
 }
 
-/* Glow de texto púrpura */
-.text-glow {
-  text-shadow: 0 0 20px var(--color-accent-purple-glow);
+.stripes-soft {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.30) 0,
+    rgba(255, 255, 255, 0.30) 1px,
+    transparent 0,
+    transparent 50%
+  );
+  background-size: 8px 8px;
 }
 
-/* Bordes con luz interna */
+/* Old text-glow keeps working but is muted */
+.text-glow { text-shadow: 0 0 16px rgba(232, 162, 79, 0.30); }
+
+/* Old border-glow shim */
 .border-glow {
-  box-shadow: 0 0 0 1px var(--color-border-subtle), inset 0 0 20px rgba(124, 58, 237, 0.05);
+  box-shadow: 0 0 0 1px var(--color-hairline), inset 0 0 16px rgba(232, 162, 79, 0.04);
 }
 
-/* Panel con profundidad */
+/* Card panel */
 .panel {
-  background: var(--color-surface-raised);
-  border: 1px solid var(--color-border-ghost);
-  box-shadow: var(--shadow-panel);
-  border-radius: var(--radius-md);
+  background: var(--color-surf-1);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
 }
 
-/* Glassmorphism sutil para overlays */
 .glass {
-  background: rgba(14, 14, 24, 0.85);
+  background: rgba(19, 19, 22, 0.85);
   backdrop-filter: blur(12px);
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--color-hairline);
 }
 
-/* Línea divisora con gradiente */
 .divider-gradient {
   height: 1px;
-  background: linear-gradient(90deg, transparent, var(--color-border-default), transparent);
+  background: linear-gradient(90deg, transparent, var(--color-hairline), transparent);
 }
 
-/* Animación de pulso lento para indicadores */
+/* Animations */
 @keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.animate-pulse-slow { animation: pulse-slow 3s ease-in-out infinite; }
+
+@keyframes blink-cursor { 50% { opacity: 0; } }
+.animate-blink-cursor { animation: blink-cursor 1s step-end infinite; }
+
+@keyframes ping-subtle {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
-.animate-pulse-slow {
-  animation: pulse-slow 3s ease-in-out infinite;
-}
+.animate-ping-subtle { animation: ping-subtle 1.2s ease-in-out infinite; }
 
-/* Animación de brillo en bordes */
 @keyframes border-shimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
 .border-shimmer {
-  background: linear-gradient(90deg, var(--color-border-subtle), var(--color-accent-purple), var(--color-border-subtle));
+  background: linear-gradient(90deg, var(--color-hairline), var(--color-amber), var(--color-hairline));
   background-size: 200% 100%;
   animation: border-shimmer 4s linear infinite;
 }
 
-/* Range input estilizado */
+/* Range input styled to ember */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   height: 4px;
   border-radius: 2px;
-  background: var(--color-surface-sunken);
+  background: var(--color-surf-2);
   outline: none;
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  background: var(--color-accent-purple);
-  border: 2px solid var(--color-surface-overlay);
-  box-shadow: 0 0 8px var(--color-accent-purple-glow);
+  background: var(--color-amber);
+  border: 2px solid var(--color-surf-1);
+  box-shadow: 0 0 0 1px var(--color-amber-ring);
   cursor: pointer;
   transition: transform 0.15s ease;
 }
-input[type="range"]::-webkit-slider-thumb:hover {
-  transform: scale(1.2);
-}
+input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 
-/* Selection color */
-::selection {
-  background: var(--color-accent-purple);
-  color: white;
-}
+/* Selection */
+::selection { background: rgba(232, 162, 79, 0.30); color: var(--color-text-primary); }

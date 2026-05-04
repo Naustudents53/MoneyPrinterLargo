@@ -39,8 +39,8 @@ export function ContextPanel() {
         <div
           className="rounded-xl p-3 space-y-3"
           style={{
-            background: "rgba(124,58,237,0.04)",
-            border: "1px solid rgba(124,58,237,0.1)",
+            background: "rgba(232,162,79,0.04)",
+            border: "1px solid rgba(232,162,79,0.1)",
           }}
         >
           <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted mb-2">
@@ -79,8 +79,8 @@ export function ContextPanel() {
               <motion.div
                 className="h-full rounded-full"
                 style={{
-                  background: "linear-gradient(90deg, #7C3AED, #3B82F6)",
-                  boxShadow: "0 0 8px rgba(124,58,237,0.3)",
+                  background: "linear-gradient(90deg, #E8A24F, #3B82F6)",
+                  boxShadow: "0 0 8px rgba(232,162,79,0.3)",
                 }}
                 initial={{ width: 0 }}
                 animate={{ width: `${((project.currentStep + 1) / 7) * 100}%` }}
@@ -118,8 +118,8 @@ export function ContextPanel() {
                 }}
                 whileHover={{
                   x: 2,
-                  borderColor: "rgba(124,58,237,0.2)",
-                  background: "rgba(124,58,237,0.04)",
+                  borderColor: "rgba(232,162,79,0.2)",
+                  background: "rgba(232,162,79,0.04)",
                 }}
               >
                 <span className="flex items-center gap-2">

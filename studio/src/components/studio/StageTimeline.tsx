@@ -28,7 +28,7 @@ export function StageTimeline() {
               border: "1px solid rgba(30,30,50,0.5)",
               color: "#9090B0",
             }}
-            whileHover={{ borderColor: "rgba(124,58,237,0.2)", color: "#E8E8F0" }}
+            whileHover={{ borderColor: "rgba(232,162,79,0.2)", color: "#E8E8F0" }}
             whileTap={{ scale: 0.95 }}
           >
             <SkipBack size={14} />
@@ -36,9 +36,9 @@ export function StageTimeline() {
           <motion.button
             className="w-10 h-10 rounded-xl flex items-center justify-center text-white transition-all"
             style={{
-              background: "linear-gradient(135deg, #7C3AED, #5B21B6)",
-              boxShadow: "0 0 16px rgba(124,58,237,0.2), inset 0 1px 0 rgba(255,255,255,0.1)",
-              border: "1px solid rgba(124,58,237,0.3)",
+              background: "linear-gradient(135deg, #E8A24F, #C47A28)",
+              boxShadow: "0 0 16px rgba(232,162,79,0.2), inset 0 1px 0 rgba(255,255,255,0.1)",
+              border: "1px solid rgba(232,162,79,0.3)",
             }}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
@@ -52,7 +52,7 @@ export function StageTimeline() {
               border: "1px solid rgba(30,30,50,0.5)",
               color: "#9090B0",
             }}
-            whileHover={{ borderColor: "rgba(124,58,237,0.2)", color: "#E8E8F0" }}
+            whileHover={{ borderColor: "rgba(232,162,79,0.2)", color: "#E8E8F0" }}
             whileTap={{ scale: 0.95 }}
           >
             <SkipForward size={14} />
@@ -107,10 +107,10 @@ export function StageTimeline() {
           <motion.button
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-accent-purple-soft transition-all"
             style={{
-              background: "rgba(124,58,237,0.06)",
-              border: "1px solid rgba(124,58,237,0.15)",
+              background: "rgba(232,162,79,0.06)",
+              border: "1px solid rgba(232,162,79,0.15)",
             }}
-            whileHover={{ background: "rgba(124,58,237,0.1)" }}
+            whileHover={{ background: "rgba(232,162,79,0.1)" }}
           >
             <Plus size={12} />Add Track
           </motion.button>

@@ -79,9 +79,9 @@ export function CommandPalette() {
               className="overflow-hidden"
               style={{
                 background: "linear-gradient(180deg, rgba(28,28,43,0.98), rgba(14,14,24,0.98))",
-                border: "1px solid rgba(124,58,237,0.15)",
+                border: "1px solid rgba(232,162,79,0.15)",
                 borderRadius: "16px",
-                boxShadow: "0 24px 64px rgba(0,0,0,0.5), 0 0 40px rgba(124,58,237,0.08)",
+                boxShadow: "0 24px 64px rgba(0,0,0,0.5), 0 0 40px rgba(232,162,79,0.08)",
               }}
             >
               {/** Search input */}
@@ -127,8 +127,8 @@ export function CommandPalette() {
                     style={
                       i === selected
                         ? {
-                            background: "rgba(124,58,237,0.08)",
-                            color: "#A78BFA",
+                            background: "rgba(232,162,79,0.08)",
+                            color: "#F4C58A",
                           }
                         : {
                             color: "#9090B0",
@@ -153,7 +153,7 @@ export function CommandPalette() {
                       size={14}
                       className="shrink-0"
                       style={{
-                        color: i === selected ? "#A78BFA" : "#3A3A55",
+                        color: i === selected ? "#F4C58A" : "#3A3A55",
                       }}
                     />
                     {item}

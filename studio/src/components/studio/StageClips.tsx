@@ -17,10 +17,10 @@ export function StageClips() {
         <motion.button
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-accent-purple-soft transition-all"
           style={{
-            background: "rgba(124,58,237,0.08)",
-            border: "1px solid rgba(124,58,237,0.15)",
+            background: "rgba(232,162,79,0.08)",
+            border: "1px solid rgba(232,162,79,0.15)",
           }}
-          whileHover={{ background: "rgba(124,58,237,0.15)" }}
+          whileHover={{ background: "rgba(232,162,79,0.15)" }}
           whileTap={{ scale: 0.97 }}
           onClick={() => setClips(SAMPLE_CLIPS)}
         >
@@ -45,8 +45,8 @@ export function StageClips() {
                 }}
                 whileHover={{
                   y: -4,
-                  borderColor: "rgba(59,130,246,0.2)",
-                  boxShadow: "0 0 20px rgba(59,130,246,0.08), inset 0 1px 0 rgba(255,255,255,0.03)",
+                  borderColor: "rgba(96,165,250,0.2)",
+                  boxShadow: "0 0 20px rgba(96,165,250,0.08), inset 0 1px 0 rgba(255,255,255,0.03)",
                 }}
                 whileTap={{ scale: 0.98 }}
               >
