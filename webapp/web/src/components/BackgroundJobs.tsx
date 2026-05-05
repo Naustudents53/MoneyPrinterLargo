@@ -117,7 +117,7 @@ export function BackgroundJobs() {
         open={!!attaching}
         onOpenChange={(o) => !o && setAttaching(null)}
         title={attaching?.title || "Trabajo"}
-        description="Reattach a un job en background — los logs se replayan desde el inicio."
+        description="Reattach a un job en background — los logs se reproducen desde el inicio."
         sseUrl={attaching ? api.jobStreamUrl(attaching.id) : null}
         channelId={attaching?.channel_id || undefined}
         kind={attaching?.kind || undefined}
