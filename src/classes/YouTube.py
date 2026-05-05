@@ -3900,8 +3900,13 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
                 f"places, objects, era, clothing, architecture or symbols. Use proper nouns "
                 f"when relevant.\n"
                 f"- ONE single dramatic scene, not a list of unrelated elements.\n"
-                f"- Include: dramatic side lighting, high contrast, shallow depth of field, "
-                f"cinematic composition, photorealistic.\n"
+                f"- Composition cues only — describe framing, lighting direction, depth, focus, "
+                f"mood. Examples: 'dramatic side lighting', 'high contrast', 'shallow depth of "
+                f"field', 'low angle', 'intense expression on the subject'. Style-agnostic.\n"
+                f"- DO NOT mention rendering style, medium, or technique. NEVER write "
+                f"'photorealistic', 'cinematic film look', 'cartoon', 'anime', '3D render', "
+                f"'watercolor', '8K', 'photograph', 'illustration', or any similar word that "
+                f"locks in a visual style — the channel's art style is added separately.\n"
                 f"- End with: no text, no letters, no logos, no watermark.\n"
                 f"- Return ONLY the prompt itself. No quotes, no preamble, no explanation."
             )).strip().strip('"\'`')
@@ -3922,7 +3927,8 @@ Return ONLY a JSON object with two fields:
 - "visual": ENGLISH prompt (40-70 words) for an AI image generator. CRITICAL RULES:
   * The image MUST be visually unmistakable as the topic — name the actual SPECIFIC people, places, objects, clothing, architecture, era, or symbols from the topic. Use proper nouns when relevant.
   * Build ONE single dramatic scene, not a list of unrelated elements.
-  * Include: dramatic side lighting, high contrast, shallow depth of field, cinematic composition, photorealistic.
+  * Composition cues only — describe framing, lighting direction, depth, focus, mood. Examples: "dramatic side lighting", "high contrast", "shallow depth of field", "low angle", "intense expression on the subject". Style-agnostic.
+  * DO NOT mention rendering style, medium, or technique. NEVER write "photorealistic", "cinematic film look", "cartoon", "anime", "3D render", "watercolor", "8K", "photograph", "illustration", or any similar word that locks in a visual style — the channel's art style is added separately downstream.
   * End the prompt with: "no text, no letters, no logos, no watermark".
   * FORBIDDEN: generic phrases like "person looking", "mysterious figure", "abstract concept" — be SPECIFIC.
 
@@ -4001,10 +4007,14 @@ Return ONLY the JSON. No markdown, no explanation."""
                 overlay_words = ""
 
         if not visual_prompt:
+            # Style-neutral fallback — composition cues only. The channel's art
+            # style is appended downstream by `_apply_channel_style`, so this
+            # prompt MUST NOT lock in a rendering medium ("cinematic",
+            # "photorealistic", etc.) that would fight cartoon/anime channels.
             visual_prompt = (
-                f"Dramatic cinematic close-up related to {self.subject}, "
-                f"intense expression, golden rim lighting, dark moody background, "
-                f"high contrast, ultra-detailed, no text"
+                f"Dramatic close-up related to {self.subject}, "
+                f"intense expression on the subject, dramatic side lighting, "
+                f"dark moody background, high contrast, no text"
             )
 
         # Deterministic fallback path (always coherent with title — never hallucinates).
