@@ -121,7 +121,13 @@ def fetch_video_meta(video_id: str) -> dict:
         if info:
             ts = info.get("timestamp")
             if ts:
-                out["date"] = datetime.utcfromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M:%S")
+                # Use local time (NOT utcfromtimestamp) so the date string is
+                # consistent with the rest of the codebase (`datetime.now()`
+                # in YouTube.py / Twitter.py). The frontend parses bare
+                # "YYYY-MM-DD HH:MM:SS" strings as local time; mixing UTC
+                # values made fresh syncs land in the future and stick at
+                # the top of the list as "hace unos segundos" forever.
+                out["date"] = datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M:%S")
             else:
                 ud = info.get("upload_date") or ""
                 if len(ud) == 8:
@@ -140,10 +146,10 @@ def fetch_channel(handle: str) -> tuple[dict[str, dict], dict[str, dict]]:
 
     print(f"   -> longs:  {base}/videos", flush=True)
     longs = fetch_tab(f"{base}/videos")
-    print(f"     got {len(longs)}")
+    print(f"     got {len(longs)}", flush=True)
     print(f"   -> shorts: {base}/shorts", flush=True)
     shorts = fetch_tab(f"{base}/shorts")
-    print(f"     got {len(shorts)}")
+    print(f"     got {len(shorts)}", flush=True)
 
     longs_by_id = {v["id"]: {**v, "is_short": False} for v in longs}
     shorts_by_id = {v["id"]: {**v, "is_short": True} for v in shorts}
@@ -192,6 +198,20 @@ def sync_channel(acc: dict, handle: str, args, all_published: dict[str, dict],
         # up — they're current local time of the run, not the YT upload time.
         return False
 
+    # Pre-count videos that will need a (slow) yt-dlp meta call so the live
+    # progress line below can show "meta N/T" — without this counter the UI
+    # froze for several minutes per channel with no output.
+    will_refresh = sum(
+        1 for v in videos
+        if extract_video_id(v.get("url", "") or "") in all_published
+        and (args.refresh_meta or needs_meta(v) or args.refresh_dates)
+    )
+    if will_refresh:
+        print(f"   meta-refresh queue: {will_refresh} video(s) "
+              f"(~{will_refresh * (args.sleep + 1.5):.0f}s estimated)",
+              flush=True)
+    refresh_done = 0
+
     for v in videos:
         vid = extract_video_id(v.get("url", "") or "")
         match: Optional[dict] = None
@@ -229,6 +249,10 @@ def sync_channel(acc: dict, handle: str, args, all_published: dict[str, dict],
         # Refresh description only if missing — we don't want to overwrite
         # custom edits the user made.
         if args.refresh_meta or needs_meta(v) or args.refresh_dates:
+            refresh_done += 1
+            short_title = (v.get("title") or "").strip()[:55]
+            print(f"   meta {refresh_done:>3}/{will_refresh:<3} {match['id']}  -> {short_title!r}",
+                  flush=True)
             meta = fetch_video_meta(match["id"])
             if meta["date"] and (args.refresh_dates or args.refresh_meta or not v.get("date")):
                 v["date"] = meta["date"]

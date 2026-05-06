@@ -35,6 +35,10 @@ export function relativeTime(value?: string) {
   const d = new Date(value);
   if (isNaN(d.getTime())) return value;
   const diff = Date.now() - d.getTime();
+  // Future date — happens when a sync stored a UTC timestamp that the browser
+  // re-interprets as local time. Don't claim "hace unos segundos" forever;
+  // surface the absolute date so the row stops looking newer than reality.
+  if (diff < 0) return formatDate(value);
   const sec = Math.floor(diff / 1000);
   if (sec < 60) return "hace unos segundos";
   const min = Math.floor(sec / 60);

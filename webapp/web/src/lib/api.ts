@@ -38,6 +38,7 @@ export interface Channel {
   long_voice: string;
   hook_profile: string;
   voice_drama: boolean;
+  youtube_handle: string;
   videos_count: number;
 }
 
@@ -51,6 +52,7 @@ export interface ChannelInput {
   long_voice?: string;
   hook_profile?: string;
   voice_drama?: boolean;
+  youtube_handle?: string;
 }
 
 export interface ChannelVideo {

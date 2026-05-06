@@ -46,6 +46,7 @@ export function ChannelFormDialog({ open, onOpenChange, channel, onSaved }: Prop
     long_voice: "",
     hook_profile: "",
     voice_drama: false,
+    youtube_handle: "",
   });
 
   useEffect(() => {
@@ -68,6 +69,7 @@ export function ChannelFormDialog({ open, onOpenChange, channel, onSaved }: Prop
         long_voice: channel.long_voice,
         hook_profile: channel.hook_profile,
         voice_drama: channel.voice_drama,
+        youtube_handle: channel.youtube_handle || "",
       });
     } else if (open) {
       setData({
@@ -80,6 +82,7 @@ export function ChannelFormDialog({ open, onOpenChange, channel, onSaved }: Prop
         long_voice: "",
         hook_profile: "",
         voice_drama: false,
+        youtube_handle: "",
       });
     }
   }, [channel, open]);
@@ -172,6 +175,21 @@ export function ChannelFormDialog({ open, onOpenChange, channel, onSaved }: Prop
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="sm:col-span-2 space-y-2">
+            <Label htmlFor="youtube_handle">Handle de YouTube</Label>
+            <Input
+              id="youtube_handle"
+              value={data.youtube_handle || ""}
+              onChange={(e) => update("youtube_handle", e.target.value)}
+              placeholder="@TuCanal o https://www.youtube.com/@TuCanal"
+              className="font-mono text-xs"
+            />
+            <p className="text-xs text-muted-foreground">
+              Identificador público del canal. Lo usa la sincronización con
+              YouTube para descargar el listado de videos publicados.
+            </p>
           </div>
 
           <div className="sm:col-span-2 space-y-2">
