@@ -318,10 +318,15 @@ CIVILIZATIONS: dict = {
 # Long videos still use civilization detection + per-channel style; this only kicks
 # in for shorts that would otherwise have no style at all.
 SHORTS_FIXED_STYLE: str = (
-    "2D vector illustration, flat-color cartoon style, bold dark outlines, "
-    "cinematic comic-book aesthetic, vibrant saturated palette, dramatic shading "
-    "and rim lighting, expressive characters with clean shapes, hand-drawn "
-    "animation feel, modern motion-comic look"
+    "ultra-realistic cinematic photograph, shot on full-frame digital cinema camera "
+    "with 50mm prime lens at f/2.0, shallow depth of field with creamy natural bokeh, "
+    "rich filmic color grading reminiscent of Kodak Vision3 500T, "
+    "naturalistic motivated lighting (soft key + ambient fill), subtle volumetric haze, "
+    "true-to-life skin tones with visible pores and micro-detail, accurate anatomy, "
+    "five fingers per hand, sharp eyes with realistic catchlights, period-accurate "
+    "clothing and props rendered as real physical materials (wool, linen, bronze, leather, stone), "
+    "documentary realism, fine 35mm film grain, no stylization, no illustration, "
+    "no cartoon, no anime, no painterly look, no plastic skin"
 )
 
 
@@ -1603,16 +1608,21 @@ Example format:
     # - Include explicit face/skin/hands realism cues so portraits stop looking
     #   plasticky and AI-glossy.
     DEFAULT_BASE_STYLE = (
-        "one full-bleed photograph filling the entire frame edge to edge, "
-        "one continuous uninterrupted scene captured in a single exposure, "
-        "photorealistic, true-to-life realism, natural ambient lighting, "
-        "period-accurate clothing architecture weapons and everyday objects, "
-        "authentic materials and textures, neutral documentary tone, "
-        "anatomically correct human faces with realistic skin texture, visible pores, subtle imperfections, "
-        "natural facial proportions, sharp detailed eyes with realistic iris, "
-        "accurate hands with five fingers, correct anatomy, "
-        "subtle film grain, shallow depth of field, "
-        "no cartoon, no illustration, no painting, no anime, no stylization, no plastic skin, no waxy skin"
+        "one full-bleed cinematic photograph filling the entire frame edge to edge, "
+        "one continuous uninterrupted scene captured in a single real exposure, "
+        "ultra-photorealistic, true-to-life documentary realism, shot on full-frame "
+        "digital cinema camera with a 50mm prime lens at f/2.0, shallow depth of field "
+        "with natural creamy bokeh, motivated naturalistic lighting (soft key plus ambient fill), "
+        "rich filmic color grading reminiscent of Kodak Vision3 500T, subtle volumetric haze, "
+        "period-accurate clothing architecture weapons and everyday objects rendered as "
+        "real physical materials (wool, linen, bronze, leather, dyed cloth, weathered stone, "
+        "oiled wood), authentic textures with visible wear and micro-detail, "
+        "anatomically correct human faces with realistic skin texture, visible pores, "
+        "subtle blemishes, natural facial proportions, sharp detailed eyes with realistic "
+        "iris and natural catchlights, accurate hands with exactly five fingers, correct anatomy, "
+        "fine 35mm film grain, no over-sharpening, neutral documentary tone, "
+        "no cartoon, no illustration, no painting, no anime, no stylization, no cel-shading, "
+        "no airbrushed look, no plastic skin, no waxy skin, no AI gloss"
     )
 
     # Words that frequently push Gemini / Nano Banana 2 toward producing a
@@ -1670,6 +1680,26 @@ Example format:
         clean_prompt = self._sanitize_image_prompt(prompt).rstrip(', .')
         civ_info = self._get_civilization_info()
         custom_style = (self._image_style or "").strip()
+
+        # Guard against placeholder / garbage image_style values like "1", "x",
+        # "test", "default", or any string with fewer than 2 alphabetic words.
+        # Without this, a config like image_style="1" makes us emit
+        # "ART STYLE: 1" to the LLM, which then drifts into a generic cartoon
+        # look instead of falling through to the photoreal default.
+        if custom_style:
+            alpha_words = re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]{3,}", custom_style)
+            stripped_lower = custom_style.lower().strip()
+            if (
+                len(custom_style) < 8
+                or len(alpha_words) < 2
+                or stripped_lower in {"default", "test", "tbd", "todo", "n/a", "na", "none"}
+            ):
+                if get_verbose():
+                    info(
+                        f" => Ignoring placeholder image_style {custom_style!r}; "
+                        f"falling back to photoreal default."
+                    )
+                custom_style = ""
 
         parts: list[str] = []
 

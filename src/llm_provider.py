@@ -178,6 +178,8 @@ def warmup_ollama_model(model: str) -> None:
             capture_output=True,
             timeout=180,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode != 0:
             err = (result.stderr or result.stdout or "").strip()
