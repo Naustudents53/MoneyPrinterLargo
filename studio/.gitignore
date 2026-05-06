@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+dist/
+
+# Next.js generated
+next-env.d.ts
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Test cache
+.pytest_cache/
+
+# Build info
+tsconfig.tsbuildinfo
+
+# Logs
+*.log
+
+# Local env files
+.env.local
+.env*.local

@@ -8,3 +8,23 @@ niche.txt
 *.exe
 auto.sh
 .DS_Store
+
+# Claude Code worktrees
+.claude/
+
+# pytest cache
+.pytest_cache/
+
+# logs
+*.log
+
+# Generated thumbnails
+thumbnails/
+
+# Studio build artifacts
+studio/node_modules/
+studio/.next/
+studio/dist/
+
+# Legacy webapp
+webapp/
