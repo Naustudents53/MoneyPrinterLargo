@@ -1084,67 +1084,90 @@ INSTRUCTIONS:
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         else:
-            # Detect civilization from subject so we can anchor every scene to the
-            # right historical era (clothing, architecture, weapons, objects).
-            # Local LLMs (Ollama) drift into modern visuals if the era isn't named
-            # explicitly inside the prompt.
+            # Detect civilization for SOFT context only — used as setting hints,
+            # never as a per-prompt armor/clothing checklist (the previous
+            # implementation forced "lorica segmentata + plumed helmet + gladius"
+            # into every prompt, which produced 6 near-identical "Roman in armor"
+            # portraits and lost the actual story being told).
             civ_info = self._get_civilization_info()
-            era_block = ""
-            era_rule = "PERIOD ACCURACY. If a person appears, describe their clothing in concrete detail (fabric, cut, color, footwear, headwear). Do the same for architecture, weapons, tools, transport, and 2-3 supporting objects in the scene. If the section names a specific real person, place or event, use that proper noun."
+            era_context = ""
             if civ_info:
-                era_block = (
-                    f"\n\n=== HISTORICAL ERA — NON-NEGOTIABLE ===\n"
-                    f"This video is set in: **{civ_info['name']}**.\n"
-                    f"Every prompt MUST stay in this era. Period visual anchors: {civ_info['era_brief']}.\n"
-                    f"FORBIDDEN in every prompt: modern military uniforms, industrial-era clothing, "
-                    f"firearms, tanks, cars, modern architecture, electricity, anachronistic objects of any kind.\n"
-                    f"REQUIRED in every prompt that includes a person: at least 2 specific period clothing/armor terms "
-                    f"from the era markers above (e.g. for Ancient Greece — 'bronze hoplite cuirass', 'crested Corinthian helmet', "
-                    f"'round aspis shield', 'long dory spear', 'red cloak', 'leather sandals', 'white chiton tunic').\n"
-                    f"=========================================="
-                )
-                era_rule = (
-                    f"PERIOD ACCURACY — STRICT. Era is **{civ_info['name']}**. "
-                    f"Every prompt with a person MUST name at least 2 specific period clothing/armor items from "
-                    f"this era's anchors. Architecture, weapons, tools and objects must also be strictly from this era. "
-                    f"NO modern military uniforms, NO firearms, NO industrial-era visuals — ever."
+                era_context = (
+                    f"\n\nERA CONTEXT (background only, not a checklist): the story is set in "
+                    f"**{civ_info['name']}**. Period clothing, architecture and props should appear "
+                    f"NATURALLY in scenes because the story happens in that time — never enumerate "
+                    f"armor pieces as a list. AVOID: modern uniforms, firearms, cars, electricity, "
+                    f"industrial-era clothing or architecture."
                 )
 
-            prompt = f"""Task: write {n_prompts} image prompts for a video about "{self.subject}".{era_block}
+            video_title = (self.metadata or {}).get("title", "") if hasattr(self, "metadata") else ""
 
-You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section says "the priest opens the temple gate at dawn", the image is exactly that.
+            # Pass the WHOLE script (not pre-sliced sections) so the LLM can
+            # pick {n_prompts} narratively distinct beats by itself. Mechanical
+            # sectioning into ~equal sentence chunks gives the LLM uselessly
+            # short slices and it falls back to generic character portraits.
+            script_block = (self.script or "").strip()
 
-ABSOLUTE RULES (every prompt):
-1. ENGLISH ONLY — NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns and historical terms naturally (e.g. "Platón" -> "Plato", "Alejandro Magno" -> "Alexander the Great"). NO Spanish words anywhere in the output.
-2. SCENE FIDELITY. Open with a concrete action (subject + verb). Whatever the script section says is happening, that is what the image shows.
-3. NAMED CHARACTER IDENTITY. When the script names a real historical person, do NOT just write their name — describe what they look like physically so the image generator can render the right person. Examples:
-   - Plato → "an old Greek philosopher with a long white beard, balding head, weathered face, wearing white himation"
-   - Caesar → "a stern middle-aged Roman general with short curly hair, clean-shaven, sharp jawline, in a purple-bordered toga"
-   - Cleopatra → "a young Egyptian queen with dark kohl-lined eyes, straight black hair with gold beaded braids, wearing white linen pleated dress and gold collar"
-   The named person's physical description MUST appear in the prompt every time they're shown.
-4. {era_rule}
-5. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe, same level of detail. No image should look like it belongs to a different show.
-6. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The look is decided by the suffix appended later — your job is the content.
-7. LENGTH. 40-70 English words per prompt. No camera or lens jargon.
+            prompt = f"""Task: write {n_prompts} image prompts for a YouTube Short. The {n_prompts} prompts together must VISUALLY TELL the story narrated in the script — different moments, different actions, different places. NOT {n_prompts} portraits of the same character.{era_context}
 
-Examples of GOOD scene-only prompts:
-- "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his Thirteenth Legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces."
-- "A samurai in dark lacquered do armor stands mid-strike with his katana in a wooden dojo, paper shoji screens around him, morning light falling on tatami mats, wooden practice swords stacked against a beam, sweat on his temple."
-- "A Byzantine sailor on a dromon warship leans over a bronze siphon and ignites a jet of Greek fire toward an enemy galley, flames arcing over the dark sea, gold-trimmed sails, oars mid-stroke, the walls of Constantinople in the distance."
+VIDEO TITLE: {video_title or self.subject}
+TOPIC: {self.subject}
 
-Examples of BAD prompts (DO NOT WRITE THESE):
-- "An ancient Roman scene." (too vague, no action, no specific subject)
-- "Stylized cartoon of Caesar crossing a river." (forbidden art-style word)
-- "A historical illustration of a samurai." (forbidden art-style word, no action)
-- "Symbolic image of a Byzantine ship." (no concrete moment)
+FULL SCRIPT (read it whole — do NOT slice mechanically; pick the {n_prompts} most VISUALLY DISTINCT story beats):
+\"\"\"
+{script_block}
+\"\"\"
 
-{sections_text}
-Forbidden words (art-style / camera jargon): cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, ukiyo-e, sketch.
-Forbidden words (multi-image triggers — these make image generators output collages instead of one image): series, sequence, scenes (plural), panels, panel, storyboard, comic strip, montage, collage, grid, split screen, frames, multiple, diptych, triptych, before-and-after, side by side.
+WORK IN TWO STEPS (internally — only the final JSON is returned):
 
-Return ONLY a JSON array of {n_prompts} strings (one prompt per section, in order). Example format:
-["scene 1 description...", "scene 2 description...", ...]
-No markdown. No explanation. Just the JSON array."""
+STEP 1 — Pick {n_prompts} NARRATIVELY DISTINCT BEATS from the script. A beat is a single concrete action: "X does Y in place Z with object W". Each beat must:
+  • have a different VERB from the others ("plows", "addresses senators", "lays down the fasces", "walks home through wheat fields", "wraps a toga at dawn")
+  • happen in a different SETTING (a farm, a senate floor, a battlefield, a road, a doorway)
+  • feature a different NARRATIVE OBJECT — a CONCRETE thing that belongs to THIS specific story (a wooden plow, the fasces lictoriae, a wax tablet, oxen, a senator's purple-bordered toga, a humble farmhouse door). NOT generic period props.
+  • {n_prompts} beats = {n_prompts} different visual moments. If two of your beats look similar, replace one.
+
+STEP 2 — Write each prompt applying ALL these rules:
+
+1. ENGLISH ONLY. Even if the script is in Spanish, every prompt is written in English. Translate proper nouns naturally ("Platón" → "Plato", "Cincinato" → "Cincinnatus"). No Spanish words anywhere.
+
+2. ACTION FIRST. Open with a verb-driven action. The first 6-8 words of the prompt MUST contain the main verb. Examples of correct openings:
+     "Cincinnatus grips the wooden handle of a heavy plow…"
+     "A Roman senator runs across a wheat field at dawn…"
+     "Cincinnatus lays the bundled fasces on the Senate steps…"
+   FORBIDDEN openings (these produce static portraits): "[Name] standing in armor", "[Name] portrait", "A Roman dictator looking intently", "[Name] in golden cuirass in front of marble columns".
+
+3. NARRATIVE OBJECT — MANDATORY. Every prompt names at least one CONCRETE OBJECT specific to THIS story (the plow, the oxen, the fasces, the wax tablet, the modest farmhouse, the senator's scroll). Without a story-specific object, the image becomes a generic period scene and you've failed the task.
+
+4. UNIQUE BEATS. The {n_prompts} prompts must NEVER show the same scene twice. If you find yourself writing two prompts where the same character is doing roughly the same thing in the same place, scrap one and pick a different beat from the script.
+
+5. NAMED PERSON ANCHOR. When a real person appears, give a SHORT physical anchor (one phrase, max ~10 words) so the generator renders the right person — but the action and the object are the FOCUS, not the costume. Example: "Cincinnatus, a sun-weathered older Roman with grey stubble, in a simple work tunic, grips the plow handle…" — the anchor is the brief clause, the action is the rest.
+
+6. ERA AS BACKGROUND. Period clothing/architecture appears NATURALLY in the scene because the story happens then. NEVER write a checklist like "wearing lorica segmentata, plumed Galea helmet, holding a gladius sword" — that's the failure mode we are explicitly avoiding. One or two natural era cues per prompt is enough.
+
+7. NO ART-STYLE WORDS. Describe scenes only. NEVER write: "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art", "watercolor", "sketch". The visual style is added downstream.
+
+8. NO CAMERA JARGON. NEVER write: "cinematic", "photograph", "camera", "shot", "lens", "close-up", "4K", "8K", "HD", "render", "bokeh", "macro", "aerial".
+
+9. NO MULTI-IMAGE TRIGGERS (these make generators output collages): "series", "sequence", "scenes" (plural), "panels", "panel", "storyboard", "comic strip", "montage", "collage", "grid", "split screen", "frames", "multiple", "diptych", "triptych", "before-and-after", "side by side".
+
+10. LENGTH. 35-60 English words per prompt.
+
+CONCRETE EXAMPLES (assume the video is about Cincinnatus, who left his farm to be dictator of Rome and returned 15 days later):
+
+   GOOD ✓ "Cincinnatus grips the wooden handle of a heavy plow behind two yoked oxen at dawn, bare-chested, sweat on his shoulders, freshly turned soil in long furrows, his sandals caked in dark earth, a low farmhouse on the rise behind."
+   GOOD ✓ "Two Roman senators in red-bordered togas hurry up a dirt path between olive trees, scrolls clutched against their chests, urgency on their faces, a small Latin farm and grazing oxen visible at the top of the rise."
+   GOOD ✓ "Cincinnatus lays the bundled fasces lictoriae and a folded purple cloak on the marble steps of the Senate, his back already half-turned toward the door, senators around him stunned with hands raised, slanted afternoon sun across the floor."
+   GOOD ✓ "Cincinnatus walks back down a worn stone road toward his small farm at golden hour, his plow visible in the distant field, two oxen lowing, a modest farmhouse silhouetted against the sunset, his shadow long behind him."
+
+   BAD ✗ "Cincinnatus in golden Roman cuirass and red cloak standing in front of marble columns." (no verb, no narrative object, generic dictator portrait — exact failure mode)
+   BAD ✗ "A Roman general wearing lorica segmentata, plumed Galea helmet, holding a gladius sword in the Forum, dramatic side lighting." (armor checklist instead of story; no action specific to the script)
+   BAD ✗ "Roman senators in togas in the Senate." (no specific moment, no story-specific object, no named person)
+   BAD ✗ "Cincinnatus portrait, weathered face, wearing senatorial toga, marble columns behind him." (forbidden opening — static portrait)
+
+Return ONLY a JSON array of {n_prompts} prompt strings, in chronological order following the script. No markdown, no explanation, no preamble. Just the array.
+
+Example format:
+["beat 1 prompt …", "beat 2 prompt …", "beat 3 prompt …", "beat 4 prompt …", "beat 5 prompt …", "beat 6 prompt …"]"""
 
         completion = (
             str(self.generate_response(prompt))
@@ -1222,6 +1245,92 @@ No markdown. No explanation. Just the JSON array."""
 
         # Limit to n_prompts
         image_prompts = image_prompts[:n_prompts]
+
+        # ------------------------------------------------------------------
+        # Diversity guard (AI mode only) — detects the failure mode where
+        # the LLM returns N near-identical "[name] in armor in front of
+        # columns" portraits instead of N narratively distinct beats.
+        # If it triggers, regenerate ONCE with a stricter directive.
+        # ------------------------------------------------------------------
+        if image_mode != "photos" and image_prompts and len(image_prompts) >= 3:
+
+            def _looks_too_generic(prompts: List[str]) -> str:
+                """Return a non-empty diagnostic string when prompts look
+                like the failure mode, or "" if they pass the heuristic."""
+                if not prompts:
+                    return "no prompts"
+
+                # 1. STATIC PORTRAIT — opens with "[Name] in/wearing/with [armor]"
+                #    or "A Roman/Greek/... [role] standing/looking/posing".
+                portrait_re = re.compile(
+                    r"^\s*(?:[A-ZÁÉÍÓÚÑ]\w+\s+(?:in|wearing|with|stands|stood|standing|posing|portrait)"
+                    r"|(?:A |An )?(?:Roman|Greek|Egyptian|Chinese|Japanese|Indian|Mayan|Inca|Aztec|Persian|"
+                    r"Mesopotamian|Ottoman|Byzantine|Medieval|Viking|Renaissance)\s+\w+\s+"
+                    r"(?:standing|posing|looking|stares?|stood))",
+                    re.IGNORECASE,
+                )
+                portrait_count = sum(1 for p in prompts if portrait_re.search(p or ""))
+                if portrait_count >= max(2, len(prompts) // 2):
+                    return f"{portrait_count}/{len(prompts)} prompts open with a static portrait pattern"
+
+                # 2. ARMOR-CHECKLIST — many prompts mention 3+ armor pieces.
+                armor_terms = {"cuirass", "helmet", "gladius", "lorica", "galea",
+                               "greaves", "breastplate", "spear", "sword", "shield",
+                               "armor", "armour", "scabbard", "vambrace"}
+                def _armor_hits(p: str) -> int:
+                    low = (p or "").lower()
+                    return sum(1 for t in armor_terms if t in low)
+                heavy_armor = sum(1 for p in prompts if _armor_hits(p) >= 3)
+                if heavy_armor >= max(2, len(prompts) // 2):
+                    return f"{heavy_armor}/{len(prompts)} prompts read as armor checklists"
+
+                # 3. LEXICAL DUPLICATION — many prompts share their first 5 words.
+                first5 = [" ".join((p or "").lower().split()[:5]) for p in prompts]
+                if len(set(first5)) <= max(1, len(prompts) // 2):
+                    return f"only {len(set(first5))} unique opening phrases across {len(prompts)} prompts"
+
+                return ""
+
+            diag = _looks_too_generic(image_prompts)
+            if diag:
+                warning(f"Image prompts look generic ({diag}); regenerating once with stricter directive.")
+                stricter = (
+                    prompt
+                    + "\n\nPREVIOUS ATTEMPT REJECTED — your prompts were "
+                    + diag
+                    + ". This is exactly the failure mode the rules above forbid. "
+                    "Regenerate from scratch. Each of the "
+                    f"{n_prompts} prompts MUST: (a) open with a different ACTION verb tied to a "
+                    "specific moment of THIS script, (b) name a CONCRETE NARRATIVE OBJECT from "
+                    "this story (the plow, the fasces, the wax tablet, the farmhouse, etc., "
+                    "depending on what the story actually contains), (c) happen in a different "
+                    "setting from the others. NEVER write \"X standing in armor in front of "
+                    "columns\" — that is the exact pattern we are rejecting."
+                )
+                retry_completion = (
+                    str(self.generate_response(stricter))
+                    .replace("```json", "").replace("```", "").strip()
+                )
+                retry_prompts: List[str] = []
+                try:
+                    retry_prompts = _extract_prompts(json.loads(retry_completion))
+                except Exception:
+                    m = re.search(r"\[.*\]", retry_completion, re.DOTALL)
+                    if m:
+                        try:
+                            retry_prompts = _extract_prompts(json.loads(m.group()))
+                        except Exception:
+                            pass
+                if retry_prompts and len(retry_prompts) >= n_prompts:
+                    retry_prompts = retry_prompts[:n_prompts]
+                    if not _looks_too_generic(retry_prompts):
+                        image_prompts = retry_prompts
+                        if get_verbose():
+                            info(" => Diversity-guard retry produced acceptable prompts.")
+                    else:
+                        # Retry also fell into the failure mode — keep the original;
+                        # at least it parsed. Nothing more to do here without a third call.
+                        warning("   Retry still looked generic; keeping original prompts.")
 
         if get_verbose():
             info(f" => Generated Image Prompts: {image_prompts}")
