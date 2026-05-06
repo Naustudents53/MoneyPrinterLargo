@@ -25,6 +25,3 @@ thumbnails/
 studio/node_modules/
 studio/.next/
 studio/dist/
-
-# Legacy webapp
-webapp/
