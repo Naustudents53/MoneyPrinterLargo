@@ -944,7 +944,7 @@ CRITICAL RULES:
 - NO "welcome", NO "voiceover", NO meta-references.
 - ABSOLUTELY NO stage directions of any kind. Never write "(image of ...)", "(imagen de ...)", "[B-roll: ...]", "(plano cerrado)", "(music)", "(música suave)", "(emoji)", "(transition)", "(voice over)" or anything similar. Only text a narrator would speak ALOUD.
 - NUMBERS: spell numbers out as words, not digits. Examples (in {self.language}): "mil cuatrocientos cincuenta y tres" not "1453"; "four thousand five hundred" not "4,500".
-- YEARS vs ELAPSED TIME — DO NOT CONFUSE THEM. A calendar year (e.g. 1477) is a DATE; elapsed time is a DURATION. To name a year, write "el año mil cuatrocientos setenta y siete" / "in the year fourteen seventy-seven". NEVER use "hace mil cuatrocientos setenta y siete años" / "1477 years ago" to refer TO the year 1477 — that phrase ONLY means elapsed duration, calculated from the current year ({datetime.now().year}). An event in 1477 happened {datetime.now().year - 1477} years ago, never 1477 years ago. If unsure, prefer naming the year ("el año X") and skip the elapsed-time phrasing entirely.
+- YEAR vs DURATION — keep them strictly separate. A YEAR is a calendar date; a DURATION is elapsed time. They are different things. To cite a calendar year, say "el año <año>" / "in the year <year>". The phrase "hace <N> años" / "<N> years ago" expresses ONLY duration: <N> is the difference between the current year and the year of the event — it is NOT the year itself. When in doubt, name the year ("el año X") and do NOT use the "hace X años" / "X years ago" phrasing.
 - ONLY return the raw script text. Nothing else.
 - WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.
 """
@@ -3580,7 +3580,7 @@ REGLAS DE ESTILO:
     * "el año mil cuatrocientos cincuenta y tres" (no "1453")
     * "el siglo dieciséis" (no "el siglo XVI" ni "el siglo 16")
     * "tres coma uno cuatro" (no "3,14")
-- AÑO vs TIEMPO TRANSCURRIDO — REGLA INVIOLABLE. Un año (fecha) y un lapso transcurrido NO son lo mismo. Para nombrar un año, di "el año mil cuatrocientos setenta y siete"; NUNCA digas "hace mil cuatrocientos setenta y siete años" para referirte al año 1477. "Hace X años" SOLO indica tiempo transcurrido y SE CALCULA: año actual ({datetime.now().year}) menos año del evento. Un evento del año 1477 ocurrió "hace {datetime.now().year - 1477} años", no "hace mil cuatrocientos setenta y siete años". En la duda, prefiere nombrar el año ("el año X") y evita "hace X años".
+- AÑO vs DURACIÓN — distínguelos siempre. Un AÑO es una FECHA del calendario; una DURACIÓN es el tiempo transcurrido. Son cosas distintas. Para citar un año, di "el año <año>". La fórmula "hace <N> años" expresa SOLO duración: <N> es la diferencia entre el año actual y el año del evento, NO es el año mismo. Ante la duda, nombra el año ("el año X") y NO uses la fórmula "hace X años".
 - SOLO devuelve el guion completo con los 12 marcadores arriba listados. Sin preámbulo.
 """
         completion = self._clean_llm_script(self.generate_response(prompt))
@@ -3661,7 +3661,7 @@ REGLAS:
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
 - NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
-- AÑO vs TIEMPO TRANSCURRIDO — REGLA INVIOLABLE. Un año (fecha) y un lapso transcurrido NO son lo mismo. Para nombrar un año, di "el año mil cuatrocientos setenta y siete"; NUNCA digas "hace mil cuatrocientos setenta y siete años" para referirte al año 1477. "Hace X años" SOLO indica tiempo transcurrido y SE CALCULA: año actual ({datetime.now().year}) menos año del evento. Un evento del año 1477 ocurrió "hace {datetime.now().year - 1477} años", no "hace mil cuatrocientos setenta y siete años". En la duda, prefiere nombrar el año ("el año X") y evita "hace X años".
+- AÑO vs DURACIÓN — distínguelos siempre. Un AÑO es una FECHA del calendario; una DURACIÓN es el tiempo transcurrido. Son cosas distintas. Para citar un año, di "el año <año>". La fórmula "hace <N> años" expresa SOLO duración: <N> es la diferencia entre el año actual y el año del evento, NO es el año mismo. Ante la duda, nombra el año ("el año X") y NO uses la fórmula "hace X años".
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [INTRO]
 """
         intro = _ensure_marker(_ask_section(intro_prompt, min_words=80), "[INTRO]")
@@ -3689,7 +3689,7 @@ Escribe SOLO la SECCIÓN {i}:
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
 - NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
-- AÑO vs TIEMPO TRANSCURRIDO — REGLA INVIOLABLE. Un año (fecha) y un lapso transcurrido NO son lo mismo. Para nombrar un año, di "el año mil cuatrocientos setenta y siete"; NUNCA digas "hace mil cuatrocientos setenta y siete años" para referirte al año 1477. "Hace X años" SOLO indica tiempo transcurrido y SE CALCULA: año actual ({datetime.now().year}) menos año del evento. Un evento del año 1477 ocurrió "hace {datetime.now().year - 1477} años", no "hace mil cuatrocientos setenta y siete años". En la duda, prefiere nombrar el año ("el año X") y evita "hace X años".
+- AÑO vs DURACIÓN — distínguelos siempre. Un AÑO es una FECHA del calendario; una DURACIÓN es el tiempo transcurrido. Son cosas distintas. Para citar un año, di "el año <año>". La fórmula "hace <N> años" expresa SOLO duración: <N> es la diferencia entre el año actual y el año del evento, NO es el año mismo. Ante la duda, nombra el año ("el año X") y NO uses la fórmula "hace X años".
 - Devuelve SOLO el texto de la sección, precedido EXACTAMENTE por una línea con: [SECTION {i}: <título breve descriptivo>]
 """
             section = _ensure_marker(_ask_section(section_prompt, min_words=180), f"[SECTION {i}: parte {i}]")
@@ -3714,7 +3714,7 @@ Escribe SOLO el CIERRE:
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
 - NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453").
-- AÑO vs TIEMPO TRANSCURRIDO — REGLA INVIOLABLE. Un año (fecha) y un lapso transcurrido NO son lo mismo. Para nombrar un año, di "el año mil cuatrocientos setenta y siete"; NUNCA digas "hace mil cuatrocientos setenta y siete años" para referirte al año 1477. "Hace X años" SOLO indica tiempo transcurrido y SE CALCULA: año actual ({datetime.now().year}) menos año del evento. Un evento del año 1477 ocurrió "hace {datetime.now().year - 1477} años", no "hace mil cuatrocientos setenta y siete años". En la duda, prefiere nombrar el año ("el año X") y evita "hace X años".
+- AÑO vs DURACIÓN — distínguelos siempre. Un AÑO es una FECHA del calendario; una DURACIÓN es el tiempo transcurrido. Son cosas distintas. Para citar un año, di "el año <año>". La fórmula "hace <N> años" expresa SOLO duración: <N> es la diferencia entre el año actual y el año del evento, NO es el año mismo. Ante la duda, nombra el año ("el año X") y NO uses la fórmula "hace X años".
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [CLOSING]
 """
         closing = _ensure_marker(_ask_section(closing_prompt, min_words=80), "[CLOSING]")
@@ -3938,8 +3938,8 @@ Return ONLY a JSON object with two fields:
       - Concrete action: "PLANTÓ UN BOSQUE POR ELLA", "CRUZARON LOS ANDES A PIE".
       - Revelation hook: "LO QUE ENCONTRARON ALLÍ", "NADIE VOLVIÓ A VERLOS".
       - Contrast/twist: "ERA UN ANCIANO CIEGO", "EL ÚLTIMO MENSAJE DE OLOF".
-  * DO NOT default to "EL SECRETO DE..." or "EL MISTERIO DE..." just because they sound clickbaity. Use those openings ONLY if the video title itself literally contains "SECRETO" or "MISTERIO". Otherwise pick a more specific angle from the patterns above.
-  * BAD examples: "SECRETO" (single word, no teaser), "NADIE LO SABE" (cliché), "INCREÍBLE" (generic), "EL SECRETO DE X" when the title doesn't mention a secret (lazy default).
+  * ABSOLUTELY FORBIDDEN openings — never start the overlay with any of these, regardless of what the title says: "EL SECRETO", "SECRETO DE", "SECRETO QUE", "EL MISTERIO", "MISTERIO DE", "MISTERIO QUE". Even if the title contains those words, the thumbnail overlay MUST pick a different angle (a name, a place, a date, an action, a question fragment) from the patterns above. The title and the thumbnail overlay should NOT say the same thing — the overlay highlights a different specific hook.
+  * BAD examples: "SECRETO" (single word, no teaser), "NADIE LO SABE" (cliché), "INCREÍBLE" (generic), "EL SECRETO DE X" / "EL MISTERIO DE X" (forbidden openings — too generic).
   * AVOID these overused clichés entirely: "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR", "INCREÍBLE", "JAMÁS LO CREERÁS".
 
 Return ONLY the JSON. No markdown, no explanation."""
@@ -3964,13 +3964,14 @@ Return ONLY the JSON. No markdown, no explanation."""
                 "INCREÍBLE", "INCREIBLE", "JAMÁS LO CREERÁS", "JAMAS LO CREERAS",
             }
 
-            # The LLM defaults to "EL SECRETO DE ..." even when the topic has
-            # nothing to do with a secret. Allow that opening only when the
-            # source title itself mentions the word — otherwise force variety.
-            title_topic_norm = _norm(title_topic_text)
-            title_mentions_secret = "secreto" in title_topic_norm
-            title_mentions_mystery = ("misterio" in title_topic_norm
-                                      or "misterios" in title_topic_norm)
+            # The LLM keeps defaulting to "EL SECRETO DE ..." / "EL MISTERIO DE ..."
+            # for almost every video. Reject those openings unconditionally —
+            # the overlay must pick a more specific angle even when the title
+            # itself uses those words.
+            FORBIDDEN_OVERLAY_PREFIXES = (
+                "el secreto", "secreto de", "secreto que",
+                "el misterio", "misterio de", "misterio que",
+            )
 
             def _validate_overlay(candidate: str) -> bool:
                 """Reject if too short, banned, lazy-default, or hallucinated."""
@@ -3979,13 +3980,7 @@ Return ONLY the JSON. No markdown, no explanation."""
                 if candidate in BANNED_OVERLAYS:
                     return False
                 norm_cand = _norm(candidate)
-                if not title_mentions_secret and (
-                    norm_cand.startswith("el secreto") or norm_cand.startswith("secreto")
-                ):
-                    return False
-                if not title_mentions_mystery and (
-                    norm_cand.startswith("el misterio") or norm_cand.startswith("misterio")
-                ):
+                if any(norm_cand.startswith(p) for p in FORBIDDEN_OVERLAY_PREFIXES):
                     return False
                 STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
                         "que", "por", "para", "con", "en", "a", "su", "sus", "lo"}
@@ -4013,6 +4008,17 @@ Return ONLY the JSON. No markdown, no explanation."""
             )
 
         # Deterministic fallback path (always coherent with title — never hallucinates).
+        # Helper used by every fallback path below — strips accents and matches
+        # SECRETO/SECRETOS/MISTERIO/MISTERIOS so we can drop those words wherever
+        # they appear, regardless of source.
+        def _is_secreto_misterio(word: str) -> bool:
+            """True for SECRETO/SECRETOS/MISTERIO/MISTERIOS (any case, with or without accents)."""
+            w = re.sub(r"[ÁÉÍÓÚÜáéíóúü]", lambda m: {
+                "Á": "A", "É": "E", "Í": "I", "Ó": "O", "Ú": "U", "Ü": "U",
+                "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ü": "u",
+            }[m.group()], word).upper()
+            return w in {"SECRETO", "MISTERIO", "SECRETOS", "MISTERIOS"}
+
         if not overlay_words and video_title:
             clean_title = re.sub(r"[¿?¡!,.:;\"'“”‘’]", "", video_title).strip()
             tw = clean_title.split()
@@ -4021,15 +4027,24 @@ Return ONLY the JSON. No markdown, no explanation."""
 
             # 1. Find UPPERCASE keyword (the title generator always puts 1-2 in caps) and
             #    grab a wider window around it for a proper teaser phrase (3-5 words).
+            #    Skip SECRETO / MISTERIO so the overlay doesn't keep defaulting
+            #    to "EL SECRETO DE X" — pick the next caps word if there is one.
+            CAPS_SKIP = {"SECRETO", "MISTERIO", "SECRETOS", "MISTERIOS"}
             caps_idx = next(
                 (i for i, w in enumerate(tw)
-                 if re.match(r"^[A-ZÁÉÍÓÚÜÑ]{4,}$", w)),
+                 if re.match(r"^[A-ZÁÉÍÓÚÜÑ]{4,}$", w)
+                 and re.sub(r"[ÁÉÍÓÚÜ]", lambda m: {"Á": "A", "É": "E", "Í": "I",
+                                                    "Ó": "O", "Ú": "U", "Ü": "U"}[m.group()], w)
+                 not in CAPS_SKIP),
                 None,
             )
+
             if caps_idx is not None:
                 start = max(0, caps_idx - 2)
                 end = min(len(tw), caps_idx + 4)
                 chunk = tw[start:end]
+                # Drop SECRETO/MISTERIO from the chunk — we never want them on a thumbnail.
+                chunk = [w for w in chunk if not _is_secreto_misterio(w)]
                 while chunk and chunk[0].lower() in STOP:
                     chunk = chunk[1:]
                 while chunk and chunk[-1].lower() in STOP:
@@ -4043,7 +4058,11 @@ Return ONLY the JSON. No markdown, no explanation."""
 
             # 2. No usable caps window → take the first 4-5 meaningful words from the title.
             if not overlay_words:
-                meaningful = [w for w in tw if w.lower() not in STOP and len(w) > 2]
+                meaningful = [
+                    w for w in tw
+                    if w.lower() not in STOP and len(w) > 2
+                    and not _is_secreto_misterio(w)
+                ]
                 if len(meaningful) >= 3:
                     overlay_words = " ".join(meaningful[:5]).upper()
 
@@ -4057,6 +4076,7 @@ Return ONLY the JSON. No markdown, no explanation."""
             topic_words = [
                 w for w in re.findall(r"[A-Za-zÀ-ÿ]+", self.subject or "")
                 if w.lower() not in STOP and len(w) > 3
+                and not _is_secreto_misterio(w)
             ][:5]
             overlay_words = " ".join(topic_words).upper() if topic_words else "DESCUBRE LA VERDAD"
             warning(f"Thumbnail: using topic-derived overlay text: {overlay_words}")
