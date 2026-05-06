@@ -30,6 +30,7 @@ export function TopBar({
 }) {
   const router = useRouter();
   const [llmOpen, setLlmOpen] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
   const [config, setConfig] = useState<ConfigSummary | null>(null);
   const [renderQueue, setRenderQueue] = useState(0);
 
@@ -173,21 +174,76 @@ export function TopBar({
 
       {/* New */}
       {showNew && (
-        <button
-          type="button"
-          onClick={() => router.push(newHref)}
-          className="flex items-center gap-[6px] rounded-md px-[14px] py-[7px] text-[13px] font-semibold tracking-[-0.01em] transition-opacity duration-150"
-          style={{
-            background: "var(--color-amber)",
-            color: "#0B0B0D",
-            border: "none",
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.88")}
-          onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
-        >
-          <Plus size={14} strokeWidth={2.5} />
-          New
-        </button>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setNewOpen((s) => !s)}
+            className="flex items-center gap-[6px] rounded-md px-[14px] py-[7px] text-[13px] font-semibold tracking-[-0.01em] transition-opacity duration-150"
+            style={{
+              background: "var(--color-amber)",
+              color: "#0B0B0D",
+              border: "none",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.88")}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+          >
+            <Plus size={14} strokeWidth={2.5} />
+            New
+            <ChevronDown size={12} />
+          </button>
+          {newOpen && (
+            <div
+              className="absolute top-[calc(100%+6px)] right-0 w-[180px] rounded-[10px] p-2 z-50 shadow-[0_16px_40px_rgba(0,0,0,0.5)]"
+              style={{
+                background: "var(--color-surf-2)",
+                border: "1px solid var(--color-hairline)",
+              }}
+            >
+              <button
+                onClick={() => {
+                  router.push("/shorts");
+                  setNewOpen(false);
+                }}
+                className="w-full flex items-center gap-[8px] px-[10px] py-[8px] rounded-md text-[13px] text-left transition-colors"
+                style={{
+                  color: "var(--color-text-primary)",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--color-surf-3)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                <span className="text-amber-500">⚡</span> Short (9:16)
+              </button>
+              <button
+                onClick={() => {
+                  router.push("/long");
+                  setNewOpen(false);
+                }}
+                className="w-full flex items-center gap-[8px] px-[10px] py-[8px] rounded-md text-[13px] text-left transition-colors"
+                style={{
+                  color: "var(--color-text-primary)",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--color-surf-3)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                <span className="text-blue-500">🎬</span> Long (16:9)
+              </button>
+              <button
+                onClick={() => {
+                  router.push("/recap");
+                  setNewOpen(false);
+                }}
+                className="w-full flex items-center gap-[8px] px-[10px] py-[8px] rounded-md text-[13px] text-left transition-colors"
+                style={{
+                  color: "var(--color-text-primary)",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--color-surf-3)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                <span className="text-purple-500">🎥</span> Movie Recap
+              </button>
+            </div>
+          )}
+        </div>
       )}
     </header>
   );

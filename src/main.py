@@ -332,6 +332,13 @@ def main():
                             "Image source - [1] AI (default), [2] Real photos: "
                         ).strip()
                         image_mode = "photos" if image_choice == "2" else "ai"
+                        duration_choice = question(
+                            "Duración del short - [1] 1 minuto (default), [2] 2 minutos, [3] 3 minutos: "
+                        ).strip()
+                        duration_seconds = {"2": 120, "3": 180}.get(duration_choice, 60)
+                        youtube._target_duration_seconds = duration_seconds
+                        from classes.duration_presets import resolve_short_duration
+                        _, youtube._sentence_length_override, youtube._n_prompts_override = resolve_short_duration(duration_seconds)
                         video_path = youtube.generate_video(
                             tts,
                             custom_topic=custom_topic,

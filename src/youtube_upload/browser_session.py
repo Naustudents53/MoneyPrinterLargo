@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import atexit
 import os
-import shutil
 import tempfile
 import threading
 
@@ -59,7 +58,6 @@ class BrowserSession:
         self._fp_profile_path = fp_profile_path
         self._headless = headless
         self._verbose = verbose
-        self._temp_profile_dir: str | None = None
         self.driver: webdriver.Firefox | None = None
         self._options: FirefoxOptions | None = None
         self._cleanup_registered = False
@@ -88,37 +86,14 @@ class BrowserSession:
         if self._headless:
             opts.add_argument("--headless")
 
-        self._temp_profile_dir = tempfile.mkdtemp(prefix="mpv2_firefox_")
-        temp_profile = os.path.join(self._temp_profile_dir, "profile")
+        # Use the source profile directly — no clone, no temp dir.
+        # WARNING: requires that no other Firefox instance is using this
+        # profile at the same time, or Firefox will refuse to launch.
         if self._verbose:
-            info(" => Copying Firefox profile to temp dir...")
-        shutil.copytree(
-            self._fp_profile_path, temp_profile,
-            ignore=shutil.ignore_patterns(
-                "lock", ".parentlock", "parent.lock",
-                "cache2", "startupCache", "shader-cache",
-                "thumbnails", "storage", "crashes",
-            ),
-            dirs_exist_ok=False,
-        )
-        for bad_file in ["sessionstore.jsonlz4", "sessionstore-backups"]:
-            bad_path = os.path.join(temp_profile, bad_file)
-            if os.path.isfile(bad_path):
-                try:
-                    os.remove(bad_path)
-                except Exception:
-                    pass
-            elif os.path.isdir(bad_path):
-                shutil.rmtree(bad_path, ignore_errors=True)
-
+            info(f" => Using Firefox profile in place: {self._fp_profile_path}")
         opts.add_argument("-profile")
-        opts.add_argument(temp_profile)
+        opts.add_argument(self._fp_profile_path)
         self._options = opts
-
-        # Safety net: even if cleanup() is never called, atexit will fire.
-        if not self._cleanup_registered:
-            atexit.register(self._atexit_cleanup)
-            self._cleanup_registered = True
 
     # ------- lifecycle ----------------------------------------------------
 
@@ -139,8 +114,16 @@ class BrowserSession:
         info(" => Conectando con Firefox...")
         try:
             driver_path = _resolve_geckodriver_path()
-            service = Service(driver_path)
-            info("    [3/3] Lanzando Firefox con perfil temporal...")
+            gecko_log_path = os.path.join(
+                tempfile.gettempdir(),
+                "mpv2_geckodriver.log",
+            )
+            service = Service(
+                driver_path,
+                log_output=gecko_log_path,
+                service_args=["--log", "trace"],
+            )
+            info(f"    [3/3] Lanzando Firefox con perfil temporal (log: {gecko_log_path})...")
             assert self._options is not None
             self.driver = webdriver.Firefox(service=service, options=self._options)
             try:
@@ -155,10 +138,21 @@ class BrowserSession:
             error(f"Failed to launch Firefox: {type(e).__name__}: {e}")
             error("Full traceback:")
             error(_tb.format_exc())
+            try:
+                if os.path.isfile(gecko_log_path):
+                    with open(gecko_log_path, "r", encoding="utf-8", errors="replace") as f:
+                        tail = f.readlines()[-60:]
+                    error("--- geckodriver.log (last 60 lines) ---")
+                    for line in tail:
+                        error(line.rstrip())
+                    error("--- end geckodriver.log ---")
+            except Exception:
+                pass
             raise
 
     def cleanup(self) -> None:
-        """Quit the driver and delete the cloned profile. Idempotent."""
+        """Quit the driver. Idempotent. (Profile is the source profile —
+        nothing to delete.)"""
         if self.driver is not None:
             try:
                 self.driver.quit()
@@ -166,17 +160,10 @@ class BrowserSession:
                 pass
             self.driver = None
 
-        if self._temp_profile_dir and os.path.isdir(self._temp_profile_dir):
-            shutil.rmtree(self._temp_profile_dir, ignore_errors=True)
-            self._temp_profile_dir = None
-
     def _atexit_cleanup(self) -> None:
-        # Last-resort cleanup, never raises.
-        try:
-            if self._temp_profile_dir and os.path.isdir(self._temp_profile_dir):
-                shutil.rmtree(self._temp_profile_dir, ignore_errors=True)
-        except Exception:
-            pass
+        # No-op now that we don't clone the profile. Kept for atexit hook
+        # compatibility in case future code re-introduces a temp dir.
+        return
 
     # ------- context manager ---------------------------------------------
 

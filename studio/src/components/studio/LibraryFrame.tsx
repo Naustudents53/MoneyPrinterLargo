@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Search, X, RefreshCw, ExternalLink } from "lucide-react";
-import { listJobs, type JobSummary } from "@/lib/api";
+import { listJobs, restartJob, type JobSummary } from "@/lib/api";
 import { StatusPill, type PillStatus } from "@/components/ui/status-pill";
 import { PlatformGlyph } from "@/components/ui/platform-glyph";
 
@@ -69,10 +70,12 @@ function relTime(iso: string): string {
 }
 
 export function LibraryFrame() {
+  const router = useRouter();
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [filterStatus, setFilterStatus] = useState<PillStatus | "all">("all");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [isRegenerating, setIsRegenerating] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -309,11 +312,24 @@ export function LibraryFrame() {
               <div className="mt-5 flex flex-col gap-2">
                 <button
                   type="button"
-                  className="w-full px-2 py-2 rounded-md flex items-center justify-center gap-[6px] text-[12px] font-semibold"
+                  disabled={isRegenerating}
+                  onClick={async () => {
+                    if (!selectedRow) return;
+                    setIsRegenerating(true);
+                    try {
+                      const { job_id } = await restartJob(selectedRow.id);
+                      router.push(`/tasks?job=${job_id}`);
+                    } catch (err) {
+                      console.error("Failed to restart job:", err);
+                    } finally {
+                      setIsRegenerating(false);
+                    }
+                  }}
+                  className="w-full px-2 py-2 rounded-md flex items-center justify-center gap-[6px] text-[12px] font-semibold transition-opacity disabled:opacity-60"
                   style={{ background: "var(--color-amber)", color: "#0B0B0D" }}
                 >
-                  <RefreshCw size={12} />
-                  Regenerate from here
+                  <RefreshCw size={12} className={isRegenerating ? "animate-spin" : ""} />
+                  {isRegenerating ? "Starting…" : "Regenerate from here"}
                 </button>
                 {selectedRow.videoUrl && (
                   <a

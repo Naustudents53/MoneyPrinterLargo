@@ -153,6 +153,7 @@ export async function createJob(payload: {
   image_mode?: string;
   image_style?: string;
   preset_id?: string;
+  target_duration?: 60 | 120 | 180;
 }): Promise<{ job_id: string }> {
   return apiFetch("/api/jobs", {
     method: "POST",
@@ -165,6 +166,12 @@ export async function cancelJob(
   jobId: string
 ): Promise<{ cancelled: boolean }> {
   return apiFetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+}
+
+export async function restartJob(
+  jobId: string
+): Promise<{ job_id: string }> {
+  return apiFetch(`/api/jobs/${jobId}/restart`, { method: "POST" });
 }
 
 // Tells the runner thread to advance past the current editable gate. The
@@ -213,6 +220,17 @@ export async function getGateStatus(
   jobId: string
 ): Promise<{ awaiting: Stage | null }> {
   return apiFetch(`/api/jobs/${jobId}/gate`);
+}
+
+export interface JobDetail {
+  job_id: string;
+  status: string;
+  config: Record<string, unknown>;
+  artifacts: Record<string, string>;
+}
+
+export async function getJob(jobId: string): Promise<JobDetail> {
+  return apiFetch(`/api/jobs/${jobId}`);
 }
 
 export async function ttsPreview(

@@ -43,6 +43,15 @@ export function ConfigStage({ onComplete }: ConfigStageProps) {
   const [imageStyle, setImageStyle] = useState("");
   const [imageMode, setImageMode] = useState<"AI" | "Real photos">("AI");
   const [selectedPreset, setSelectedPreset] = useState("");
+
+  const production = useProductionStore((s) =>
+    s.productions.find((p) => p.id === s.currentProductionId)
+  );
+  const prodType = production?.config.type || "short";
+
+  const [targetDuration, setTargetDuration] = useState<60 | 120 | 180>(
+    production?.config.targetDuration ?? 60
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingPreset, setSavingPreset] = useState(false);
@@ -71,10 +80,9 @@ export function ConfigStage({ onComplete }: ConfigStageProps) {
     return () => { mounted = false; };
   }, []);
 
-  const production = useProductionStore((s) =>
-    s.productions.find((p) => p.id === s.currentProductionId)
-  );
-  const prodType = production?.config.type || "short";
+  useEffect(() => {
+    useProductionStore.getState().updateConfig({ targetDuration });
+  }, [targetDuration]);
 
   const handleSavePreset = useCallback(async () => {
     try {
@@ -219,6 +227,33 @@ export function ConfigStage({ onComplete }: ConfigStageProps) {
         </div>
       </div>
 
+      {/* Duration selector (short only) */}
+      {prodType === "short" && (
+        <div className="flex flex-col gap-2">
+          <label className="text-sm text-text-secondary">Duration</label>
+          <div className="flex gap-2">
+            {([60, 120, 180] as const).map((sec) => (
+              <button
+                key={sec}
+                type="button"
+                onClick={() => {
+                  setTargetDuration(sec);
+                  useProductionStore.getState().updateConfig({ targetDuration: sec });
+                }}
+                className={cn(
+                  "flex-1 rounded-xl border px-3 py-2 text-sm font-medium transition-colors",
+                  targetDuration === sec
+                    ? "border-accent-purple bg-accent-purple/20 text-accent-purple"
+                    : "border-border-subtle bg-surface-raised text-text-secondary hover:bg-surface-overlay hover:text-text-primary"
+                )}
+              >
+                {sec === 60 ? "1 min" : sec === 120 ? "2 min" : "3 min"}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Preset */}
       <div className="flex flex-col gap-2">
         <label className="text-sm text-text-secondary">Preset</label>
@@ -267,6 +302,7 @@ export function ConfigStage({ onComplete }: ConfigStageProps) {
               imageStyle,
               imageMode: imageMode === "AI" ? "ai" : "photos",
               presetId: selectedPreset,
+              targetDuration: prodType === "short" ? targetDuration : undefined,
             });
             useProductionStore.getState().clearArtifacts();
             const { job_id } = await createJob({
@@ -278,6 +314,7 @@ export function ConfigStage({ onComplete }: ConfigStageProps) {
               image_mode: imageMode === "AI" ? "ai" : "photos",
               image_style: imageStyle,
               preset_id: selectedPreset,
+              target_duration: prodType === "short" ? targetDuration : undefined,
             });
             useProductionStore.getState().setJobId(job_id);
             onComplete?.();

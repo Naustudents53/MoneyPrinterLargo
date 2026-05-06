@@ -282,6 +282,7 @@ class YouTube(YouTubeUploader):
         long_voice: str = "",
         hook_profile: str = "",
         voice_drama: bool = False,
+        target_duration_seconds: int | None = None,
     ) -> None:
         self._account_uuid: str = account_uuid
         self._account_nickname: str = account_nickname
@@ -298,6 +299,11 @@ class YouTube(YouTubeUploader):
         self.word_timestamps = None
         self.thumbnail_path: str = ""
         self.active_series: dict = None
+        from classes.duration_presets import resolve_short_duration
+        d, s, n = resolve_short_duration(target_duration_seconds) if target_duration_seconds else (None, None, None)
+        self._target_duration_seconds: int | None = d
+        self._sentence_length_override: int | None = s
+        self._n_prompts_override: int | None = n
         self._init_selenium(fp_profile_path)
 
 
@@ -811,7 +817,7 @@ OUTPUT FORMAT (strict):
         """
         import random
 
-        sentence_length = get_script_sentence_length()
+        sentence_length = self._sentence_length_override or get_script_sentence_length()
 
         # Rotate hook style per run so every short doesn't open the same way.
         # The preset is picked from HOOK_PROFILES by self._hook_profile (set per
@@ -913,7 +919,7 @@ CRITICAL RULES:
         Returns:
             image_prompts (List[str]): Generated List of image prompts.
         """
-        n_prompts = 6
+        n_prompts = self._n_prompts_override or 6
 
         # Split script into sections so the LLM knows exactly what each image must show
         sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', self.script) if s.strip()]

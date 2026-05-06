@@ -8,7 +8,7 @@ import platform
 import unicodedata
 
 from status import error, info, success, warning
-from config import ROOT_DIR, assert_folder_structure, get_first_time_running, get_nanobanana2_api_key, get_nanobanana2_aspect_ratio, get_threads, get_verbose
+from config import ROOT_DIR, assert_folder_structure, get_first_time_running, get_nanobanana2_api_key, get_nanobanana2_aspect_ratio, get_threads, get_verbose, get_zip_url
 
 DEFAULT_SONG_ARCHIVE_URLS = []
 

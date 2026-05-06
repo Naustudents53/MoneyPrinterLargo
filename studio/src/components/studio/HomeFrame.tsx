@@ -36,6 +36,15 @@ const MAKE_CARDS = [
     href: "/long",
   },
   {
+    id: "recap",
+    label: "Movie Recap",
+    sub: "Public-domain film → clips + narration",
+    icon: Film,
+    color: "#A78BFA",
+    bg: "#2A1D3D",
+    href: "/recap",
+  },
+  {
     id: "tweet",
     label: "Tweet / Affiliate",
     sub: "Twitter Bot · X auto-post",
@@ -62,6 +71,7 @@ function relTime(iso: string | null | undefined): string {
 
 function jobToTile(job: JobSummary): VideoTileData {
   const isLong = job.type === "long";
+  const isRecap = job.type === "recap";
   const status: VideoTileData["status"] =
     job.status === "done" && job.video_url
       ? "uploaded"
@@ -77,11 +87,11 @@ function jobToTile(job: JobSummary): VideoTileData {
   return {
     id: job.job_id,
     title: job.topic || `Job ${job.job_id.slice(0, 8)}`,
-    duration: isLong ? "~18:00" : "~0:45",
+    duration: isLong ? "~18:00" : isRecap ? "~8:00" : "~0:45",
     status,
     platform: "youtube",
-    aspect: isLong ? "16:9" : "9:16",
-    thumb: isLong ? "#1A3D2A" : "#3D2A1A",
+    aspect: isLong ? "16:9" : isRecap ? "16:9" : "9:16",
+    thumb: isLong ? "#1A3D2A" : isRecap ? "#3D1A3D" : "#3D2A1A",
     views: null,
   };
 }

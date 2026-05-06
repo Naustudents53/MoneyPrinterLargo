@@ -35,6 +35,7 @@ export interface ProductionConfig {
   videoPath?: string;
   metadata?: MetadataConfig;
   presetId?: string;
+  targetDuration?: 60 | 120 | 180;
 }
 
 export interface StageStatus {
@@ -126,6 +127,7 @@ export const useProductionStore = create<ProductionState>((set) => ({
           videoPath: config.videoPath,
           metadata: config.metadata,
           presetId: config.presetId,
+          targetDuration: config.targetDuration || 60,
         },
         currentStep: 0,
         completedSteps: [],

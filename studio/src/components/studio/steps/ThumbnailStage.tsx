@@ -32,6 +32,28 @@ const THEME_GRADIENTS: Record<string, string> = {
   neon: "linear-gradient(135deg, #0a1a0a, #1f3d3f)",
 };
 
+// 3 variant decks — each card gets its own gradient + label
+const VARIANT_DECKS = [
+  {
+    label: "A",
+    badge: "variant-a",
+    bg: "linear-gradient(135deg, #0E0E18, #2d1b69)", // dark + cosmic
+    accent: "#A78BFA",
+  },
+  {
+    label: "B",
+    badge: "variant-b",
+    bg: "linear-gradient(135deg, #1a0a0a, #3d1f1f)", // war red
+    accent: "#F87171",
+  },
+  {
+    label: "C",
+    badge: "variant-c",
+    bg: "linear-gradient(135deg, #0a1a0a, #1f3d3f)", // neon green
+    accent: "#67E8F9",
+  },
+];
+
 export function ThumbnailStage({ onComplete }: ThumbnailStageProps) {
   const [title, setTitle] = useState("NEON ARCHIVES");
   const [overlay, setOverlay] = useState("Episode 1");
@@ -53,7 +75,16 @@ export function ThumbnailStage({ onComplete }: ThumbnailStageProps) {
     let cancelled = false;
     getGateStatus(jobId)
       .then(({ awaiting }) => {
-        if (!cancelled) setAwaitingStage(awaiting);
+        if (!cancelled) {
+          setAwaitingStage(awaiting);
+          // If we're already paused at the thumbnail gate, the thumbnail was
+          // generated earlier and the stage.done event was missed. Force ready
+          // so the real image renders instead of the placeholder text.
+          if (awaiting === "thumbnail") {
+            setThumbnailReady(true);
+            setCacheBuster(Date.now());
+          }
+        }
       })
       .catch(() => {});
     return () => {
@@ -105,42 +136,63 @@ export function ThumbnailStage({ onComplete }: ThumbnailStageProps) {
         </div>
       )}
 
-      {/* Preview */}
-      <motion.div
-        className="relative aspect-video w-full overflow-hidden rounded-2xl border border-border-ghost shadow-float"
-        style={{ background: THEME_GRADIENTS[theme] }}
-        initial={{ opacity: 0, scale: 0.98 }}
-        animate={{ opacity: 1, scale: 1 }}
-      >
-        {thumbnailReady && jobId ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={`${API_BASE}/api/jobs/${jobId}/artifact/thumbnail?t=${cacheBuster}`}
-            alt="Thumbnail"
-            className="w-full rounded-2xl"
-          />
-        ) : (
-          <>
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-6">
-              <span
-                className="text-center text-3xl font-extrabold text-text-primary drop-shadow-lg md:text-5xl"
-                style={{
-                  fontFamily:
-                    font === "bold_font"
-                      ? "bold_font"
-                      : font === "Poppins-Black"
-                        ? "Poppins"
-                        : "Montserrat",
-                }}
-              >
-                {title}
-              </span>
-              <span className="text-sm font-medium text-text-secondary">{overlay}</span>
+      {/* Preview — 3 variant thumbnail cards */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        {VARIANT_DECKS.map((deck, i) => (
+          <motion.div
+            key={deck.label}
+            className="group relative aspect-video overflow-hidden rounded-2xl border-2 border-transparent bg-surface-raised shadow-panel transition-colors hover:border-white/10"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.05 }}
+          >
+            {/* Glow ring on hover */}
+            <div
+              className="pointer-events-none absolute -inset-[1px] rounded-2xl opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+              style={{
+                background: `linear-gradient(135deg, ${deck.accent}20, transparent 60%)`,
+              }}
+            />
+
+            {/* Variant badge */}
+            <div
+              className="absolute left-3 top-3 z-10 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-black backdrop-blur-sm"
+              style={{ background: deck.accent }}
+            >
+              {deck.label}
             </div>
-            <div className="scanline pointer-events-none absolute inset-0" />
-          </>
-        )}
-      </motion.div>
+
+            {thumbnailReady && jobId ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`${API_BASE}/api/jobs/${jobId}/artifact/thumbnail?t=${cacheBuster}`}
+                alt={`Thumbnail variant ${deck.label}`}
+                className="h-full w-full object-cover rounded-2xl"
+              />
+            ) : (
+              <div
+                className="flex h-full w-full flex-col items-center justify-center gap-2 p-5"
+                style={{ background: deck.bg }}
+              >
+                <span
+                  className="text-center text-lg font-extrabold text-white/90 drop-shadow-lg md:text-xl"
+                  style={{
+                    fontFamily:
+                      font === "bold_font"
+                        ? "bold_font"
+                        : font === "Poppins-Black"
+                          ? "Poppins"
+                          : "Montserrat",
+                  }}
+                >
+                  {title}
+                </span>
+                <span className="text-[11px] font-medium text-white/60">{overlay}</span>
+              </div>
+            )}
+          </motion.div>
+        ))}
+      </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="flex flex-col gap-2">

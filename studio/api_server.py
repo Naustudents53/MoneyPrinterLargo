@@ -597,7 +597,7 @@ def _infer_voices():
         "Sofia":    {"id": "es-MX-DaliaNeural",      "alias": "Sofia",   "lang": "es", "gender": "female"},
         "Carlos":   {"id": "es-MX-JorgeNeural",      "alias": "Carlos",  "lang": "es", "gender": "male"},
         "Elena":    {"id": "es-ES-ElviraNeural",     "alias": "Elena",   "lang": "es", "gender": "female"},
-        "Pablo":    {"id": "es-ES-AlvaroNeural",     "alias": "Pablo",   "lang": "es", "gender": "male"},
+        "Pablo":    {"id": "es-ES-EliasNeural",      "alias": "Pablo",   "lang": "es", "gender": "male"},
         "Alvaro":   {"id": "es-ES-AlvaroNeural",     "alias": "Alvaro",  "lang": "es", "gender": "male"},
     }
     out = []
@@ -779,6 +779,16 @@ def delete_preset(preset_id: str):
     return {"deleted": True}
 
 
+def _coerce_duration(raw):
+    """Validate incoming target_duration and return a canonical value."""
+    from classes.duration_presets import ALLOWED_SHORT_DURATIONS, DEFAULT_SHORT_DURATION
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_SHORT_DURATION
+    return val if val in ALLOWED_SHORT_DURATIONS else DEFAULT_SHORT_DURATION
+
+
 # --- Jobs ------------------------------------------------------------------
 
 # 6. Update POST /api/jobs body parsing
@@ -794,6 +804,7 @@ def create_job(data: dict):
         "image_mode": data.get("image_mode", "ai"),
         "image_style": data.get("image_style", ""),
         "preset_id": data.get("preset_id"),
+        "target_duration": _coerce_duration(data.get("target_duration")),
     }
     jobs.set_result(job_id, cfg)
     jobs.emit(job_id, {"type": "queued", "message": "Job queued", "job_id": job_id})
@@ -880,6 +891,41 @@ def get_gate_status(job_id: str):
     if jobs.status(job_id) == "unknown":
         raise HTTPException(status_code=404, detail="Job not found")
     return {"awaiting": jobs.gate_status(job_id)}
+
+
+@app.post("/api/jobs/{job_id}/restart")
+def restart_job(job_id: str):
+    """Clone an existing job's config and spawn a fresh pipeline.
+
+    The caller receives a new job_id; the new job starts from the very
+    beginning (topic/script/etc.) using the original configuration.
+    """
+    result = jobs.get_result(job_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=500, detail="Corrupted job result")
+
+    cfg = {
+        "type": result.get("type", "short"),
+        "account_id": result.get("account_id"),
+        "topic": result.get("topic", ""),
+        "series_id": result.get("series_id"),
+        "voice_id": result.get("voice_id", ""),
+        "image_mode": result.get("image_mode", "ai"),
+        "image_style": result.get("image_style", ""),
+        "preset_id": result.get("preset_id"),
+        "target_duration": result.get("target_duration"),
+    }
+    new_job_id = jobs.create()
+    jobs.set_result(new_job_id, cfg)
+    jobs.emit(
+        new_job_id,
+        {"type": "queued", "message": "Job restarted from library", "job_id": new_job_id},
+    )
+    thread = threading.Thread(target=_run_pipeline, args=(new_job_id, cfg), daemon=True)
+    thread.start()
+    return {"job_id": new_job_id}
 
 
 # --- TTS -------------------------------------------------------------------

@@ -95,10 +95,11 @@ function TypePill({ type }: { type: JobSummary["type"] }) {
 }
 
 function wizardHref(type: JobSummary["type"], jobId: string): string {
-  // Append ?job=ID so JobAdopter on /shorts (or /long) hydrates the
+  // Append ?job=ID so JobAdopter on /shorts, /long, or /recap hydrates the
   // local store from the backend job and jumps to the right stage.
   if (type === "short") return `/shorts?job=${jobId}`;
   if (type === "long") return `/long?job=${jobId}`;
+  if (type === "recap") return `/recap?job=${jobId}`;
   return "/";
 }
 

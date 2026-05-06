@@ -75,7 +75,7 @@ def _save_json(job_id: str, name: str, data) -> str:
 
 def _build_yt_kwargs(account: dict, cfg: dict) -> dict:
     from config import get_tts_voice
-    return {
+    kwargs = {
         "account_uuid": account.get("id"),
         "account_nickname": account.get("nickname", "Unknown"),
         "fp_profile_path": account.get("firefox_profile", ""),
@@ -87,6 +87,9 @@ def _build_yt_kwargs(account: dict, cfg: dict) -> dict:
         "hook_profile": account.get("hook_profile", ""),
         "voice_drama": account.get("voice_drama", False),
     }
+    if cfg.get("type") == "short":
+        kwargs["target_duration_seconds"] = cfg.get("target_duration")
+    return kwargs
 
 
 def _split_paragraphs(text: str):
