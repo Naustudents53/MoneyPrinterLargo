@@ -1026,9 +1026,11 @@ ACTUAL SCRIPT (the title must match what THIS script delivers):
 
 ABSOLUTE RULES:
 - The title must accurately describe what the script says. Do NOT promise content that is not in the script.
+- FORBIDDEN BASIC/CLICH\u00c9 WORDS (do NOT use ANY of these, in any form, accented or not, singular or plural): "secreto", "secretos", "misterio", "misterios", "sab\u00edas que", "sabias que", "no vas a creer", "te volar\u00e1 la cabeza", "incre\u00edble", "impactante", "te sorprender\u00e1", "nadie sabe", "nadie te cont\u00f3", "lo que no te dicen", "esto te dejar\u00e1", "loco", "alucinante", "flipante", "shocking", "you won't believe", "mind-blowing", "secret", "mystery", "did you know". These are overused, obvious, and lazy clickbait \u2014 NEVER use them.
 - FORBIDDEN: "X curiosidades", "X secretos", "X razones", "X cosas", "X datos", "X hechos", "Top X", "X que..." or ANY list-form promise (in {self.language} or English) UNLESS the script actually presents that exact number of distinct enumerated items. If the script tells ONE continuous story, the title MUST NOT promise a list.
-- FORBIDDEN: "no vas a creer", "te volar\u00e1 la cabeza", "el secreto que nadie te cont\u00f3", and similar empty hype that the script does not back up.
-- The title can be intriguing, but it must be HONEST \u2014 every promise in the title must be delivered by the script.
+- INSTEAD, write SPECIFIC, CONCRETE titles that name the actual subject, action, place, person, date, or fact from the script. The hook should come from the specificity of the content itself \u2014 a surprising name, a striking number, an unexpected place, a precise event \u2014 NOT from generic hype words.
+- Good title patterns: a concrete claim ("Roma cay\u00f3 por culpa de un acueducto"), a specific question about the subject ("\u00bfPor qu\u00e9 los samur\u00e1is se afeitaban la frente?"), a precise paradox or contrast, a striking historical fact, a named character + specific action.
+- The title can be intriguing, but it must be HONEST and SPECIFIC \u2014 every promise must be delivered by the script, and the intrigue must come from real content, not empty hype words.
 - Optionally include 1-2 relevant hashtags at the end (only if they fit naturally).
 - Under 80 characters.
 - WRITE ENTIRELY IN {self.language}. Do NOT wrap the title in quotes. No leading/trailing quote characters.
@@ -1448,48 +1450,6 @@ Example format:
             except Exception:
                 continue
         raise RuntimeError("HuggingFace: all models failed")
-
-    def _try_pollinations(self, prompt: str) -> bytes:
-        """Try Pollinations.ai image generation (primary provider - free, no key, best quality with flux model)."""
-        import urllib.parse
-        short_prompt = prompt[:500]
-        encoded = urllib.parse.quote(short_prompt)
-        seed = int(time.time())
-        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true&seed={seed}&model=flux"
-        print(colored(f"    [Pollinations.ai FLUX] Generating...", "cyan"), flush=True)
-        resp = requests.get(url, timeout=180)
-        if resp.status_code == 200 and len(resp.content) > 5000:
-            print(colored("OK", "green"))
-            return resp.content
-        raise RuntimeError(f"Pollinations returned status {resp.status_code}")
-
-    def _try_pollinations_turbo(self, prompt: str) -> bytes:
-        """Try Pollinations.ai with turbo model (faster, more available than FLUX)."""
-        import urllib.parse
-        short_prompt = prompt[:500]
-        encoded = urllib.parse.quote(short_prompt)
-        seed = int(time.time()) + 42
-        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true&seed={seed}&model=turbo"
-        print(colored(f"    [Pollinations turbo] Generating...", "cyan"), flush=True)
-        resp = requests.get(url, timeout=180)
-        if resp.status_code == 200 and len(resp.content) > 5000:
-            print(colored("OK", "green"))
-            return resp.content
-        raise RuntimeError(f"Pollinations turbo returned status {resp.status_code}")
-
-    def _try_pollinations_realism(self, prompt: str) -> bytes:
-        """Try Pollinations.ai with flux-realism model (photorealistic style)."""
-        import urllib.parse
-        short_prompt = prompt[:500]
-        encoded = urllib.parse.quote(short_prompt)
-        seed = int(time.time()) + 99
-        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true&seed={seed}&model=flux-realism"
-        print(colored(f"    [Pollinations flux-realism] Generating...", "cyan"), flush=True)
-        resp = requests.get(url, timeout=180)
-        if resp.status_code == 200 and len(resp.content) > 5000:
-            print(colored("OK", "green"))
-            return resp.content
-        raise RuntimeError(f"Pollinations flux-realism returned status {resp.status_code}")
 
     def _try_ideogram(self, prompt: str) -> bytes:
         """Try Ideogram API (very high quality, free tier ~25 images/day)."""
@@ -2113,6 +2073,35 @@ Example format:
         # when the noun isn't in the list above.
         if re.search(r"\b[2-9]\s+\w{4,}\s+que\b", t):
             return True
+        return False
+
+    def _title_uses_cliche(self, title: str) -> bool:
+        """True if the title contains overused clickbait words we want to ban.
+
+        These are basic/lazy hooks ('secreto', 'sabías que', 'increíble',
+        'no vas a creer'…) that the LLM keeps defaulting to. Detection is
+        accent-insensitive and case-insensitive so 'sabias que' and 'SABÍAS
+        QUE' both trigger.
+        """
+        if not title:
+            return False
+        # Strip accents for matching.
+        import unicodedata
+        norm = unicodedata.normalize("NFD", title.lower())
+        norm = "".join(c for c in norm if unicodedata.category(c) != "Mn")
+        cliche_phrases = (
+            "secreto", "secretos", "misterio", "misterios",
+            "sabias que", "no vas a creer", "te volara la cabeza",
+            "increible", "impactante", "te sorprendera",
+            "nadie sabe", "nadie te conto", "lo que no te dicen",
+            "esto te dejara", "alucinante", "flipante",
+            "shocking", "you won't believe", "you wont believe",
+            "mind-blowing", "mind blowing", "secret", "mystery",
+            "did you know",
+        )
+        for phrase in cliche_phrases:
+            if re.search(rf"\b{re.escape(phrase)}\b", norm):
+                return True
         return False
 
     def _script_has_enumerated_items(self, script: str) -> bool:
@@ -2930,18 +2919,13 @@ Example format:
                 ("Pixabay", self._try_pixabay, "stock"),
                 # Tier 5: AI fallback when no real photo matches the topic.
                 ("Leonardo AI", self._try_leonardo, "ai"),
-                ("Pollinations FLUX", self._try_pollinations, "ai"),
-                ("Pollinations turbo", self._try_pollinations_turbo, "ai"),
             ]
         else:
             print(colored(f"\n  [Images] Generating {len(prompts)} images...", "blue"))
             providers = [
                 # Tier 1: High-quality AI generator
                 ("Leonardo AI", self._try_leonardo, "ai"),
-                # Tier 2: Free unlimited AI generators (no daily limits)
-                ("Pollinations FLUX", self._try_pollinations, "ai"),
-                ("Pollinations turbo", self._try_pollinations_turbo, "ai"),
-                ("Pollinations flux-realism", self._try_pollinations_realism, "ai"),
+                # Tier 2: HuggingFace fallback
                 ("HuggingFace", self._try_huggingface, "ai"),
                 # Tier 3: Stock photos (reliable, always available)
                 ("Pexels", self._try_pexels, "stock"),
@@ -2978,10 +2962,8 @@ Example format:
         """
         Generates an AI Image trying multiple FREE providers in cascade:
         1. HuggingFace (new router URL, needs free token)
-        2. Pollinations.ai (free, no key — currently unstable)
-        3. AI Horde (free, no key — crowdsourced SD, ~60-90s)
-        4. Picsum (HD stock photos, fast)
-        5. Pillow gradient fallback
+        2. Picsum (HD stock photos, fast)
+        3. Pillow gradient fallback
 
         Args:
             prompt (str): Reference for image generation
@@ -2990,9 +2972,6 @@ Example format:
             path (str): The path to the generated image.
         """
         providers = [
-            ("Pollinations FLUX", self._try_pollinations),
-            ("Pollinations turbo", self._try_pollinations_turbo),
-            ("Pollinations flux-realism", self._try_pollinations_realism),
             ("HuggingFace", self._try_huggingface),
         ]
 
@@ -3667,6 +3646,17 @@ Example format:
         self.video_path = os.path.abspath(path)
         self._persist_metadata_sidecar(is_long=False)
 
+        try:
+            from upload_tracker import record_generation
+            record_generation(
+                self.video_path,
+                list(self.images),
+                [getattr(self, "tts_path", None), getattr(self, "subtitles_path", None)],
+                subject=getattr(self, "subject", "") or "",
+            )
+        except Exception as _e:
+            warning(f"Could not record upload manifest: {_e}")
+
         return path
 
     # ============================================================
@@ -3681,7 +3671,7 @@ Example format:
         Two strategies, picked by active LLM provider:
           - Gemini Flash 2.5/3 → SINGLE call (large output window handles 3000+ words).
             Falls back to per-section if the single call returns too short.
-          - Pollinations / Ollama / others → ONE LLM CALL PER SECTION (12 calls)
+          - Ollama / others → ONE LLM CALL PER SECTION (12 calls)
             because free / small models cap output around 400-700 words per call.
         """
         lang = self.language
@@ -4182,7 +4172,7 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
         """
         Build a clickbait 1280x720 thumbnail for the long video:
           1. LLM produces a dramatic visual prompt + 2-4 punchy overlay words.
-          2. Leonardo AI (fallback Pollinations) renders the background.
+          2. Leonardo AI renders the background.
           3. Pillow upscales to 1280x720, darkens the bottom for legibility,
              and stamps the overlay text in Impact-style with thick black stroke.
         Sets self.thumbnail_path and returns it. Returns "" if generation fails.
@@ -4420,7 +4410,7 @@ Return ONLY the JSON. No markdown, no explanation."""
             overlay_words = " ".join(topic_words).upper() if topic_words else "DESCUBRE LA VERDAD"
             warning(f"Thumbnail: using topic-derived overlay text: {overlay_words}")
 
-        # Step 2: render the background image (Leonardo AI first, then Pollinations).
+        # Step 2: render the background image (Leonardo AI).
         # Append the channel's image_style suffix so the thumbnail matches the video's look.
         styled_visual_prompt = self._apply_channel_style(visual_prompt)
         if get_verbose() and styled_visual_prompt != visual_prompt:
@@ -4429,7 +4419,6 @@ Return ONLY the JSON. No markdown, no explanation."""
         bg_bytes = None
         for name, fn in (
             ("Leonardo AI", self._try_leonardo_landscape),
-            ("Pollinations FLUX 16:9", self._try_pollinations_landscape),
         ):
             try:
                 bg_bytes = fn(styled_visual_prompt)
@@ -4764,7 +4753,7 @@ No markdown. No explanation. Just the JSON array."""
     def generate_long_images(self, prompts: List[str]) -> None:
         """
         Generate images for long video in 16:9 landscape format (1920x1080).
-        Cascade: Leonardo AI → Pollinations FLUX → HuggingFace → Pillow fallback.
+        Cascade: Leonardo AI → HuggingFace → Pillow fallback.
         """
         print(colored(f"\n  [Long Video] Generating {len(prompts)} images (1920x1080)...", "blue"))
 
@@ -4777,7 +4766,6 @@ No markdown. No explanation. Just the JSON array."""
 
             for name, fn in [
                 ("Leonardo AI", lambda p: self._try_leonardo_landscape(p)),
-                ("Pollinations.ai FLUX", lambda p: self._try_pollinations_landscape(p)),
                 ("HuggingFace", self._try_huggingface),
             ]:
                 try:
@@ -4795,19 +4783,6 @@ No markdown. No explanation. Just the JSON array."""
                 self._generate_fallback_image_landscape(prompt)
 
         success(f"All {len(self.images)} long video images ready!")
-
-    def _try_pollinations_landscape(self, prompt: str) -> bytes:
-        """Pollinations.ai in 16:9 landscape for long videos."""
-        import urllib.parse
-        encoded = urllib.parse.quote(prompt[:500])
-        seed = int(time.time())
-        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1920&height=1080&nologo=true&seed={seed}&model=flux"
-        print(colored(f"    [Pollinations FLUX 16:9] Generating...", "cyan"), flush=True)
-        resp = requests.get(url, timeout=180)
-        if resp.status_code == 200 and len(resp.content) > 5000:
-            print(colored("OK", "green"))
-            return resp.content
-        raise RuntimeError(f"Pollinations returned status {resp.status_code}")
 
     def _generate_fallback_image_landscape(self, prompt: str) -> str:
         """Fallback landscape image (1920x1080) when all providers fail."""
@@ -5286,6 +5261,18 @@ No markdown. No explanation. Just the JSON array."""
 
         self.video_path = os.path.abspath(video_path)
         self._persist_metadata_sidecar(is_long=True)
+
+        try:
+            from upload_tracker import record_generation
+            record_generation(
+                self.video_path,
+                list(self.images),
+                [getattr(self, "tts_path", None), getattr(self, "subtitles_path", None)],
+                subject=getattr(self, "subject", "") or "",
+            )
+        except Exception as _e:
+            warning(f"Could not record upload manifest: {_e}")
+
         success(f"\n=> Long video generated: {video_path}")
 
         return video_path
@@ -6320,6 +6307,16 @@ No markdown. No explanation. Just the JSON array."""
                     warning(" → Verify in YouTube Studio that the short shows as Public/Unlisted,")
                     warning("   then close Firefox manually.")
                     warning("=" * 60)
+
+            try:
+                from upload_tracker import mark_uploaded, cleanup_uploaded
+                if mark_uploaded(self.video_path, getattr(self, "uploaded_video_url", None)):
+                    removed = cleanup_uploaded()
+                    if removed and get_verbose():
+                        info(f" => Cleaned up {removed} uploaded asset(s) from .mp/")
+            except Exception as _e:
+                warning(f"Post-upload cleanup skipped: {_e}")
+
             return True
 
         except Exception as e:

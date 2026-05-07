@@ -1,7 +1,7 @@
 import requests
 from contextlib import contextmanager
 
-from config import get_ollama_base_url, get_llm_provider, get_pollinations_text_model, get_gemini_api_key, get_gemini_model, get_gemini_models
+from config import get_ollama_base_url, get_llm_provider, get_gemini_api_key, get_gemini_model, get_gemini_models
 
 _selected_model: str | None = None
 _llm_provider: str | None = None
@@ -76,23 +76,8 @@ def _ollama_client():
 
 
 def list_models() -> list[str]:
-    provider = _llm_provider or get_llm_provider()
-
-    if provider == "pollinations":
-        return _list_pollinations_models()
-
     response = _ollama_client().list()
     return sorted(m.model for m in response.models)
-
-
-def _list_pollinations_models() -> list[str]:
-    try:
-        resp = requests.get("https://text.pollinations.ai/models", timeout=15)
-        resp.raise_for_status()
-        models_data = resp.json()
-        return sorted(m.get("name", m.get("id", "unknown")) for m in models_data if isinstance(m, dict))
-    except Exception:
-        return ["openai", "openai-large", "openai-reasoning", "qwen-coder", "llama", "mistral", "deepseek", "deepseek-r1", "gemini"]
 
 
 def select_model(model: str) -> None:
@@ -233,19 +218,11 @@ def generate_text(prompt: str, model_name: str = None) -> str:
         providers = [
             ("gemini", lambda: _generate_text_gemini(prompt)),
             ("ollama", lambda: _generate_text_ollama(prompt, None)),
-            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
-        ]
-    elif provider == "pollinations":
-        providers = [
-            ("pollinations", lambda: _generate_text_pollinations(prompt, model_name)),
-            ("gemini", lambda: _generate_text_gemini(prompt)),
-            ("ollama", lambda: _generate_text_ollama(prompt, None)),
         ]
     else:
         providers = [
             ("ollama", lambda: _generate_text_ollama(prompt, model_name or _selected_model)),
             ("gemini", lambda: _generate_text_gemini(prompt)),
-            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
         ]
 
     last_error = None
@@ -284,60 +261,6 @@ def _is_garbage_response(text: str) -> bool:
     # Check if the response STARTS with a garbage phrase (first 60 chars)
     start = low[:60]
     return any(phrase in start for phrase in garbage_phrases)
-
-
-def _generate_text_pollinations(prompt: str, model: str = None) -> str:
-    import time as _time
-    import random as _random
-
-    model = model or get_pollinations_text_model() or "openai"
-
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        "stream": False,
-        "seed": _random.randint(1, 999999),
-        "cache": False,
-    }
-
-    last_error = None
-    for attempt in range(3):
-        if attempt > 0:
-            wait = 10 * attempt
-            print(f"[Pollinations] Retry {attempt}/2, waiting {wait}s...")
-            _time.sleep(wait)
-
-        # Try POST endpoint first
-        try:
-            response = requests.post(
-                "https://text.pollinations.ai/openai",
-                json=payload,
-                timeout=120,
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            last_error = e
-
-        # Fallback to GET endpoint
-        try:
-            import urllib.parse
-            encoded = urllib.parse.quote(prompt[:500])
-            seed = _random.randint(1, 999999)
-            resp = requests.get(
-                f"https://text.pollinations.ai/{encoded}?model={model}&seed={seed}&noCache=true",
-                timeout=120,
-            )
-            resp.raise_for_status()
-            return resp.text.strip()
-        except Exception as e2:
-            last_error = e2
-
-    raise RuntimeError(f"Pollinations text generation failed after 3 attempts: {last_error}")
 
 
 def _generate_text_ollama(prompt: str, model: str = None) -> str:

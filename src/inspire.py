@@ -25,7 +25,6 @@ from config import (
     get_verbose,
     get_headless,
     get_llm_provider,
-    get_pollinations_text_model,
 )
 from llm_provider import select_model, set_llm_provider
 from classes.Tts import TTS
@@ -171,8 +170,6 @@ def main() -> None:
     set_llm_provider(get_llm_provider())
     if args.model:
         select_model(args.model)
-    elif get_llm_provider() == "pollinations":
-        select_model(get_pollinations_text_model() or "openai")
     else:
         error("No Ollama model specified. Pass --model <name>.")
         sys.exit(1)

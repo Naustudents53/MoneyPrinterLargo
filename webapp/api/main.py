@@ -558,10 +558,9 @@ _CONFIG_FIELD_DEFS = [
     {"key": "font", "label": "Subtitle font filename", "type": "str", "group": "Core"},
     {"key": "script_sentence_length", "label": "Script sentence length", "type": "int", "group": "Core"},
     # LLM
-    {"key": "llm_provider", "label": "LLM provider (ollama / pollinations / gemini)", "type": "str", "group": "LLM"},
+    {"key": "llm_provider", "label": "LLM provider (ollama / gemini)", "type": "str", "group": "LLM"},
     {"key": "ollama_base_url", "label": "Ollama base URL", "type": "str", "group": "LLM"},
     {"key": "ollama_model", "label": "Ollama model", "type": "str", "group": "LLM"},
-    {"key": "pollinations_text_model", "label": "Pollinations text model", "type": "str", "group": "LLM"},
     # Image
     {"key": "pexels_api_key", "label": "Pexels API key", "type": "secret", "group": "Image"},
     {"key": "pixabay_api_key", "label": "Pixabay API key", "type": "secret", "group": "Image"},

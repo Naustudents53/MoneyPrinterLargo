@@ -25,3 +25,7 @@ thumbnails/
 studio/node_modules/
 studio/.next/
 studio/dist/
+*.dll
+*.pth
+*.mp3
+*.wav

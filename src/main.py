@@ -749,7 +749,7 @@ if __name__ == "__main__":
     fetch_songs()
 
     # Select LLM provider and model
-    from config import get_llm_provider, get_pollinations_text_model
+    from config import get_llm_provider
 
     llm_provider = get_llm_provider()
     set_llm_provider(llm_provider)
@@ -758,38 +758,6 @@ if __name__ == "__main__":
         from config import get_gemini_models
         models = get_gemini_models()
         success(f"Using Gemini LLM (cascade: {' → '.join(models)})")
-    elif llm_provider == "pollinations":
-        # Use Pollinations.ai (free, no local server needed)
-        configured_model = get_pollinations_text_model()
-        if configured_model:
-            select_model(configured_model)
-            success(f"Using Pollinations.ai with model: {configured_model}")
-        else:
-            try:
-                models = list_models()
-            except Exception as e:
-                warning(f"Could not fetch Pollinations models: {e}")
-                models = ["openai", "openai-large", "mistral", "llama", "deepseek"]
-
-            info("\n======= POLLINATIONS MODELS =======", False)
-            for idx, model_name in enumerate(models):
-                print(colored(f" {idx + 1}. {model_name}", "cyan"))
-            info("===================================\n", False)
-
-            model_choice = None
-            while model_choice is None:
-                raw = input(colored("Select a model: ", "magenta")).strip()
-                try:
-                    choice_idx = int(raw) - 1
-                    if 0 <= choice_idx < len(models):
-                        model_choice = models[choice_idx]
-                    else:
-                        warning("Invalid selection. Try again.")
-                except ValueError:
-                    warning("Please enter a number.")
-
-            select_model(model_choice)
-            success(f"Using Pollinations.ai model: {model_choice}")
     else:
         # Use Ollama (local)
         configured_model = get_ollama_model()

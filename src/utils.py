@@ -339,11 +339,21 @@ def rem_temp_files() -> None:
     # MP4s are preserved so the user can pick "Re-upload last generated video"
     # in the menu even after the menu loop has cycled.
     KEEP_EXT = (".json", ".mp4")
+    # Assets (PNG/WAV/SRT) listed in a not-yet-uploaded manifest must survive
+    # cleanup so the user can retry uploads without re-running generation.
+    try:
+        from upload_tracker import pending_assets
+        protected = pending_assets()
+    except Exception:
+        protected = set()
     for file in files:
+        full = os.path.join(mp_dir, file)
         if file.lower().endswith(KEEP_EXT):
             continue
+        if os.path.abspath(full) in protected:
+            continue
         try:
-            os.remove(os.path.join(mp_dir, file))
+            os.remove(full)
         except Exception:
             pass
 

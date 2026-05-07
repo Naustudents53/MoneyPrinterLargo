@@ -66,7 +66,7 @@ def _setup_paths():
 
 def _select_llm_provider():
     from config import (
-        get_llm_provider, get_pollinations_text_model, get_ollama_model,
+        get_llm_provider, get_ollama_model,
     )
     from llm_provider import select_model, set_llm_provider, list_models
 
@@ -75,12 +75,6 @@ def _select_llm_provider():
 
     if provider == "gemini":
         print("[runner] Using Gemini provider", flush=True)
-        return
-
-    if provider == "pollinations":
-        m = get_pollinations_text_model() or "openai"
-        select_model(m)
-        print(f"[runner] Using Pollinations model {m}", flush=True)
         return
 
     # ollama

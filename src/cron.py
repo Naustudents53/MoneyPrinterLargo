@@ -7,7 +7,7 @@ from config import get_verbose
 from classes.Tts import TTS
 from classes.Twitter import Twitter
 from classes.YouTube import YouTube
-from config import get_llm_provider, get_pollinations_text_model
+from config import get_llm_provider
 from llm_provider import select_model, set_llm_provider
 
 def main():
@@ -37,8 +37,6 @@ def main():
 
     if model:
         select_model(model)
-    elif llm_provider == "pollinations":
-        select_model(get_pollinations_text_model() or "openai")
     else:
         error("No Ollama model specified. Pass model name as third argument.")
         sys.exit(1)

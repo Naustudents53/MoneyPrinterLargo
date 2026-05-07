@@ -53,8 +53,13 @@ from cache import get_accounts
 assert_folder_structure()
 rem_temp_files()
 fetch_songs()
-set_llm_provider("pollinations")
-select_model("openai")
+from config import get_llm_provider, get_ollama_model
+_provider = get_llm_provider()
+set_llm_provider(_provider)
+if _provider == "ollama":
+    _m = get_ollama_model()
+    if _m:
+        select_model(_m)
 
 try:
     # Get the cached YouTube account
