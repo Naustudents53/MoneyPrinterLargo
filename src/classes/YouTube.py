@@ -47,44 +47,61 @@ _PHOTO_STOPWORDS = {
 }
 
 
-# Generic historical/topic words that are NOT distinctive enough to anchor a
+# Generic science/topic words that are NOT distinctive enough to anchor a
 # search result on the right subject. A result whose title only matches these
-# is considered off-topic — e.g. a video about Nero must NOT accept any photo
-# whose only overlap is "roman" or "emperor". The relevance filter requires
-# at least one truly distinctive token (proper noun / unique term) on top of
-# these. Keep this list conservative — adding a real proper noun here would
-# silently disable relevance checks for that subject.
+# is considered off-topic — e.g. a video about TON 618 must NOT accept any
+# photo whose only overlap is "black hole" or "galaxy". The relevance filter
+# requires at least one truly distinctive token (proper noun / unique term)
+# on top of these. Keep this list conservative — adding a real proper noun
+# here would silently disable relevance checks for that subject.
 _GENERIC_TOPIC_TOKENS = {
-    # Eras / civilizations / generic adjectives
-    "ancient", "antiguo", "antigua", "antiguos", "antiguas",
-    "old", "viejo", "vieja", "modern", "moderno", "moderna",
-    "history", "historia", "historical", "historic", "historico", "historica",
-    "story", "tale", "cuento", "relato",
-    "civilization", "civilizacion", "culture", "cultura", "era", "epoca", "period", "periodo",
-    # Civilizations / nationalities (won't disambiguate one figure from another)
-    "roman", "romano", "romana", "romanos", "romanas",
-    "greek", "griego", "griega", "griegos", "griegas",
-    "egyptian", "egipcio", "egipcia", "egipcios", "egipcias",
-    "chinese", "chino", "china", "chinos", "chinas",
-    "japanese", "japones", "japonesa", "japoneses", "japonesas",
-    "indian", "indio", "india", "indios", "indias",
-    "european", "europeo", "europea", "asian", "asiatico", "asiatica",
-    "african", "africano", "africana", "american", "americano", "americana",
-    # Common roles
-    "emperor", "emperador", "emperatriz", "empress",
-    "king", "rey", "queen", "reina",
-    "prince", "principe", "princess", "princesa",
-    "soldier", "soldado", "warrior", "guerrero", "guerrera",
-    "priest", "sacerdote", "priestess", "sacerdotisa",
-    "people", "gente", "person", "persona", "man", "hombre", "woman", "mujer",
-    # Generic places / objects
-    "city", "ciudad", "town", "village", "pueblo", "place", "lugar",
-    "world", "mundo", "earth", "tierra", "land", "country", "pais",
-    "war", "guerra", "battle", "batalla", "fight", "combate",
-    "great", "grande", "famous", "famoso", "famosa", "important", "importante",
-    "life", "vida", "death", "muerte",
-    "scene", "escena", "view", "vista", "image", "imagen", "photo", "foto",
-    "art", "arte", "painting", "pintura", "statue", "estatua",
+    # Generic science / cosmos adjectives and qualifiers
+    "ciencia", "cientifico", "cientifica", "cientificos", "cientificas",
+    "science", "scientific",
+    "universo", "universe", "cosmos", "cosmico", "cosmica", "cosmic",
+    "espacio", "space", "espacial", "spatial",
+    "astronomia", "astronomy", "astronomico", "astronomica", "astronomical",
+    "astrofisica", "astrophysics", "astrofisico", "astrophysical",
+    "fisica", "physics", "fisico", "physical",
+    "matematicas", "mathematics", "matematico",
+    # Generic celestial bodies (alone they don't identify a target)
+    "estrella", "estrellas", "star", "stars",
+    "planeta", "planetas", "planet", "planets",
+    "galaxia", "galaxias", "galaxy", "galaxies",
+    "luna", "lunas", "moon", "moons",
+    "asteroide", "asteroides", "asteroid", "asteroids",
+    "cometa", "cometas", "comet", "comets",
+    "nebulosa", "nebulosas", "nebula", "nebulae",
+    "constelacion", "constelaciones", "constellation", "constellations",
+    "agujero", "agujeros", "hole", "holes",   # "agujero negro" is the phrase; alone, generic
+    "negro", "negra", "black",
+    # Generic phenomena / scales
+    "explosion", "explosiones", "explosion", "explosions",
+    "luz", "light", "energia", "energy", "fuerza", "force",
+    "gravedad", "gravity", "tiempo", "time",
+    "materia", "matter", "antimateria", "antimatter",
+    "onda", "ondas", "wave", "waves", "particula", "particulas", "particle", "particles",
+    "atomo", "atomos", "atom", "atoms", "molecula", "molecules",
+    # Generic instruments / agents
+    "telescopio", "telescopios", "telescope", "telescopes",
+    "sonda", "sondas", "probe", "probes", "satelite", "satelites", "satellite", "satellites",
+    "nave", "naves", "spacecraft", "rocket", "cohete", "cohetes",
+    "astronauta", "astronautas", "astronaut", "astronauts",
+    "cientifico", "scientist", "investigador", "researcher",
+    # Generic places / scales
+    "mundo", "world", "tierra", "earth", "sistema", "system",
+    "via", "lactea",   # alone too short; "Vía Láctea" is the proper noun (kept distinctive elsewhere)
+    "orbita", "orbit", "atmosfera", "atmosphere",
+    # Sizes / qualifiers
+    "grande", "great", "gigante", "giant", "enorme", "huge", "masivo", "massive",
+    "supermasivo", "supermassive",
+    "pequeno", "small", "diminuto", "tiny",
+    "antiguo", "antigua", "ancient", "old", "primitivo", "primordial",
+    "moderno", "modern", "nuevo", "new",
+    "vida", "life", "muerte", "death",
+    # Visual/image meta-terms
+    "imagen", "image", "foto", "photo", "vista", "view", "escena", "scene",
+    "render", "ilustracion", "illustration",
 }
 
 
@@ -95,238 +112,260 @@ _GENERIC_TOPIC_TOKENS = {
 HOOK_PROFILES: dict = {
     "educational": [
         ("Classic curiosity question", '"¿Sabías que...?"'),
-        ("Invitation to imagine a scene", '"Imagínate esto:" o "Imagina que..."'),
-        ("Direct shocking statistic (no question)", '"El 90% de la gente no sabe que..."'),
-        ("Hidden secret reveal", '"Hay algo que nadie te contó sobre..."'),
-        ("Counterintuitive claim", '"Todo lo que crees sobre X está mal."'),
-        ("Negation cliffhanger", '"No vas a creer lo que pasó cuando..."'),
-        ("Time-warp opener", '"Hace dos mil años, en [lugar], [escena breve]..." o "En [siglo o año], [lugar] vivía un día como cualquier otro, hasta que..."'),
-        ("Stakes-first pivotal moment", '"Una sola idea, una sola decisión o una sola noche cambió el rumbo de [civilización, era o pueblo]."'),
-        ("Cultural lens flip", '"Para nosotros sería [reacción moderna: impensable, una locura, un crimen], pero en [época o civilización] era [normalidad opuesta: lo más natural, una virtud, lo esperado]."'),
-        ("Hidden origin reveal", '"Lo que hoy conocemos como [cosa familiar] empezó con algo que casi nadie recuerda: [origen olvidado]."'),
+        ("Invitation to imagine a cosmic scene", '"Imagínate esto:" o "Imagina que estás flotando a un millón de kilómetros del Sol..."'),
+        ("Direct shocking statistic (no question)", '"El 95% del universo es invisible para nosotros..." o "El 99,86% de la masa del sistema solar está en el Sol..."'),
+        ("Hidden secret reveal", '"Hay algo sobre [objeto cósmico] que casi nadie te ha contado..."'),
+        ("Counterintuitive claim", '"Todo lo que crees sobre [tema] está mal." o "El espacio no es el vacío: está lleno de algo que nadie puede ver."'),
+        ("Negation cliffhanger", '"No vas a creer lo que descubrieron cuando apuntaron el telescopio a..."'),
+        ("Cosmic-scale opener", '"En este momento, a [N] años luz de distancia, [evento cósmico]..." o "Cada segundo, en algún rincón del universo, [proceso físico]..."'),
+        ("Stakes-first pivotal discovery", '"Un solo dato, una sola observación, una sola noche en el observatorio cambió todo lo que creíamos saber sobre [tema]."'),
+        ("Scale-flip", '"Para nosotros [magnitud humana] es [reacción], pero en escala cósmica es [comparación absurda: insignificante, gigantesco, imposible]."'),
+        ("Hidden-origin reveal", '"Lo que hoy llamamos [cosa familiar: oro, agua, los átomos de tu cuerpo] nació en algo que casi nadie recuerda: [origen cósmico: una supernova, una colisión de estrellas, los primeros minutos del universo]."'),
     ],
-    # Animated storytelling: epic, horror, mystery, adventure. Hooks designed
-    # to be addictive and pull the viewer into the scene immediately.
+    # Cosmic mystery / awe-driven storytelling. Designed to pull the viewer in
+    # with an unsolved cosmic puzzle, an eerie astronomical observation, or a
+    # mind-bending consequence of physics.
     "storytelling": [
-        ("Dark mystery opener", '"Lo que voy a contarte nadie quiso creerlo." o "Esta historia jamás debió salir a la luz."'),
-        ("In medias res scene-set", '"Eran las 3:00 AM cuando la puerta se abrió sola." o "Aquella noche, el silencio era distinto."'),
-        ("Time-warp opener", '"Era 1987, y todo cambió esa noche." o "Pasaron veinte años antes de que apareciera el cuerpo."'),
-        ("Sole-survivor cliffhanger", '"De los doce que entraron, solo uno regresó. Y este es su relato."'),
-        ("Disturbing discovery", '"Lo que encontraron debajo no debía existir." o "Cuando abrieron la caja, ya era tarde."'),
-        ("Visceral horror imperative", '"No mires atrás. Eso fue lo último que escuchó antes de..." o "Nunca debió haber bajado a ese sótano."'),
-        ("Lost-civilization epic", '"Un imperio entero desapareció en una sola noche, y nadie sabe por qué."'),
-        ("Adventure quest twist", '"Buscaban un tesoro perdido. Lo que hallaron fue mucho peor."'),
-        ("Forbidden tale", '"Esta historia se contaba en susurros, y los que la conocían solían desaparecer."'),
-        ("Last words testimony", '"Las últimas palabras que escribió antes de desaparecer fueron estas..."'),
+        ("Cosmic anomaly opener", '"Detectaron una señal que nadie pudo explicar." o "Lo que vieron en aquella imagen del Webb no debería existir."'),
+        ("In medias res observation", '"Eran las 3:14 AM cuando el detector se disparó." o "Aquella noche en el observatorio, el cielo cambió y ningún protocolo lo había previsto."'),
+        ("Time-warp cosmic opener", '"Era el año 1977, y un mensaje del cosmos llegó a la Tierra." o "Hace 13.800 millones de años, en menos de un segundo, todo cambió."'),
+        ("Sole-survivor probe cliffhanger", '"De las dos sondas que cruzaron el sistema solar, solo una sigue enviando señales. Esta es su historia."'),
+        ("Disturbing discovery", '"Lo que detectaron en el centro de la galaxia no debería estar ahí." o "Cuando analizaron los datos, ya era demasiado tarde para fingir que no existía."'),
+        ("Visceral cosmic imperative", '"No apartes la mirada del cielo. Eso fue lo último que dijo antes de..." o "Nunca debieron apuntar el telescopio a esa coordenada."'),
+        ("Lost-signal epic", '"Una señal entera apareció una sola vez, duró 72 segundos, y nunca volvió a escucharse."'),
+        ("Cosmic quest twist", '"Buscaban un planeta habitable. Lo que encontraron fue infinitamente más extraño."'),
+        ("Forbidden observation", '"Estos datos se discutían en susurros entre astrónomos, y quienes los publicaban se quedaban sin financiación."'),
+        ("Last transmission testimony", '"Las últimas palabras que envió la sonda antes de cruzar el horizonte fueron estas..."'),
     ],
 }
 
 
-# Civilization era anchors. When the video subject matches keywords from one
-# of these civilizations, `era_brief` is injected into the LLM image-prompt
-# task so the generated scene descriptions stay period-accurate (clothing,
-# architecture, weapons, objects). Local LLMs (Ollama) drift into modern
-# visuals on abstract script lines without this anchor. Keyword matching is
-# accent-insensitive and case-insensitive; edit freely.
-CIVILIZATIONS: dict = {
-    "roman": {
-        "name": "Ancient Rome",
-        "era_brief": "togas, tunics, leather sandals, bronze cuirass and plumed helmets, gladius swords, marble columns, Roman arches, mosaics, terracotta tile roofs, oil lamps, papyrus scrolls, Roman Forum, amphitheaters, chariots, laurel wreaths",
+# Science / cosmos domain anchors. When the video subject matches keywords
+# from one of these domains, `visual_brief` is injected into the LLM
+# image-prompt task so the generated scene descriptions stay astronomically
+# faithful (palettes, scales, instruments). Local LLMs drift into sci-fi
+# fantasy art ("alien planets", "neon nebulae") on abstract script lines
+# without this anchor. Keyword matching is accent-insensitive and
+# case-insensitive; edit freely.
+SCIENCE_DOMAINS: dict = {
+    "cosmology": {
+        "name": "Cosmology and the early Universe",
+        "visual_brief": "deep dark cosmic backgrounds with subtle filaments of luminous gas, the cosmic microwave background as a mottled radio map, primordial plasma glow in deep red and orange, cosmic web of galaxies in faint threads, stretched spacetime grids, JWST/Planck-mission aesthetic, true-to-data scales (no fictional landmarks)",
         "keywords": [
-            "roma", "romano", "romana", "romanos", "rome", "roman",
-            "cesar", "augusto", "neron", "caligula", "trajano", "adriano",
-            "constantino", "imperio romano", "republica romana",
-            "pompeya", "pompeii", "coliseo", "colosseum", "vestal",
-            "legion romana", "gladiador", "centurion",
+            "big bang", "bigbang", "cosmologia", "cosmology", "cosmologico", "cosmological",
+            "inflacion cosmica", "cosmic inflation",
+            "fondo cosmico", "fondo de microondas", "cosmic microwave background", "cmb",
+            "expansion del universo", "expansion of the universe",
+            "universo primitivo", "early universe", "primordial",
+            "materia oscura", "dark matter", "energia oscura", "dark energy",
+            "constante de hubble", "hubble constant",
+            "wmap", "planck satellite",
+            "multiverso", "multiverse",
         ],
     },
-    "greek": {
-        "name": "Ancient Greece",
-        "era_brief": "white chitons and peplos robes, leather sandals, bronze hoplite armor, round shields, long spears, Doric and Ionic marble columns, white marble temples, agoras, amphorae, olive trees, oil lamps, laurel wreaths",
+    "black_holes": {
+        "name": "Black holes and event horizons",
+        "visual_brief": "supermassive black hole accretion disks with bright orange-red ionized gas, Doppler-bright jets, gravitational lensing distorting background star fields, photon spheres, Event Horizon Telescope-style ring imagery, Hawking radiation as faint blue-violet haze near the horizon, true-to-physics light bending",
         "keywords": [
-            "grecia", "griego", "griega", "griegos", "greece", "greek",
-            "atenas", "athens", "esparta", "sparta",
-            "alejandro magno", "alexander the great",
-            "platon", "plato", "aristoteles", "aristotle", "socrates",
-            "homero", "homer", "iliada", "iliad", "odisea", "odyssey",
-            "olimpo", "olympus", "partenon", "parthenon",
-            "helenico", "hellenic", "minoico", "micenico", "mycenaean",
+            "agujero negro", "agujeros negros", "black hole", "black holes",
+            "supermasivo", "supermassive",
+            "ton 618", "ton-618",
+            "sagitario a", "sgr a", "sagittarius a",
+            "m87", "messier 87",
+            "horizonte de sucesos", "event horizon",
+            "disco de acrecion", "accretion disk",
+            "agujero negro estelar", "stellar black hole",
+            "agujero negro intermedio", "intermediate-mass black hole",
+            "radiacion de hawking", "hawking radiation",
+            "singularidad", "singularity",
+            "fusion de agujeros negros", "black hole merger",
+            "ehrt", "event horizon telescope",
         ],
     },
-    "chinese": {
-        "name": "Imperial China",
-        "era_brief": "hanfu silk robes, dynasty-specific headwear, jade ornaments, calligraphy ink brushes and bamboo scrolls, pagodas, curved tile roofs, painted screens, paper lanterns, dragons, tea ceremony objects, Forbidden City courtyards",
+    "stars": {
+        "name": "Stars, supernovae and stellar remnants",
+        "visual_brief": "stellar nurseries inside molecular clouds with pillars of dust illuminated from within, blue and red supergiants, Wolf-Rayet stars with violent winds, supernova shockwaves expanding through interstellar medium, neutron stars with intense magnetic field lines, pulsar beam jets, magnetar surface auroras, true-to-spectrum colors (O-stars deep blue, M-stars deep red)",
         "keywords": [
-            "china", "chino", "chinos", "chinese",
-            "qin shi huang", "shi huang",
-            "dinastia han", "dinastia tang", "dinastia song",
-            "dinastia ming", "dinastia qing",
-            "confucio", "confucius", "lao tse", "laozi",
-            "muralla china", "great wall",
-            "ciudad prohibida", "forbidden city",
-            "guerreros de terracota", "terracotta army",
+            "estrella", "estrellas", "star", "stars",
+            "supernova", "supernovae",
+            "hipernova", "hypernova",
+            "nova",
+            "estrella de neutrones", "neutron star",
+            "pulsar", "pulsares", "pulsars",
+            "magnetar", "magnetares", "magnetars",
+            "enana blanca", "white dwarf",
+            "enana roja", "red dwarf",
+            "supergigante", "supergiant", "hipergigante", "hypergiant",
+            "betelgeuse", "antares", "vy canis majoris", "vy cma", "uy scuti",
+            "wolf rayet", "wolf-rayet",
+            "secuencia principal", "main sequence",
+            "sn 1987a", "sn1054", "cangrejo", "crab nebula",
         ],
     },
-    "japanese": {
-        "name": "Feudal Japan",
-        "era_brief": "kimonos and yukatas, samurai armor (do, kabuto helmet), katana and wakizashi, tatami mats, shoji paper screens, pagodas, torii gates, paper lanterns, cherry blossoms, Edo-period streets, Mt. Fuji backdrop",
+    "galaxies": {
+        "name": "Galaxies and large-scale structure",
+        "visual_brief": "spiral galaxies with bright pink star-forming regions and dark dust lanes, elliptical galaxies as smooth golden ellipsoids, galactic mergers with tidal tails, galaxy clusters with hot gas glowing in X-ray purple, cosmic filaments connecting clusters, the Milky Way edge-on with the galactic bulge and dust band, Hubble/JWST deep field aesthetic",
         "keywords": [
-            "japon", "japan", "japones", "japonesa", "japanese",
-            "samurai", "shogun", "ronin", "ninja",
-            "kioto", "kyoto", "tokio", "tokyo",
-            "periodo edo", "edo period", "meiji", "kamikaze",
-            "bushido", "geisha", "yamato",
+            "galaxia", "galaxias", "galaxy", "galaxies",
+            "via lactea", "milky way",
+            "andromeda", "m31", "messier 31",
+            "triangulo", "m33",
+            "galaxia espiral", "spiral galaxy",
+            "galaxia eliptica", "elliptical galaxy",
+            "galaxia enana", "dwarf galaxy",
+            "cumulo galactico", "galaxy cluster",
+            "supercumulo", "supercluster",
+            "brazo galactico", "galactic arm",
+            "fusion galactica", "galaxy merger",
+            "agn", "nucleo galactico activo", "active galactic nucleus",
+            "quasar", "quasares", "quasars", "blazar",
+            "campo profundo", "deep field", "hubble deep field", "hudf",
         ],
     },
-    "indian": {
-        "name": "Ancient and Medieval India",
-        "era_brief": "saris, dhotis, turbans, ornate gold jewelry, Mughal architecture with onion domes and pointed arches, intricately carved Hindu temples, elephants with howdahs, palace marble jali screens, sitar and tabla instruments",
+    "exoplanets": {
+        "name": "Exoplanets and exoplanetary systems",
+        "visual_brief": "rocky exoplanets with realistic terrain illuminated by their host star, gas giants with banded atmospheres, lava worlds with night-side glow, ocean worlds with thick atmospheres, transit silhouettes against host stars, light-curve dips visualized, comparisons next to Earth or Jupiter for scale, Kepler/TESS/JWST mission aesthetic, NO fictional alien creatures, NO neon fantasy worlds",
         "keywords": [
-            "india", "indio", "indios", "indian", "hindu", "hinduismo",
-            "buda", "buddha", "ashoka", "mauryan", "maurya",
-            "mughal", "mogol", "rajput",
-            "ganges", "varanasi", "delhi", "taj mahal",
+            "exoplaneta", "exoplanetas", "exoplanet", "exoplanets",
+            "kepler", "kepler-186f", "kepler-22b", "kepler 452b",
+            "trappist", "trappist-1",
+            "proxima centauri b", "proxima b",
+            "tess", "transit",
+            "zona habitable", "habitable zone",
+            "supertierra", "super-earth",
+            "mini neptuno", "mini-neptune",
+            "joviano caliente", "hot jupiter",
+            "mundo oceanico", "ocean world",
+            "biosfera", "biosignature",
+            "planeta solitario", "rogue planet",
         ],
     },
-    "mayan": {
-        "name": "Maya civilization",
-        "era_brief": "cotton huipiles and loincloths, jade ornaments, jaguar pelt and feather headdresses, stepped stone pyramids, glyph-carved stelae, ball courts, jungle backdrops, codex screenfold books, obsidian-edged weapons, feathered serpent motifs",
+    "solar_system": {
+        "name": "The Solar System",
+        "visual_brief": "the Sun with prominences and granulated photosphere, Mercury cratered, Venus with dense yellow clouds, Mars rust-orange surface with polar caps, Jupiter with the Great Red Spot, Saturn with sharp ring shadows, Uranus pale cyan, Neptune deep blue, planetary moons with realistic surfaces (Europa fractured ice, Titan orange haze, Io volcanoes), comets with ion and dust tails — Cassini/Voyager/Juno/New Horizons photography aesthetic",
         "keywords": [
-            "maya", "mayas", "mayan",
-            "tikal", "chichen", "palenque", "yucatan",
-            "kukulkan", "popol vuh", "bonampak", "copan",
+            "sistema solar", "solar system",
+            "sol", "sun",
+            "mercurio", "mercury",
+            "venus",
+            "tierra", "earth",
+            "luna", "moon",
+            "marte", "mars",
+            "jupiter",
+            "saturno", "saturn",
+            "urano", "uranus",
+            "neptuno", "neptune",
+            "pluton", "pluto",
+            "ceres", "vesta", "eris", "haumea", "makemake",
+            "europa", "ganimedes", "ganymede", "io", "calisto", "callisto",
+            "titan", "encelado", "enceladus", "miranda", "triton",
+            "fobos", "phobos", "deimos",
+            "cinturon de asteroides", "asteroid belt",
+            "cinturon de kuiper", "kuiper belt",
+            "nube de oort", "oort cloud",
+            "mancha roja", "great red spot",
         ],
     },
-    "inca": {
-        "name": "Inca Empire",
-        "era_brief": "wool tunics with geometric patterns, llama-wool sandals, gold ornaments, terraced mountain cities, polygonal stone block masonry without mortar, llamas, quipu knot strings, Andes mountain backdrops, Machu Picchu-style citadels",
+    "space_exploration": {
+        "name": "Space exploration and missions",
+        "visual_brief": "real spacecraft and instruments rendered with engineering accuracy: Voyager probes, Hubble Space Telescope, James Webb Space Telescope (gold hexagonal mirrors), the ISS, Apollo lunar modules, Mars rovers (Curiosity, Perseverance), SpaceX Falcon 9 / Starship, gold-foil thermal blankets, antenna dishes, solar panels, true astronaut suits (white EMU or orange ACES), Earth limb in the background, NO fictional starships, NO fantasy uniforms",
         "keywords": [
-            "inca", "incas", "incaico", "incaica",
-            "machu picchu", "cuzco", "cusco",
-            "atahualpa", "manco capac",
-            "imperio incaico", "imperio inca", "andino", "andean", "quechua",
+            "voyager", "voyager 1", "voyager 2",
+            "hubble", "telescopio espacial hubble", "hubble space telescope", "hst",
+            "james webb", "jwst", "telescopio james webb",
+            "iss", "estacion espacial internacional", "international space station",
+            "apolo", "apollo", "apollo 11", "apollo 13",
+            "saturno v", "saturn v",
+            "transbordador espacial", "space shuttle",
+            "spacex", "falcon 9", "falcon heavy", "starship", "dragon capsule",
+            "nasa", "esa", "agencia espacial europea", "roscosmos", "isro",
+            "curiosity", "perseverance", "ingenuity",
+            "rover marciano", "mars rover",
+            "new horizons", "cassini", "juno", "galileo",
+            "soyuz",
+            "astronauta", "astronaut", "cosmonauta", "cosmonaut",
+            "spacewalk", "actividad extravehicular", "eva",
+            "artemis", "artemisa",
+            "lanzamiento", "launch", "cohete", "rocket",
         ],
     },
-    "egyptian": {
-        "name": "Ancient Egypt",
-        "era_brief": "linen schenti kilts, white pleated dresses, kohl eye makeup, gold collars, nemes royal headdresses, pyramids, sphinxes, hieroglyph-covered temple walls, papyrus scrolls, oil lamps, Nile river, palm trees, falcon and scarab motifs, lotus columns",
+    "quantum_physics": {
+        "name": "Quantum physics and particle physics",
+        "visual_brief": "abstract but physically faithful imagery: probability clouds around atoms, double-slit interference patterns, particle accelerator interiors (LHC blue ring tunnels), bubble-chamber tracks, Feynman-diagram-inspired event sketches, glowing detector cross-sections (CMS, ATLAS), entangled-photon beams as paired light streaks, NO fictional 'quantum portals', NO sci-fi VFX",
         "keywords": [
-            "egipto", "egipcio", "egipcia", "egipcios", "egypt", "egyptian",
-            "faraon", "pharaoh", "tutankamon", "tutankhamun",
-            "cleopatra", "ramses", "ramesses", "nefertiti",
-            "nilo", "nile",
-            "piramide", "piramides", "pyramid", "pyramids",
-            "esfinge", "sphinx",
-            "horus", "anubis", "osiris", "isis", "luxor", "tebas", "thebes",
+            "fisica cuantica", "quantum physics", "mecanica cuantica", "quantum mechanics",
+            "particula", "particulas", "particle", "particles",
+            "foton", "photon", "electron", "proton", "neutron",
+            "quark", "leptón", "lepton", "bosón", "boson",
+            "boson de higgs", "higgs boson",
+            "modelo estandar", "standard model",
+            "antimateria", "antimatter",
+            "entrelazamiento", "entanglement", "entrelazamiento cuantico", "quantum entanglement",
+            "superposicion", "superposition",
+            "principio de incertidumbre", "uncertainty principle", "heisenberg",
+            "schrodinger", "schrödinger",
+            "lhc", "gran colisionador", "large hadron collider",
+            "cern", "fermilab",
+            "atlas detector", "cms detector",
+            "neutrino", "neutrinos",
+            "decoherencia", "decoherence",
+            "computacion cuantica", "quantum computing",
         ],
     },
-    "renaissance": {
-        "name": "Italian Renaissance",
-        "era_brief": "doublet jackets, hose, fur-trimmed gowns, ruffed collars, velvet caps, Florence and Venice cityscapes, domed cathedrals, marble palaces, frescoed walls, easel paintings on wooden panels, quill pens, oil lanterns, gondolas, period nobility and merchants",
+    "relativity": {
+        "name": "Relativity and gravitational physics",
+        "visual_brief": "warped spacetime grids around massive objects, gravitational lensing rings (Einstein rings), gravitational waves as ripples on a fabric of spacetime, LIGO laser interferometer arms, time-dilation comparisons (clocks at different speeds/altitudes), light cones, neutron-star and black-hole mergers radiating waves, true GR (general relativity) imagery — no flat metaphors",
         "keywords": [
-            "renacimiento", "renaissance",
-            "leonardo da vinci", "miguel angel", "michelangelo",
-            "rafael sanzio", "raphael", "botticelli",
-            "florencia", "florence", "medici", "savonarola", "vasari", "donatello",
-            "humanismo", "humanism",
+            "relatividad", "relativity",
+            "relatividad general", "general relativity",
+            "relatividad especial", "special relativity",
+            "einstein", "albert einstein",
+            "espacio tiempo", "espacio-tiempo", "spacetime",
+            "dilatacion del tiempo", "time dilation",
+            "ondas gravitacionales", "gravitational waves",
+            "ligo", "virgo interferometer",
+            "lente gravitacional", "gravitational lensing",
+            "anillo de einstein", "einstein ring",
+            "principio de equivalencia", "equivalence principle",
+            "agujero de gusano", "wormhole",
+            "paradoja de los gemelos", "twin paradox",
         ],
     },
-    "viking": {
-        "name": "Viking Age Norse",
-        "era_brief": "wool tunics with brooches, fur cloaks, leather boots, conical iron helmets (no horns), round wooden shields, longswords and battle-axes, longhouses with thatched roofs, longships (drakkar), runestones, fjord landscapes",
+    "astrobiology": {
+        "name": "Astrobiology and the search for life",
+        "visual_brief": "extremophile habitats (deep-sea hydrothermal vents, Mars-analog deserts, ice-covered subsurface oceans), realistic microbial mats, biosignature spectra overlaid on planetary discs, Drake-equation visualizations, SETI radio dishes scanning the sky, ocean plumes on Enceladus and Europa, Titan methane lakes, NO little green men, NO fictional aliens",
         "keywords": [
-            "vikingo", "vikinga", "vikingos", "viking", "vikings",
-            "ragnar", "odin", "thor", "valhalla",
-            "nordico", "norse", "runa", "runas", "drakkar",
-        ],
-    },
-    "aztec": {
-        "name": "Aztec Empire",
-        "era_brief": "maxtlatl loincloths, quechquemitl shawls, feathered headdresses, jaguar and eagle warrior costumes, obsidian-edged macuahuitl swords, stepped temple pyramids, painted codices, chinampa floating gardens, Lake Texcoco, Tenochtitlan plaza",
-        "keywords": [
-            "azteca", "aztecas", "aztec",
-            "tenochtitlan", "moctezuma", "montezuma",
-            "mexica", "huitzilopochtli", "quetzalcoatl",
-            "codice azteca", "codice borgia",
-        ],
-    },
-    "persian": {
-        "name": "Ancient Persia",
-        "era_brief": "long flowing robes with embroidered borders, conical Persian caps, ornate jewelry, recurve bows, scale armor, lamassu winged-bull statues, columns with double-bull capitals, Persepolis bas-reliefs, formal gardens, cypress trees",
-        "keywords": [
-            "persia", "persa", "persas", "persian",
-            "ciro el grande", "cyrus the great", "dario", "darius",
-            "jerjes", "xerxes",
-            "aquemenida", "achaemenid", "sasanida", "sassanid",
-            "zoroastro", "zoroaster", "persepolis",
-        ],
-    },
-    "mesopotamian": {
-        "name": "Ancient Mesopotamia",
-        "era_brief": "long woolen kaunakes tunics with fringed hems, conical hats, beards in tight curls, ziggurats, mud-brick walls, cuneiform clay tablets, cylinder seals, recurve bows, cedar gates, palm trees, Tigris and Euphrates river scenes",
-        "keywords": [
-            "mesopotamia", "mesopotamico",
-            "sumerio", "sumeria", "sumerian",
-            "babilonia", "babylon", "babilonico",
-            "asirio", "asiria", "assyrian",
-            "hammurabi", "gilgamesh",
-            "uruk", "ninive", "nineveh",
-            "ziggurat", "cuneiforme", "cuneiform",
-        ],
-    },
-    "ottoman": {
-        "name": "Ottoman Empire",
-        "era_brief": "long caftans and turbans, embroidered sashes, scimitar swords, Janissary uniforms with tall caps, domed mosques with slender minarets, Iznik blue-tile interiors, palace gardens, Topkapi-style architecture, bazaars, ornate carpets",
-        "keywords": [
-            "otomano", "otomana", "otomanos", "ottoman",
-            "imperio otomano", "ottoman empire",
-            "suleiman", "suleyman", "soliman el magnifico",
-            "mehmed ii", "topkapi",
-            "sultan otomano",
-        ],
-    },
-    "byzantine": {
-        "name": "Byzantine Empire",
-        "era_brief": "long ornate robes with gold embroidery, jeweled imperial crowns, mosaic-decorated church interiors, Hagia Sophia-style domes, gold-leaf icons, marble columns, candle-lit halls, Constantinople walls",
-        "keywords": [
-            "bizantino", "bizantina", "bizantinos", "byzantine",
-            "imperio bizantino", "byzantine empire",
-            "justiniano", "justinian", "teodora bizantina",
-            "santa sofia", "hagia sophia",
-            "constantinopla", "constantinople",
-            "iconoclasia", "iconoclasm",
-        ],
-    },
-    "medieval": {
-        "name": "Medieval Europe",
-        "era_brief": "tunics, hose, hooded cloaks, chainmail and plate armor, kite shields, longswords, knightly heraldry on tabards, stone castles with battlements, gothic cathedrals, peasant villages with thatched roofs, illuminated manuscripts, monks in robes",
-        "keywords": [
-            "medieval", "edad media", "middle ages",
-            "feudalismo", "feudal",
-            "caballero medieval", "knight templar",
-            "cruzada", "cruzadas", "crusade", "crusades",
-            "templario", "templarios", "templar",
-            "carlomagno", "charlemagne",
-            "ricardo corazon de leon", "saladino", "saladin",
-            "peste negra", "black death",
+            "astrobiologia", "astrobiology",
+            "vida extraterrestre", "extraterrestrial life", "alien life",
+            "extremofilo", "extremofilos", "extremophile", "extremophiles",
+            "biofirma", "biofirmas", "biosignature", "biosignatures",
+            "ecuacion de drake", "drake equation",
+            "paradoja de fermi", "fermi paradox",
+            "seti",
+            "panspermia",
+            "abiogenesis",
+            "origen de la vida", "origin of life",
+            "agua liquida", "liquid water",
+            "metano", "methane",
+            "geiseres de encelado", "enceladus geysers", "enceladus plumes",
+            "oceano subterraneo", "subsurface ocean",
         ],
     },
 }
 
 
 # Fallback visual style for Shorts when the channel has no `image_style` configured.
-# Long videos still use civilization detection + per-channel style; this only kicks
+# Long videos still use domain detection + per-channel style; this only kicks
 # in for shorts that would otherwise have no style at all.
 SHORTS_FIXED_STYLE: str = (
-    "ultra-realistic cinematic photograph, shot on full-frame digital cinema camera "
-    "with 50mm prime lens at f/2.0, shallow depth of field with creamy natural bokeh, "
-    "rich filmic color grading reminiscent of Kodak Vision3 500T, "
-    "naturalistic motivated lighting (soft key + ambient fill), subtle volumetric haze, "
-    "true-to-life skin tones with visible pores and micro-detail, accurate anatomy, "
-    "five fingers per hand, sharp eyes with realistic catchlights, period-accurate "
-    "clothing and props rendered as real physical materials (wool, linen, bronze, leather, stone), "
-    "documentary realism, fine 35mm film grain, no stylization, no illustration, "
-    "no cartoon, no anime, no painterly look, no plastic skin"
+    "ultra-realistic astrophotography aesthetic, James Webb / Hubble / Cassini / Voyager "
+    "deep-space imagery quality, true-to-data nebula colors and cosmic dust textures, "
+    "physically faithful gas, plasma and ice rendering, sharp star fields with diffraction spikes, "
+    "accurate galaxy structures and rotation, photographic realism in instruments and probes "
+    "(gold thermal foil, antenna dishes, solar panels), real EMU/ACES astronaut suits, "
+    "scientifically grounded planetary surfaces and atmospheres, "
+    "no fictional planets or moons, no neon fantasy nebulae, no sci-fi spaceship art, "
+    "no anime, no cartoon, no painterly stylization, no chromatic-aberration filters"
 )
 
 
@@ -378,6 +417,15 @@ class YouTube:
         """
         self._account_uuid: str = account_uuid
         self._account_nickname: str = account_nickname
+        # Fall back to the global default in config.json when the per-account
+        # profile is missing — re-uploads from old accounts left this empty.
+        if not fp_profile_path or not str(fp_profile_path).strip():
+            try:
+                fp_profile_path = get_firefox_profile_path() or ""
+            except Exception:
+                fp_profile_path = ""
+            if fp_profile_path:
+                info(f" => Using global firefox_profile from config.json: {fp_profile_path}")
         self._fp_profile_path: str = fp_profile_path
         self._niche: str = niche
         self._language: str = language
@@ -814,8 +862,8 @@ OUTPUT FORMAT (strict, exactly one line):
 VERDICT: <FITS or OFFNICHE> — <short reason in 5-15 words>
 
 Example outputs:
-VERDICT: FITS — clearly a real historical curiosity about ancient Egypt
-VERDICT: OFFNICHE — fictional storytelling, not a real subject in the niche
+VERDICT: FITS — clearly a real astronomical phenomenon within the niche
+VERDICT: OFFNICHE — fictional sci-fi storytelling, not a real scientific subject
 
 Return ONLY that single line. No other text."""
                 )
@@ -855,11 +903,12 @@ CRITICAL RULE: The topic MUST be directly and unmistakably part of the niche abo
 
 The topic must be ONE concrete story, event, mystery, fact, person, place, or phenomenon — NOT a broad category, NOT a fictional scenario.
 
-BAD example: "Curiosidades del antiguo Egipto" (too broad, leads to random facts)
-BAD example: "El hombre que camina hacia atrás" (fictional story, not a real subject)
-GOOD example: "La maldición de la tumba de Tutankamón: ¿qué les pasó a los arqueólogos?" (one specific real story)
-GOOD example: "¿Por qué los romanos usaban orina para lavar la ropa?" (one specific real curiosity)
-GOOD example: "El día que un asteroide exterminó al 75% de la vida en la Tierra" (one specific real event)
+BAD example: "Curiosidades del universo" (too broad, leads to random facts)
+BAD example: "Un planeta donde todo es al revés" (fictional fantasy, not a real subject)
+GOOD example: "TON 618: el agujero negro 66 mil millones de veces más masivo que el Sol" (one specific real cosmic object)
+GOOD example: "¿Por qué Voyager 1 sigue enviando datos 47 años después de su lanzamiento?" (one specific real mission detail)
+GOOD example: "El día que LIGO detectó dos agujeros negros fusionándose por primera vez" (one specific real event)
+GOOD example: "Encélado: la luna de Saturno que escupe agua líquida al espacio" (one specific real phenomenon)
 
 SELF-CHECK BEFORE ANSWERING: Re-read the niche "{self.niche}". If your topic is not unmistakably part of THAT niche, discard it and pick a different one.
 
@@ -1029,7 +1078,7 @@ ABSOLUTE RULES:
 - FORBIDDEN BASIC/CLICH\u00c9 WORDS (do NOT use ANY of these, in any form, accented or not, singular or plural): "secreto", "secretos", "misterio", "misterios", "sab\u00edas que", "sabias que", "no vas a creer", "te volar\u00e1 la cabeza", "incre\u00edble", "impactante", "te sorprender\u00e1", "nadie sabe", "nadie te cont\u00f3", "lo que no te dicen", "esto te dejar\u00e1", "loco", "alucinante", "flipante", "shocking", "you won't believe", "mind-blowing", "secret", "mystery", "did you know". These are overused, obvious, and lazy clickbait \u2014 NEVER use them.
 - FORBIDDEN: "X curiosidades", "X secretos", "X razones", "X cosas", "X datos", "X hechos", "Top X", "X que..." or ANY list-form promise (in {self.language} or English) UNLESS the script actually presents that exact number of distinct enumerated items. If the script tells ONE continuous story, the title MUST NOT promise a list.
 - INSTEAD, write SPECIFIC, CONCRETE titles that name the actual subject, action, place, person, date, or fact from the script. The hook should come from the specificity of the content itself \u2014 a surprising name, a striking number, an unexpected place, a precise event \u2014 NOT from generic hype words.
-- Good title patterns: a concrete claim ("Roma cay\u00f3 por culpa de un acueducto"), a specific question about the subject ("\u00bfPor qu\u00e9 los samur\u00e1is se afeitaban la frente?"), a precise paradox or contrast, a striking historical fact, a named character + specific action.
+- Good title patterns: a concrete claim ("Voyager 1 cruz\u00f3 la heliopausa y nadie estaba listo"), a specific question about the subject ("\u00bfPor qu\u00e9 la luz no escapa de un agujero negro?"), a precise paradox or contrast, a striking astronomical fact, a named cosmic object/mission/scientist + specific phenomenon.
 - The title can be intriguing, but it must be HONEST and SPECIFIC \u2014 every promise must be delivered by the script, and the intrigue must come from real content, not empty hype words.
 - Optionally include 1-2 relevant hashtags at the end (only if they fit naturally).
 - Under 80 characters.
@@ -1055,6 +1104,28 @@ ABSOLUTE RULES:
                 + "Your script tells ONE continuous story \u2014 the title must reflect that. "
                 + "Do NOT use any number followed by a noun ('5 curiosidades', '3 razones', etc.). "
                 + "Do NOT use 'Top N' or 'N que...'. Try again."
+            )
+            retry = re.sub(r'^[\"\'\u201c\u201d\u2018\u2019]+|[\"\'\u201c\u201d\u2018\u2019]+$', '', retry.strip()).strip()
+            if retry and not self._title_promises_list(retry):
+                title = retry
+
+        # Reject overused clickbait words ("secreto", "sab\u00edas que", "incre\u00edble"\u2026)
+        # \u2014 the LLM keeps defaulting to them even though the prompt forbids
+        # them. Try up to 2 regenerations with progressively stronger language.
+        cliche_attempts = 0
+        while self._title_uses_cliche(title) and cliche_attempts < 2:
+            cliche_attempts += 1
+            warning(
+                f"Title uses banned clickbait words: '{title}' \u2014 regenerating ({cliche_attempts}/2)."
+            )
+            retry = self.generate_response(
+                title_prompt
+                + "\n\nPREVIOUS ATTEMPT WAS REJECTED for using forbidden basic/clich\u00e9 words "
+                + "(such as 'secreto', 'misterio', 'sab\u00edas que', 'incre\u00edble', 'no vas a creer', "
+                + "'nadie sabe', 'impactante', 'alucinante', 'shocking', 'mystery', 'secret', etc). "
+                + "These are LAZY hooks. Write a SPECIFIC, CONCRETE title that names the actual "
+                + "subject, action, place, person, date, or fact from the script. The hook must "
+                + "come from real content, not generic hype. Try again."
             )
             retry = re.sub(r'^[\"\'\u201c\u201d\u2018\u2019]+|[\"\'\u201c\u201d\u2018\u2019]+$', '', retry.strip()).strip()
             if retry and not self._title_promises_list(retry):
@@ -1111,51 +1182,51 @@ ABSOLUTE RULES:
             sections_text += f"\nSECTION {i+1}: \"{sec}\"\n"
 
         if image_mode == "photos":
-            prompt = f"""Generate exactly {n_prompts} short SEARCH QUERIES to find REAL historical/documentary/educational images for a video about: {self.subject}
+            prompt = f"""Generate exactly {n_prompts} short SEARCH QUERIES to find REAL scientific / astronomical / space-mission images for a video about: {self.subject}
 
-These queries will be searched against Wikidata + Wikipedia + Wikimedia Commons + Europeana + Met Museum + Library of Congress. Tailor the wording for those archives.
+These queries will be searched against NASA Image Library + ESA archive + Wikipedia + Wikimedia Commons + Hubble/JWST/Cassini/Voyager photo archives. Tailor the wording for those archives.
 
 ABSOLUTE RULE — SUBJECT ANCHORING:
-Every single query MUST contain the canonical English name of the subject (or, if the section is about a specific historical event/place/person tied to the subject, that proper noun directly — e.g. "Domus Aurea" or "Great Fire of Rome" for a Nero video). NEVER write a query that is just a generic concept ("ancient Roman temple", "imperial banquet", "Roman senator portrait") — the search will return random unrelated results. The subject's proper noun, or a proper noun strictly identifying the same exact thing/event/person, MUST be present in every query.
+Every single query MUST contain the canonical English name of the subject (or, if the section is about a specific cosmic object/mission/scientist tied to the subject, that proper noun directly — e.g. "Pillars of Creation" or "Cassini Saturn flyby" for a Saturn-rings video). NEVER write a query that is just a generic concept ("a black hole image", "a galaxy in space", "a star exploding") — the search will return random unrelated results. The subject's proper noun, or a proper noun strictly identifying the same exact thing/object/event/mission, MUST be present in every query.
 
-CRITICAL — use the CANONICAL ENGLISH NAME (the form Wikipedia uses for the article title) for every person, place, event, or work:
-  - WRONG: "Hipparchus the astronomer of stars"   →   RIGHT: "Hipparchus of Nicaea"
-  - WRONG: "Marco Aurelio philosophy book"        →   RIGHT: "Marcus Aurelius" or "Meditations Marcus Aurelius"
-  - WRONG: "Roman vestal virgin priestess fire"   →   RIGHT: "Vestal Virgins" or "Temple of Vesta"
-  - WRONG: "Alexander conquering Persians battle" →   RIGHT: "Battle of Gaugamela"
-  - WRONG: "ancient Egypt cat goddess statue"     →   RIGHT: "Bastet" (specific deity, not a generic "Egyptian cat goddess")
-A Wikipedia article should EXIST for the subject of every query.
+CRITICAL — use the CANONICAL ENGLISH NAME (the form Wikipedia / NASA uses) for every cosmic object, mission, or scientist:
+  - WRONG: "huge black hole in big galaxy"        →   RIGHT: "TON 618" or "Sagittarius A* black hole"
+  - WRONG: "NASA probe leaving solar system"      →   RIGHT: "Voyager 1 heliopause" or "Voyager 1 Pale Blue Dot"
+  - WRONG: "telescope picture of nebula"          →   RIGHT: "JWST Carina Nebula" or "Pillars of Creation Hubble"
+  - WRONG: "moon with water on Saturn"            →   RIGHT: "Enceladus plumes Cassini"
+  - WRONG: "Einstein theory of light bending"     →   RIGHT: "Eddington 1919 eclipse" or "Einstein ring SDSS"
+A Wikipedia / NASA article should EXIST for the subject of every query.
 
-ANCHORING EXAMPLES — for a video about "Nero":
-  - GOOD: "Nero portrait bust", "Nero Domus Aurea", "Great Fire of Rome 64 AD", "Nero Capitoline Museum", "Nero coin denarius", "Tacitus Annals Nero".
-  - BAD:  "Roman emperor toga", "ancient Rome fire", "imperial palace Rome", "Roman bust marble". (None mentions Nero or a proper noun strictly tied to him.)
+ANCHORING EXAMPLES — for a video about "TON 618":
+  - GOOD: "TON 618 quasar", "TON 618 size comparison", "supermassive black hole accretion disk simulation", "EHT M87 black hole", "quasar host galaxy Hubble", "TON 618 hyperluminous quasar".
+  - BAD:  "huge black hole space", "biggest object universe", "supermassive accretion disk", "galaxy with black hole". (None names TON 618 or a proper noun strictly tied to it.)
 
 The script has been divided into {n_prompts} sections. Each query must match its section:
 {sections_text}
 INSTRUCTIONS:
 - Query 1 finds a photo for SECTION 1, Query 2 for SECTION 2, etc.
-- Each query MUST contain at least one PROPER NOUN strictly identifying the subject (e.g. "Nero", "Domus Aurea", "Great Fire of Rome").
+- Each query MUST contain at least one PROPER NOUN strictly identifying the subject (e.g. "TON 618", "Voyager 1", "JWST Carina Nebula", "Cassini Enceladus").
 - 3 to 7 words per query. No full sentences.
 - FORBIDDEN words: cinematic, dramatic, lighting, 8K, 4K, photorealistic, HD, macro, bokeh, shot, close-up, aerial, style, composition, render, aesthetic. No adjectives describing mood or camera.
-- FORBIDDEN as the ONLY proper noun in a query: civilization adjectives ("Roman", "Greek", "Egyptian"), generic roles ("emperor", "king", "soldier"), or generic places ("city", "temple"). They may appear, but never alone.
+- FORBIDDEN as the ONLY proper noun in a query: generic body types ("black hole", "galaxy", "nebula", "star"), generic missions ("NASA", "ESA", "telescope"), or generic places ("space", "universe", "sky"). They may appear, but never alone.
 - Write in English (most archives index in English).
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         else:
-            # Detect civilization for SOFT context only — used as setting hints,
-            # never as a per-prompt armor/clothing checklist (the previous
-            # implementation forced "lorica segmentata + plumed helmet + gladius"
-            # into every prompt, which produced 6 near-identical "Roman in armor"
-            # portraits and lost the actual story being told).
-            civ_info = self._get_civilization_info()
+            # Detect science domain for SOFT context only — used as setting
+            # hints, never as a per-prompt astronomy checklist. The point is
+            # to keep the model from drifting into sci-fi fantasy or random
+            # generic stock imagery on abstract script lines, NOT to force
+            # "JWST + nebula + galaxy" into every single prompt.
+            domain_info = self._get_domain_info()
             era_context = ""
-            if civ_info:
+            if domain_info:
                 era_context = (
-                    f"\n\nERA CONTEXT (background only, not a checklist): the story is set in "
-                    f"**{civ_info['name']}**. Period clothing, architecture and props should appear "
-                    f"NATURALLY in scenes because the story happens in that time — never enumerate "
-                    f"armor pieces as a list. AVOID: modern uniforms, firearms, cars, electricity, "
-                    f"industrial-era clothing or architecture."
+                    f"\n\nDOMAIN CONTEXT (background only, not a checklist): the story belongs to "
+                    f"**{domain_info['name']}**. Real instruments, palettes, scales and phenomena from "
+                    f"this domain should appear NATURALLY where the script demands them — never enumerate "
+                    f"every instrument or phenomenon as a list. AVOID: fictional planets, sci-fi spaceships, "
+                    f"alien creatures, neon fantasy nebulae, hand-wavy 'energy portals'."
                 )
 
             video_title = (self.metadata or {}).get("title", "") if hasattr(self, "metadata") else ""
@@ -1178,31 +1249,32 @@ FULL SCRIPT (read it whole — do NOT slice mechanically; pick the {n_prompts} m
 
 WORK IN TWO STEPS (internally — only the final JSON is returned):
 
-STEP 1 — Pick {n_prompts} NARRATIVELY DISTINCT BEATS from the script. A beat is a single concrete action: "X does Y in place Z with object W". Each beat must:
-  • have a different VERB from the others ("plows", "addresses senators", "lays down the fasces", "walks home through wheat fields", "wraps a toga at dawn")
-  • happen in a different SETTING (a farm, a senate floor, a battlefield, a road, a doorway)
-  • feature a different NARRATIVE OBJECT — a CONCRETE thing that belongs to THIS specific story (a wooden plow, the fasces lictoriae, a wax tablet, oxen, a senator's purple-bordered toga, a humble farmhouse door). NOT generic period props.
+STEP 1 — Pick {n_prompts} VISUALLY DISTINCT BEATS from the script. A beat is a single concrete moment: "[cosmic object/instrument/scientist] does/shows Y in setting Z with feature W". Each beat must:
+  • have a different VERB or visual focus ("collapses into", "engulfs", "drifts past", "illuminates", "warps", "ignites", "transmits", "scans")
+  • happen in a different SETTING (the surface of a star, the inside of a nebula, an observatory dome, the deck of a probe, the event horizon, an exoplanet system, a particle detector tunnel)
+  • feature a different CONCRETE FEATURE specific to THIS story (the photon ring of a black hole, a JWST mirror reflection, the plasma jet of a quasar, a spacecraft's gold thermal foil, a pulsar's magnetic-field lines, a planet's transit silhouette). NOT generic "space backgrounds".
   • {n_prompts} beats = {n_prompts} different visual moments. If two of your beats look similar, replace one.
 
 STEP 2 — Write each prompt applying ALL these rules:
 
-1. ENGLISH ONLY. Even if the script is in Spanish, every prompt is written in English. Translate proper nouns naturally ("Platón" → "Plato", "Cincinato" → "Cincinnatus"). No Spanish words anywhere.
+1. ENGLISH ONLY. Even if the script is in Spanish, every prompt is written in English. Translate proper nouns naturally ("Vía Láctea" → "Milky Way", "agujero negro" → "black hole"). No Spanish words anywhere.
 
-2. ACTION FIRST. Open with a verb-driven action. The first 6-8 words of the prompt MUST contain the main verb. Examples of correct openings:
-     "Cincinnatus grips the wooden handle of a heavy plow…"
-     "A Roman senator runs across a wheat field at dawn…"
-     "Cincinnatus lays the bundled fasces on the Senate steps…"
-   FORBIDDEN openings (these produce static portraits): "[Name] standing in armor", "[Name] portrait", "A Roman dictator looking intently", "[Name] in golden cuirass in front of marble columns".
+2. ACTION / PHENOMENON FIRST. Open with a verb-driven phrase or a vivid present-tense state. The first 6-8 words MUST contain the main visual action. Examples of correct openings:
+     "Light bends around the photon ring of TON 618…"
+     "Voyager 1 drifts past Saturn's rings at sunset…"
+     "Plasma jets erupt from the poles of a magnetar…"
+     "JWST's hexagonal mirror reflects the Carina Nebula…"
+   FORBIDDEN openings (these produce static, generic stock images): "A black hole in space", "A galaxy portrait", "A telescope pointing at the sky", "A planet floating".
 
-3. NARRATIVE OBJECT — MANDATORY. Every prompt names at least one CONCRETE OBJECT specific to THIS story (the plow, the oxen, the fasces, the wax tablet, the modest farmhouse, the senator's scroll). Without a story-specific object, the image becomes a generic period scene and you've failed the task.
+3. CONCRETE FEATURE — MANDATORY. Every prompt names at least one CONCRETE FEATURE specific to THIS story (the accretion disk, the photon ring, the plasma jet, the gold thermal foil, the JWST hex mirror, the Voyager golden record, the LIGO laser arm, the Cassini RTG). Without a story-specific feature, the image becomes a generic space wallpaper and you've failed the task.
 
-4. UNIQUE BEATS. The {n_prompts} prompts must NEVER show the same scene twice. If you find yourself writing two prompts where the same character is doing roughly the same thing in the same place, scrap one and pick a different beat from the script.
+4. UNIQUE BEATS. The {n_prompts} prompts must NEVER show the same scene twice. If two prompts both render "a black hole with an accretion disk" or "a galaxy seen from outside", scrap one and pick a different beat from the script (the inside of an event horizon, a jet from the poles, a star being shredded by tidal forces, etc.).
 
-5. NAMED PERSON ANCHOR. When a real person appears, give a SHORT physical anchor (one phrase, max ~10 words) so the generator renders the right person — but the action and the object are the FOCUS, not the costume. Example: "Cincinnatus, a sun-weathered older Roman with grey stubble, in a simple work tunic, grips the plow handle…" — the anchor is the brief clause, the action is the rest.
+5. NAMED OBJECT / MISSION ANCHOR. When the script names a real cosmic object, mission, or scientist, give a SHORT factual anchor (one phrase, max ~10 words) so the generator renders the right thing. Examples: "TON 618, a hyperluminous quasar 18.2 billion light-years away…", "Voyager 1, with its gold-covered record and dish antenna…", "JWST, the segmented gold-mirror infrared telescope at L2…". The anchor is brief; the action and feature are the focus.
 
-6. ERA AS BACKGROUND. Period clothing/architecture appears NATURALLY in the scene because the story happens then. NEVER write a checklist like "wearing lorica segmentata, plumed Galea helmet, holding a gladius sword" — that's the failure mode we are explicitly avoiding. One or two natural era cues per prompt is enough.
+6. SCALE & PHYSICS AS BACKGROUND. Real cosmic scales/instruments/palettes appear NATURALLY because the story is about them. NEVER write a checklist like "with stars, nebulae, planets, galaxies, and aurora". One or two natural domain cues per prompt is enough.
 
-7. NO ART-STYLE WORDS. Describe scenes only. NEVER write: "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art", "watercolor", "sketch". The visual style is added downstream.
+7. NO ART-STYLE WORDS. Describe scenes only. NEVER write: "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "watercolor", "sketch", "comic", "pixel art".
 
 8. NO CAMERA JARGON. NEVER write: "cinematic", "photograph", "camera", "shot", "lens", "close-up", "4K", "8K", "HD", "render", "bokeh", "macro", "aerial".
 
@@ -1210,17 +1282,17 @@ STEP 2 — Write each prompt applying ALL these rules:
 
 10. LENGTH. 35-60 English words per prompt.
 
-CONCRETE EXAMPLES (assume the video is about Cincinnatus, who left his farm to be dictator of Rome and returned 15 days later):
+CONCRETE EXAMPLES (assume the video is about TON 618, the supermassive black hole 66 billion times the mass of the Sun):
 
-   GOOD ✓ "Cincinnatus grips the wooden handle of a heavy plow behind two yoked oxen at dawn, bare-chested, sweat on his shoulders, freshly turned soil in long furrows, his sandals caked in dark earth, a low farmhouse on the rise behind."
-   GOOD ✓ "Two Roman senators in red-bordered togas hurry up a dirt path between olive trees, scrolls clutched against their chests, urgency on their faces, a small Latin farm and grazing oxen visible at the top of the rise."
-   GOOD ✓ "Cincinnatus lays the bundled fasces lictoriae and a folded purple cloak on the marble steps of the Senate, his back already half-turned toward the door, senators around him stunned with hands raised, slanted afternoon sun across the floor."
-   GOOD ✓ "Cincinnatus walks back down a worn stone road toward his small farm at golden hour, his plow visible in the distant field, two oxen lowing, a modest farmhouse silhouetted against the sunset, his shadow long behind him."
+   GOOD ✓ "Light bends around the photon ring of TON 618, an orange-white accretion disk swirling at relativistic speeds, gravitationally lensed background galaxies smeared into arcs, deep cosmic blackness beyond, the faint glow of distant quasars sprinkling the field."
+   GOOD ✓ "Twin plasma jets shoot from the poles of TON 618, blue-white synchrotron radiation streaming for thousands of light-years, slicing through a host galaxy of dim red stars and dust lanes, the hyperluminous quasar core blazing at the center."
+   GOOD ✓ "A doomed star spirals into the accretion disk of TON 618, stretched into a glowing tidal stream of plasma, its envelope shredded by gravity, sparks of X-ray flares lighting up the disk's inner edge against pitch-black space."
+   GOOD ✓ "A scale comparison floats in front of TON 618's event horizon: the entire orbit of Neptune fits inside it, the Sun shrunk to a pinprick speck beside the colossal silhouette, dim background stars warped by gravitational lensing."
 
-   BAD ✗ "Cincinnatus in golden Roman cuirass and red cloak standing in front of marble columns." (no verb, no narrative object, generic dictator portrait — exact failure mode)
-   BAD ✗ "A Roman general wearing lorica segmentata, plumed Galea helmet, holding a gladius sword in the Forum, dramatic side lighting." (armor checklist instead of story; no action specific to the script)
-   BAD ✗ "Roman senators in togas in the Senate." (no specific moment, no story-specific object, no named person)
-   BAD ✗ "Cincinnatus portrait, weathered face, wearing senatorial toga, marble columns behind him." (forbidden opening — static portrait)
+   BAD ✗ "A big black hole in deep space with stars around it." (no verb, no concrete feature, generic wallpaper — exact failure mode)
+   BAD ✗ "A supermassive black hole with accretion disk, glowing brightly, with galaxies in the background." (checklist instead of story; no specific action or comparison)
+   BAD ✗ "Outer space with a black hole." (no specific moment, no story-specific feature, no named object)
+   BAD ✗ "TON 618 portrait, glowing in the void, with stars behind it." (forbidden opening — static stock image)
 
 Return ONLY a JSON array of {n_prompts} prompt strings, in chronological order following the script. No markdown, no explanation, no preamble. Just the array.
 
@@ -1280,12 +1352,12 @@ Example format:
             # "series" / "sequence" / "panels" — those words make Gemini /
             # Nano Banana 2 produce a stacked collage instead of one image.
             fallback_prompts = [
-                f"{self.subject}, the central subject in full view, period-accurate setting and clothing, single image",
-                f"{self.subject}, detail of the central object or person, period-accurate textures and materials, single image",
-                f"{self.subject}, panoramic view of the environment, period-accurate landscape and architecture, single image",
-                f"{self.subject}, the historical moment shown directly, period-accurate clothing and architecture, single image",
-                f"{self.subject}, several figures interacting in period-accurate context, single image",
-                f"{self.subject}, atmospheric historical moment with depth, period-accurate mood and palette, single image",
+                f"{self.subject}, the central cosmic subject in full view, scientifically accurate scale and palette, single image",
+                f"{self.subject}, close detail of the key feature, true-to-data textures and surface, single image",
+                f"{self.subject}, wide cosmic view of the surrounding region, faithful astronomical context, single image",
+                f"{self.subject}, the phenomenon shown directly with realistic physics, single image",
+                f"{self.subject}, the relevant instrument or spacecraft observing it, engineering-accurate detail, single image",
+                f"{self.subject}, atmospheric deep-space moment with depth, true-to-mission mood and palette, single image",
             ]
 
         if not image_prompts or not isinstance(image_prompts, list):
@@ -1318,29 +1390,34 @@ Example format:
                 if not prompts:
                     return "no prompts"
 
-                # 1. STATIC PORTRAIT — opens with "[Name] in/wearing/with [armor]"
-                #    or "A Roman/Greek/... [role] standing/looking/posing".
+                # 1. STATIC WALLPAPER — opens with generic stock framing like
+                #    "A black hole in space", "A galaxy with stars",
+                #    "A nebula floating", "A planet in the cosmos".
                 portrait_re = re.compile(
-                    r"^\s*(?:[A-ZÁÉÍÓÚÑ]\w+\s+(?:in|wearing|with|stands|stood|standing|posing|portrait)"
-                    r"|(?:A |An )?(?:Roman|Greek|Egyptian|Chinese|Japanese|Indian|Mayan|Inca|Aztec|Persian|"
-                    r"Mesopotamian|Ottoman|Byzantine|Medieval|Viking|Renaissance)\s+\w+\s+"
-                    r"(?:standing|posing|looking|stares?|stood))",
+                    r"^\s*(?:(?:A |An )?(?:black hole|galaxy|nebula|star|planet|moon|"
+                    r"asteroid|comet|telescope|cosmic|space|universe)\s+"
+                    r"(?:in|with|floating|drifting|sitting|surrounded|standing)"
+                    r"|(?:A |An )?(?:Cosmic|Space|Galactic|Stellar|Planetary)\s+\w+\s+"
+                    r"(?:scene|view|portrait|image|landscape))",
                     re.IGNORECASE,
                 )
                 portrait_count = sum(1 for p in prompts if portrait_re.search(p or ""))
                 if portrait_count >= max(2, len(prompts) // 2):
-                    return f"{portrait_count}/{len(prompts)} prompts open with a static portrait pattern"
+                    return f"{portrait_count}/{len(prompts)} prompts open with a generic cosmic-wallpaper pattern"
 
-                # 2. ARMOR-CHECKLIST — many prompts mention 3+ armor pieces.
-                armor_terms = {"cuirass", "helmet", "gladius", "lorica", "galea",
-                               "greaves", "breastplate", "spear", "sword", "shield",
-                               "armor", "armour", "scabbard", "vambrace"}
-                def _armor_hits(p: str) -> int:
+                # 2. CHECKLIST — many prompts pile up >= 3 generic cosmic
+                #    objects without a specific feature ("stars + nebula +
+                #    galaxy + planet + moon" generic-space-art mode).
+                generic_terms = {"stars", "nebula", "galaxy", "galaxies", "planet",
+                                 "planets", "moon", "moons", "asteroid", "asteroids",
+                                 "comet", "comets", "constellation", "constellations",
+                                 "cosmic dust", "cosmic background", "starfield"}
+                def _generic_hits(p: str) -> int:
                     low = (p or "").lower()
-                    return sum(1 for t in armor_terms if t in low)
-                heavy_armor = sum(1 for p in prompts if _armor_hits(p) >= 3)
-                if heavy_armor >= max(2, len(prompts) // 2):
-                    return f"{heavy_armor}/{len(prompts)} prompts read as armor checklists"
+                    return sum(1 for t in generic_terms if t in low)
+                heavy_generic = sum(1 for p in prompts if _generic_hits(p) >= 4)
+                if heavy_generic >= max(2, len(prompts) // 2):
+                    return f"{heavy_generic}/{len(prompts)} prompts read as generic-cosmos checklists"
 
                 # 3. LEXICAL DUPLICATION — many prompts share their first 5 words.
                 first5 = [" ".join((p or "").lower().split()[:5]) for p in prompts]
@@ -1828,7 +1905,7 @@ Example format:
         will average between the two and produce neither.
         """
         clean_prompt = self._sanitize_image_prompt(prompt).rstrip(', .')
-        civ_info = self._get_civilization_info()
+        domain_info = self._get_domain_info()
         custom_style = (self._image_style or "").strip()
 
         # Guard against placeholder / garbage image_style values like "1", "x",
@@ -1855,16 +1932,16 @@ Example format:
 
         if custom_style:
             # Style anchored at front for maximum weight, then scene, then a
-            # neutral era clause, then style repeated at the end as reminder.
+            # neutral domain clause, then style repeated at the end as reminder.
             short_style = custom_style if len(custom_style) <= 200 else custom_style[:200].rsplit(",", 1)[0]
             parts.append(f"ART STYLE — render the entire image in this style: {custom_style}")
             parts.append(clean_prompt)
-            if civ_info and civ_info.get("era_brief"):
+            if domain_info and domain_info.get("visual_brief"):
                 parts.append(
-                    f"Era context — the scene is set in {civ_info['name']}. "
-                    f"Include era-appropriate items in the composition (clothing, architecture, weapons, "
-                    f"objects from this list, drawn in the art style above): {civ_info['era_brief']}. "
-                    f"No modern uniforms, no firearms, no industrial-era objects."
+                    f"Domain context — the scene belongs to {domain_info['name']}. "
+                    f"Include scientifically faithful elements when relevant (instruments, scales, palettes, "
+                    f"phenomena from this list, drawn in the art style above): {domain_info['visual_brief']}. "
+                    f"No fictional planets, no neon fantasy nebulae, no sci-fi spaceships."
                 )
             parts.append(
                 f"FINAL REMINDER — keep the entire image in the art style described above ({short_style}). "
@@ -1873,12 +1950,11 @@ Example format:
             )
         else:
             parts.append(clean_prompt)
-            if civ_info and civ_info.get("era_brief"):
+            if domain_info and domain_info.get("visual_brief"):
                 parts.append(
-                    f"Setting: {civ_info['name']}. "
-                    f"Period-accurate visual anchors that MUST appear when relevant — {civ_info['era_brief']}. "
-                    f"Any clothing, armor, weapons, architecture and objects strictly from this era only. "
-                    f"No modern military uniforms, no industrial-era clothing, no anachronistic items."
+                    f"Domain: {domain_info['name']}. "
+                    f"Astronomically and physically faithful visual anchors that MUST appear when relevant — {domain_info['visual_brief']}. "
+                    f"Real instruments, scales, palettes and phenomena only — no fictional bodies, no fantasy art."
                 )
             parts.append(self.DEFAULT_BASE_STYLE)
 
@@ -1887,15 +1963,13 @@ Example format:
         # cap, so this leaves headroom while preventing prompt explosion.
         return combined[:1500]
 
-    def _niche_is_historical(self) -> bool:
+    def _niche_is_scientific(self) -> bool:
         """
-        True only if the channel niche explicitly references history, antiquity,
-        mythology, archaeology, an empire, or a medieval/ancient setting.
-        Used to gate civilization detection — modern-narrative channels
-        (drama, suspense, fitness, tech, etc.) should never have ancient-era
-        visual anchors injected because of an incidental "Platón" mention in
-        the script. Note: matches ``\\bhistoria\\b`` as a whole word so it
-        does NOT trigger on "Historias" (Spanish for "stories").
+        True only if the channel niche explicitly references science, the
+        universe, space, astronomy, astrophysics, cosmology, physics, or a
+        related scientific domain. Used to gate science-domain detection —
+        non-science channels should never have astronomy anchors injected
+        because of an incidental "agujero negro" mention in the script.
         """
         import unicodedata, re
 
@@ -1909,38 +1983,45 @@ Example format:
         )
 
         word_kw = (
-            r"historia|historica|historico|historicas|historicos"
-            r"|history|historical"
-            r"|antigua|antiguo|antiguas|antiguos|ancient|antiquity"
-            r"|medieval|medievales|medievo"
-            r"|imperio|imperios|empire|empires"
+            r"ciencia|cientifico|cientifica|cientificos|cientificas"
+            r"|science|scientific"
+            r"|universo|universe|cosmos|cosmico|cosmica|cosmic"
+            r"|espacio|space|espacial|spatial"
+            r"|astronomia|astronomy|astronomico|astronomica"
+            r"|astrofisica|astrophysics|astrofisico"
+            r"|fisica|physics|fisico"
+            r"|cosmologia|cosmology|cosmologico"
+            r"|relatividad|relativity"
+            r"|cuantica|quantum"
+            r"|astrobiologia|astrobiology"
         )
         if re.search(rf"\b(?:{word_kw})\b", norm):
             return True
 
-        substr_kw = ("civilizacion", "arqueolog", "mitolog", "mythology", "archaeology")
+        substr_kw = (
+            "astron", "astrof", "cosmolog", "cuantic", "exoplaneta",
+            "agujero negro", "galaxia", "nasa", "esa",
+        )
         return any(s in norm for s in substr_kw)
 
-    def _detect_civilization(self) -> str:
+    def _detect_science_domain(self) -> str:
         """
-        Match the topic + script against CIVILIZATIONS keyword lists and return
-        the winning civ key (or "" if none). Matching is accent- and
-        case-insensitive; highest keyword-hit count wins. Subject keywords
-        weigh 3x because the title is a stronger signal than the body. Cached
-        per (subject, script) pair.
+        Match the topic + script against SCIENCE_DOMAINS keyword lists and
+        return the winning domain key (or "" if none). Matching is accent-
+        and case-insensitive; highest keyword-hit count wins. Subject
+        keywords weigh 3x because the title is a stronger signal than the
+        body. Cached per (subject, script) pair.
 
         Looking at the script too matters because abstract titles like "El
-        código de honor más extremo" don't carry civ keywords, but the body
-        of the script will mention Sparta, hoplites, etc.
+        objeto más extremo del cosmos" don't carry domain keywords, but the
+        body of the script will mention TON 618, accretion disk, etc.
 
-        Gated on ``_niche_is_historical()``: channels whose niche is not about
-        history (e.g. modern-drama "Impacto Stories") never trigger civ
-        detection, even if the LLM happens to drop a "Platón" quote in the
-        script.
+        Gated on ``_niche_is_scientific()``: channels whose niche is not
+        about science never trigger domain detection.
         """
         import unicodedata
 
-        if not self._niche_is_historical():
+        if not self._niche_is_scientific():
             return ""
 
         subject = (getattr(self, "subject", "") or "").strip()
@@ -1949,8 +2030,8 @@ Example format:
             return ""
 
         cache_key = (subject, len(script))
-        if getattr(self, "_civ_cache_key", None) == cache_key:
-            return getattr(self, "_civ_key_cached", "") or ""
+        if getattr(self, "_domain_cache_key", None) == cache_key:
+            return getattr(self, "_domain_key_cached", "") or ""
 
         def _norm(s: str) -> str:
             s = s.lower()
@@ -1960,11 +2041,11 @@ Example format:
             )
 
         norm_subject = _norm(subject)
-        norm_script = _norm(script[:4000])  # cap so huge scripts don't dominate
+        norm_script = _norm(script[:4000])
 
-        best_civ = ""
+        best_domain = ""
         best_score = 0
-        for civ, data in CIVILIZATIONS.items():
+        for domain, data in SCIENCE_DOMAINS.items():
             score = 0
             for kw in data["keywords"]:
                 k = _norm(kw)
@@ -1974,28 +2055,29 @@ Example format:
                     score += 1
             if score > best_score:
                 best_score = score
-                best_civ = civ
+                best_domain = domain
 
-        self._civ_cache_key = cache_key
-        self._civ_key_cached = best_civ
-        if best_civ and get_verbose():
-            info(f" => Detected civilization: {best_civ} (score {best_score})")
-        return best_civ
+        self._domain_cache_key = cache_key
+        self._domain_key_cached = best_domain
+        if best_domain and get_verbose():
+            info(f" => Detected science domain: {best_domain} (score {best_score})")
+        return best_domain
 
-    def _get_civilization_info(self) -> dict:
+    def _get_domain_info(self) -> dict:
         """
-        Returns {"key": ..., "name": ..., "era_brief": ...} for the civilization
-        detected from self.subject, or {} if none. Used by `generate_prompts` /
-        `generate_long_prompts` to anchor every scene to the correct historical era.
+        Returns {"key": ..., "name": ..., "visual_brief": ...} for the science
+        domain detected from self.subject, or {} if none. Used by
+        ``generate_prompts`` / ``generate_long_prompts`` to anchor every scene
+        to the correct astronomical/physical context.
         """
-        civ_key = self._detect_civilization()
-        if not civ_key:
+        domain_key = self._detect_science_domain()
+        if not domain_key:
             return {}
-        data = CIVILIZATIONS.get(civ_key, {})
+        data = SCIENCE_DOMAINS.get(domain_key, {})
         return {
-            "key": civ_key,
-            "name": data.get("name", civ_key.title()),
-            "era_brief": data.get("era_brief", ""),
+            "key": domain_key,
+            "name": data.get("name", domain_key.title()),
+            "visual_brief": data.get("visual_brief", ""),
         }
 
     def _resolve_voice(self, voice: str) -> str:
@@ -4575,50 +4657,51 @@ Return ONLY the JSON. No markdown, no explanation."""
             f'\nSECTION {i+1}: "{sec}"\n' for i, sec in enumerate(sections)
         )
 
-        # Era anchor — names the historical period inside the prompt so the LLM
-        # doesn't drift into modern visuals on abstract script lines.
-        civ_info = self._get_civilization_info()
+        # Domain anchor — names the science domain inside the prompt so the LLM
+        # doesn't drift into sci-fi fantasy on abstract script lines.
+        domain_info = self._get_domain_info()
         era_clause = ""
-        if civ_info:
+        if domain_info:
             era_clause = (
-                f"\n\n=== HISTORICAL ERA — NON-NEGOTIABLE ===\n"
-                f"This documentary is set in: **{civ_info['name']}**.\n"
-                f"Period visual anchors: {civ_info['era_brief']}.\n"
-                f"FORBIDDEN: modern military uniforms, industrial-era clothing, firearms, tanks, cars, "
-                f"modern architecture, electricity, anachronistic objects of any kind.\n"
-                f"REQUIRED in every prompt with a person: at least 2 specific period clothing/armor terms "
-                f"from the era markers above.\n"
+                f"\n\n=== SCIENCE DOMAIN — NON-NEGOTIABLE ===\n"
+                f"This documentary belongs to: **{domain_info['name']}**.\n"
+                f"Faithful visual anchors: {domain_info['visual_brief']}.\n"
+                f"FORBIDDEN: fictional planets/moons, alien creatures, fantasy nebulae with neon colors, "
+                f"sci-fi spaceships unrelated to real missions, anachronistic instruments (no Hubble photo "
+                f"of a 1960s mission, no JWST in 1990), 'energy portals', glowing magic effects.\n"
+                f"REQUIRED in every prompt with an object: at least one factually correct feature "
+                f"from the domain markers above (real instrument, real palette, real scale, real phenomenon).\n"
                 f"=========================================="
             )
 
-        prompt = f"""Task: write {n_prompts} image prompts for a long-form documentary about "{self.subject}".{era_clause}
+        prompt = f"""Task: write {n_prompts} image prompts for a long-form science documentary about "{self.subject}".{era_clause}
 
-You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section talks about "the senators debating in the curia at noon", the image is exactly that.
+You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the cosmic objects, instruments, scientists or phenomena that section describes. Do not invent new events. Do not summarize abstractly. If the section talks about "Voyager 1 entering the heliopause in 2012", the image is exactly that.
 
 ABSOLUTE RULES (every prompt):
-1. ENGLISH ONLY — NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns naturally (e.g. "Platón" -> "Plato", "Alejandro Magno" -> "Alexander the Great"). NO Spanish words anywhere in the output.
-2. SCENE FIDELITY. Open with a concrete action (subject + verb) drawn from the section text. Whatever the section is talking about, that is what the image shows.
-3. NAMED CHARACTER IDENTITY. When the script names a real historical person, do NOT just write their name — describe them physically (age, hair, beard, build) so the image generator can render the correct person. Examples: Plato -> "an old Greek philosopher with a long white beard, balding head, in white himation"; Caesar -> "a stern middle-aged Roman general, short curly hair, clean-shaven, in purple-bordered toga"; Cleopatra -> "young Egyptian queen, dark kohl-lined eyes, straight black hair with gold beaded braids, white linen pleated dress, gold collar". The physical description MUST appear every time they're shown.
-4. PERIOD ACCURACY — STRICT. {("Era is **" + civ_info['name'] + "**. Every prompt with a person MUST name at least 2 specific period clothing/armor items from this era. No modern military uniforms, no firearms, no industrial-era visuals — ever. ") if civ_info else ""}If a person appears, describe their clothing exactly as it would be in the right historical period/place/culture (fabric, cut, color, footwear, headwear). Same for architecture, weapons, tools, transport, and 2-3 supporting objects. If the section names a real person, place or event, use that proper noun.
-5. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing — but never the level of realism.
-6. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later — your job is content only.
+1. ENGLISH ONLY — NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns naturally (e.g. "Vía Láctea" -> "Milky Way", "agujero negro" -> "black hole", "Encélado" -> "Enceladus"). NO Spanish words anywhere in the output.
+2. SCENE FIDELITY. Open with a concrete action or vivid present-tense state drawn from the section text. Whatever the section is talking about, that is what the image shows.
+3. NAMED OBJECT IDENTITY. When the script names a real cosmic object, mission or scientist, do NOT just drop the name — describe the object factually so the image generator renders the right thing. Examples: Voyager 1 -> "the Voyager 1 probe with its 3.7-meter dish antenna, gold thermal blankets, RTG power module, and the Golden Record bolted to its side"; JWST -> "the James Webb Space Telescope with its 18 hexagonal gold-coated beryllium mirror segments and tennis-court-sized silver sunshield"; TON 618 -> "TON 618, a hyperluminous quasar whose accretion disk shines brighter than 140 trillion Suns". The factual description MUST appear every time the object is shown.
+4. PHYSICAL ACCURACY — STRICT. {("Domain is **" + domain_info['name'] + "**. Every prompt MUST include at least one factually correct feature (real instrument, palette, scale, or phenomenon) from this domain. No fictional planets, no alien lifeforms, no neon fantasy nebulae, no sci-fi spaceships unrelated to real missions — ever. ") if domain_info else ""}If a probe, telescope, rover or astronaut appears, describe it exactly as it really looks (materials, color, shape, instruments). Same for cosmic bodies (true colors, true scales, true rotation), instruments (real arrays, real domes, real detectors), and 2-3 supporting elements. If the section names a real object, mission or place, use that proper noun.
+5. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME physical universe — same realism level, same scientific accuracy. No image should feel like it comes from a different show. Vary scale, vantage point, framing — but never the level of realism.
+6. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "watercolor", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later — your job is content only.
 7. LENGTH. 40-70 English words per prompt. No camera or lens jargon.
 
 Examples of GOOD scene-only prompts:
-- "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his Thirteenth Legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces."
-- "A samurai in dark lacquered do armor stands mid-strike with his katana in a wooden dojo, paper shoji screens around him, morning light falling on tatami mats, wooden practice swords stacked against a beam, sweat on his temple."
-- "A Byzantine sailor on a dromon warship leans over a bronze siphon and ignites a jet of Greek fire toward an enemy galley, flames arcing over the dark sea, gold-trimmed sails, oars mid-stroke, the walls of Constantinople in the distance."
+- "Voyager 1 drifts past the rings of Saturn at twilight, its 3.7-meter parabolic dish angled back toward Earth, gold thermal foil glinting against the deep black of space, the planet's banded cloudtops glowing in pale gold below, the Golden Record visible on its bus."
+- "A magnetar's magnetic field lines erupt as twisting lavender arcs reaching outward thousands of kilometers, while the dense neutron-star surface glows hot orange beneath, X-ray flares lighting up cooling iron plates of the crust, a halo of charged particles spiraling above the poles."
+- "Inside the LHC tunnel at CERN, the deep blue cryostat segments curve into the distance, frost on the helium pipes, technicians in white coats standing beside a pillar, the toroidal ATLAS detector cross-section glowing faintly with simulated particle tracks projected on its inner walls."
 
 Examples of BAD prompts (DO NOT WRITE THESE):
-- "An ancient Roman scene." (too vague, no action)
-- "Stylized cartoon of Caesar crossing a river." (forbidden art-style word)
-- "A historical illustration of a samurai." (forbidden art-style word, no action)
-- "Symbolic image of Byzantine power." (no concrete moment)
+- "A cosmic scene with stars." (too vague, no action, no specific object)
+- "Stylized cartoon of a black hole." (forbidden art-style word)
+- "A scientific illustration of a galaxy." (forbidden art-style word, no specific object)
+- "Symbolic image of the universe expanding." (no concrete moment, abstract metaphor)
 
 {sections_text}
-Forbidden words (art-style / camera jargon): cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, ukiyo-e, sketch.
+Forbidden words (art-style / camera jargon): cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, sketch.
 Forbidden words (multi-image triggers — these make image generators output collages instead of one image): series, sequence, scenes (plural), panels, panel, storyboard, comic strip, montage, collage, grid, split screen, frames, multiple, diptych, triptych, before-and-after, side by side.
-Also forbidden unless the topic itself demands it: cosmic/space/nebula imagery, microscopic diagrams, futuristic/sci-fi visuals.
+Also forbidden unless the topic itself demands it: medieval/ancient-civilization imagery, fantasy creatures, magic/sorcery effects, cartoon stylization.
 
 Return ONLY a JSON array of {n_prompts} strings (one prompt per section, in order). Example format:
 ["scene 1 description...", "scene 2 description...", ...]
