@@ -357,7 +357,7 @@ def main() -> int:
             print(f"   (skip — no youtube_handle configured for this channel; "
                   f"set it in webapp or pass --handle @yourchannel)", flush=True)
             continue
-        print(f"   handle: {handle}")
+        print(f"   handle: {handle}", flush=True)
 
         longs_by_id, shorts_by_id = fetch_channel(handle)
         all_pub = {**longs_by_id, **shorts_by_id}
@@ -377,18 +377,18 @@ def main() -> int:
         total_m += m
         print(f"   -> reclassif: {r}, pruned: {p}, added: {a}, meta: {m}", flush=True)
 
-    print(f"\n--- summary ---")
-    print(f"  reclassified: {total_r}")
-    print(f"  pruned:       {total_p}")
-    print(f"  added:        {total_a}")
-    print(f"  meta refresh: {total_m}")
+    print(f"\n--- summary ---", flush=True)
+    print(f"  reclassified: {total_r}", flush=True)
+    print(f"  pruned:       {total_p}", flush=True)
+    print(f"  added:        {total_a}", flush=True)
+    print(f"  meta refresh: {total_m}", flush=True)
     if args.apply and (total_r or total_p or total_a or total_m):
         save_cache(data)
-        print(f"  wrote: {CACHE_PATH}")
+        print(f"  wrote: {CACHE_PATH}", flush=True)
     elif total_r or total_p or total_a or total_m:
-        print("  (dry-run -- pass --apply to persist)")
+        print("  (dry-run -- pass --apply to persist)", flush=True)
     else:
-        print("  nothing to do")
+        print("  nothing to do", flush=True)
     return 0
 
 

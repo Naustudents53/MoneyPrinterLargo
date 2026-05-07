@@ -1128,19 +1128,19 @@ STEP 1 — Pick {n_prompts} NARRATIVELY DISTINCT BEATS from the script. A beat i
 
 STEP 2 — Write each prompt applying ALL these rules:
 
-1. ENGLISH ONLY. Even if the script is in Spanish, every prompt is written in English. Translate proper nouns naturally ("Platón" → "Plato", "Cincinato" → "Cincinnatus"). No Spanish words anywhere.
+1. ENGLISH ONLY. Even if the script is in Spanish, every prompt is written in English. Translate proper nouns naturally ("Platón" → "Plato", "Alejandro" → "Alexander"). No Spanish words anywhere.
 
 2. ACTION FIRST. Open with a verb-driven action. The first 6-8 words of the prompt MUST contain the main verb. Examples of correct openings:
-     "Cincinnatus grips the wooden handle of a heavy plow…"
-     "A Roman senator runs across a wheat field at dawn…"
-     "Cincinnatus lays the bundled fasces on the Senate steps…"
-   FORBIDDEN openings (these produce static portraits): "[Name] standing in armor", "[Name] portrait", "A Roman dictator looking intently", "[Name] in golden cuirass in front of marble columns".
+     "[subject] grips the wooden handle of a heavy plow…"
+     "A messenger runs across a wheat field at dawn…"
+     "[subject] lays the folded documents on the marble steps…"
+   FORBIDDEN openings (these produce static portraits): "[Name] standing in armor", "[Name] portrait", "A figure looking intently", "[Name] in golden cuirass in front of marble columns".
 
 3. NARRATIVE OBJECT — MANDATORY. Every prompt names at least one CONCRETE OBJECT specific to THIS story (the plow, the oxen, the fasces, the wax tablet, the modest farmhouse, the senator's scroll). Without a story-specific object, the image becomes a generic period scene and you've failed the task.
 
 4. UNIQUE BEATS. The {n_prompts} prompts must NEVER show the same scene twice. If you find yourself writing two prompts where the same character is doing roughly the same thing in the same place, scrap one and pick a different beat from the script.
 
-5. NAMED PERSON ANCHOR. When a real person appears, give a SHORT physical anchor (one phrase, max ~10 words) so the generator renders the right person — but the action and the object are the FOCUS, not the costume. Example: "Cincinnatus, a sun-weathered older Roman with grey stubble, in a simple work tunic, grips the plow handle…" — the anchor is the brief clause, the action is the rest.
+5. NAMED PERSON ANCHOR. When a real person appears, give a SHORT physical anchor (one phrase, max ~10 words) so the generator renders the right person — but the action and the object are the FOCUS, not the costume. Example: "[the protagonist], a sun-weathered older man with grey stubble, in a simple work tunic, grips the plow handle…" — the anchor is the brief clause, the action is the rest.
 
 6. ERA AS BACKGROUND. Period clothing/architecture appears NATURALLY in the scene because the story happens then. NEVER write a checklist like "wearing lorica segmentata, plumed Galea helmet, holding a gladius sword" — that's the failure mode we are explicitly avoiding. One or two natural era cues per prompt is enough.
 
@@ -1152,17 +1152,17 @@ STEP 2 — Write each prompt applying ALL these rules:
 
 10. LENGTH. 35-60 English words per prompt.
 
-CONCRETE EXAMPLES (assume the video is about Cincinnatus, who left his farm to be dictator of Rome and returned 15 days later):
+STRUCTURAL EXAMPLES — these show the PATTERN only; the names and objects below are placeholders. Your actual prompts must use the real subject, objects, and setting from THIS video's script, not anything from these examples.
 
-   GOOD ✓ "Cincinnatus grips the wooden handle of a heavy plow behind two yoked oxen at dawn, bare-chested, sweat on his shoulders, freshly turned soil in long furrows, his sandals caked in dark earth, a low farmhouse on the rise behind."
-   GOOD ✓ "Two Roman senators in red-bordered togas hurry up a dirt path between olive trees, scrolls clutched against their chests, urgency on their faces, a small Latin farm and grazing oxen visible at the top of the rise."
-   GOOD ✓ "Cincinnatus lays the bundled fasces lictoriae and a folded purple cloak on the marble steps of the Senate, his back already half-turned toward the door, senators around him stunned with hands raised, slanted afternoon sun across the floor."
-   GOOD ✓ "Cincinnatus walks back down a worn stone road toward his small farm at golden hour, his plow visible in the distant field, two oxen lowing, a modest farmhouse silhouetted against the sunset, his shadow long behind him."
+   GOOD ✓ "[subject] grips the wooden handle of a heavy plow behind two yoked oxen at dawn, bare-chested, sweat on his shoulders, freshly turned soil in long furrows, his sandals caked in dark earth, a low farmhouse on the rise behind."
+   GOOD ✓ "Two officials in formal garments hurry up a dirt path between old trees, urgent documents clutched against their chests, a small dwelling and grazing animals visible at the top of the rise."
+   GOOD ✓ "[subject] lays the bundle of authority symbols and a folded ceremonial garment on the stone steps of the hall, his back already half-turned toward the door, bystanders around him stunned with hands raised, slanted afternoon sun across the floor."
+   GOOD ✓ "[subject] walks back down a worn road toward his home at golden hour, his tool visible in the distant field, a modest house silhouetted against the sunset, his shadow long behind him."
 
-   BAD ✗ "Cincinnatus in golden Roman cuirass and red cloak standing in front of marble columns." (no verb, no narrative object, generic dictator portrait — exact failure mode)
-   BAD ✗ "A Roman general wearing lorica segmentata, plumed Galea helmet, holding a gladius sword in the Forum, dramatic side lighting." (armor checklist instead of story; no action specific to the script)
-   BAD ✗ "Roman senators in togas in the Senate." (no specific moment, no story-specific object, no named person)
-   BAD ✗ "Cincinnatus portrait, weathered face, wearing senatorial toga, marble columns behind him." (forbidden opening — static portrait)
+   BAD ✗ "[subject] in elaborate armor standing in front of columns." (no verb, no narrative object, generic portrait — exact failure mode)
+   BAD ✗ "A warrior wearing full armor, holding a sword in the city square, dramatic side lighting." (costume checklist instead of story; no action specific to the script)
+   BAD ✗ "Officials in formal clothing in the meeting hall." (no specific moment, no story-specific object)
+   BAD ✗ "[subject] portrait, weathered face, wearing official robes, columns behind him." (forbidden opening — static portrait)
 
 Return ONLY a JSON array of {n_prompts} prompt strings, in chronological order following the script. No markdown, no explanation, no preamble. Just the array.
 
