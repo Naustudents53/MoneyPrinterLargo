@@ -5517,6 +5517,57 @@ No markdown. No explanation. Just the JSON array."""
 
         return channel_id
 
+    def _get_channel_id_safe(self) -> str:
+        """
+        Resolve the channel ID WITHOUT navigating the current tab.
+
+        Critical for long-video uploads: once the user has clicked "Done"
+        on the upload dialog, navigating the upload tab to studio.youtube.com
+        cancels the in-flight HTTP file transfer. This helper opens a
+        SEPARATE tab, reads the URL, then closes that tab and returns to
+        the original handle.
+
+        Falls back to the existing self.channel_id if the side tab cannot
+        be opened. Returns "" if everything fails.
+        """
+        driver = self.browser
+        if driver is None:
+            return getattr(self, "channel_id", "") or ""
+
+        original_handle = driver.current_window_handle
+        status_handle = None
+        try:
+            existing = set(driver.window_handles)
+            driver.execute_script("window.open('about:blank', '_blank');")
+            time.sleep(1)
+            new_handles = [h for h in driver.window_handles if h not in existing]
+            if not new_handles:
+                return getattr(self, "channel_id", "") or ""
+            status_handle = new_handles[0]
+            driver.switch_to.window(status_handle)
+            driver.get("https://studio.youtube.com")
+            time.sleep(3)
+            channel_id = driver.current_url.split("/")[-1]
+            if channel_id:
+                self.channel_id = channel_id
+                return channel_id
+            return getattr(self, "channel_id", "") or ""
+        except Exception as e:
+            warning(f"Safe channel_id resolve failed: {e}")
+            return getattr(self, "channel_id", "") or ""
+        finally:
+            try:
+                if status_handle and status_handle in driver.window_handles:
+                    driver.switch_to.window(status_handle)
+                    driver.close()
+            except Exception:
+                pass
+            try:
+                if original_handle in driver.window_handles:
+                    driver.switch_to.window(original_handle)
+            except Exception:
+                pass
+
     def _wait_for_listing_settled(
         self,
         driver,
@@ -5599,16 +5650,40 @@ No markdown. No explanation. Just the JSON array."""
         original_handle = driver.current_window_handle
         status_handle = None
         try:
-            existing = set(driver.window_handles)
-            driver.execute_script("window.open('about:blank', '_blank');")
-            time.sleep(1)
-            new_handles = [h for h in driver.window_handles if h not in existing]
+            # Retry opening the status tab a few times — window.open() can
+            # transiently fail while YouTube is busy parsing the just-uploaded
+            # file. We do NOT switch away from the upload tab during retries.
+            new_handles: List[str] = []
+            for open_attempt in range(1, 6):
+                existing = set(driver.window_handles)
+                try:
+                    driver.execute_script("window.open('about:blank', '_blank');")
+                except Exception as e:
+                    warning(f"\t=> window.open attempt {open_attempt}/5 failed: {e}")
+                time.sleep(2)
+                new_handles = [h for h in driver.window_handles if h not in existing]
+                if new_handles:
+                    break
+                warning(f"\t=> Status-tab open attempt {open_attempt}/5 produced no new handle; retrying...")
+
             if not new_handles:
-                warning("\t=> Could not open status-check tab; falling back to in-place wait.")
-                # Safer fallback: blind wait on the current page (don't navigate).
-                info(f"\t=> Sleeping {min(max_wait_s, 180)}s in place to let upload complete...")
-                time.sleep(min(max_wait_s, 180))
-                return True
+                # We genuinely couldn't open a side tab. DO NOT touch the
+                # upload tab — just sleep in place and return False so the
+                # caller knows the upload was not verified. Returning True
+                # here would make the caller try to resolve the URL on the
+                # upload tab, cancelling the upload mid-transfer.
+                warning(
+                    "\t=> Could not open status-check tab after 5 attempts. "
+                    "Will stay idle (upload tab untouched) and let the user "
+                    "verify manually in YouTube Studio."
+                )
+                # Long videos: wait the full requested window (capped to a
+                # generous 60 min so we don't sleep forever) so the upload
+                # has time to actually finish in the background.
+                idle_wait = min(max_wait_s, 3600)
+                info(f"\t=> Idle-waiting {idle_wait // 60} min in place — DO NOT navigate or close the upload tab.")
+                time.sleep(idle_wait)
+                return False
             status_handle = new_handles[0]
             driver.switch_to.window(status_handle)
 
@@ -6240,6 +6315,15 @@ No markdown. No explanation. Just the JSON array."""
 
             is_long_video = bool(getattr(self, "_is_long_video", False))
 
+            # Lock in the upload-tab handle the moment Done is clicked.
+            # From this point on, NOTHING is allowed to navigate, refresh,
+            # or close this tab until the upload + processing is verified
+            # done — doing so cancels the in-flight HTTP transfer.
+            try:
+                self._upload_tab_handle = driver.current_window_handle
+            except Exception:
+                self._upload_tab_handle = None
+
             # CRITICAL: persist the cache entry RIGHT NOW with a placeholder URL.
             # Even if Firefox crashes / network drops mid-upload, the title, description,
             # subject and date are saved so nothing is lost.
@@ -6266,7 +6350,12 @@ No markdown. No explanation. Just the JSON array."""
             # differences are the listing URL and the timeouts.
             if not getattr(self, "channel_id", None):
                 try:
-                    self.get_channel_id()
+                    if is_long_video:
+                        # NEVER navigate the upload tab during a long-video upload.
+                        # Resolve channel_id on a side tab instead.
+                        self._get_channel_id_safe()
+                    else:
+                        self.get_channel_id()
                 except Exception as e:
                     warning(f"Could not resolve channel_id before upload wait: {e}")
 
@@ -6305,7 +6394,18 @@ No markdown. No explanation. Just the JSON array."""
             url = None
 
             if is_long_video:
-                url = self._resolve_video_url_safe(driver, listing_tab) or None
+                # Only attempt URL resolution if the upload genuinely finished.
+                # If wait_for_listing_settled timed out or fell back, the upload
+                # may still be in flight — opening another tab is safe but
+                # adds noise. Skip silently and let the user verify manually.
+                if upload_finished:
+                    url = self._resolve_video_url_safe(driver, listing_tab) or None
+                else:
+                    warning(
+                        "\t=> Upload not confirmed within wait window. "
+                        "Skipping URL resolution; the upload tab is left untouched "
+                        "so any in-flight transfer can complete."
+                    )
             else:
                 # Shorts: original behavior (navigate the same tab — Firefox is
                 # about to be closed anyway when the short upload is confirmed).
@@ -6368,10 +6468,15 @@ No markdown. No explanation. Just the JSON array."""
             # videos, just less verbose.
             if is_long_video:
                 info("=" * 60)
-                info(" Long video upload finished. Firefox is staying OPEN.")
-                info(" → Verify in YouTube Studio that the video shows as Public/Unlisted")
+                if upload_finished:
+                    info(" Long video upload finished. Firefox is staying OPEN.")
+                else:
+                    warning(" Long video upload was NOT confirmed within the wait window.")
+                    warning(" Firefox is staying OPEN so any in-flight upload can finish.")
+                info(" → DO NOT close Firefox or change the upload tab until")
+                info("   YouTube Studio shows the video as Public/Unlisted")
                 info("   (NOT 'Subiendo', 'Procesando' or 'Pendiente').")
-                info(" → When you're satisfied, close Firefox manually.")
+                info(" → Once verified, close Firefox manually.")
                 info("=" * 60)
             else:
                 short_confirmed = bool(upload_finished) and bool(url)
