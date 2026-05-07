@@ -4,9 +4,9 @@
 > ⚠️ If you are planning to reach out to scraped businesses per E-Mail, please first install the [Go Programming Language](https://golang.org/).
 
 ```bash
-git clone https://github.com/FujiwaraChoki/MoneyPrinterPro.git
+git clone https://github.com/FujiwaraChoki/MoneyPrinterLargo.git
 
-cd MoneyPrinterPro
+cd MoneyPrinterLargo
 # Copy Example Configuration and fill out values in config.json
 cp config.example.json config.json
 
@@ -50,7 +50,7 @@ Please read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for details on our code of 
 
 ## License
 
-MoneyPrinterPro is licensed under `Affero General Public License v3.0`. See [LICENSE](LICENSE) for more information.
+MoneyPrinterLargo is licensed under `Affero General Public License v3.0`. See [LICENSE](LICENSE) for more information.
 
 ## Acknowledgments
 
@@ -59,4 +59,4 @@ MoneyPrinterPro is licensed under `Affero General Public License v3.0`. See [LIC
 
 ## Disclaimer
 
-This project is for educational purposes only. The author will not be responsible for any misuse of the information provided. All the information on this website is published in good faith and for general information purpose only. The author does not make any warranties about the completeness, reliability, and accuracy of this information. Any action you take upon the information you find on this website (FujiwaraChoki/MoneyPrinterPro), is strictly at your own risk. The author will not be liable for any losses and/or damages in connection with the use of our website.
+This project is for educational purposes only. The author will not be responsible for any misuse of the information provided. All the information on this website is published in good faith and for general information purpose only. The author does not make any warranties about the completeness, reliability, and accuracy of this information. Any action you take upon the information you find on this website (FujiwaraChoki/MoneyPrinterLargo), is strictly at your own risk. The author will not be liable for any losses and/or damages in connection with the use of our website.

@@ -1,8 +1,8 @@
 {
-  "name": "moneyprinter-pro",
+  "name": "moneyprinter-largo",
   "private": true,
   "version": "1.0.0",
-  "description": "MoneyPrinter Pro — orchestrator: runs FastAPI backend + Vite frontend in one terminal, both with hot-reload.",
+  "description": "MoneyPrinter Largo — orchestrator: runs FastAPI backend + Vite frontend in one terminal, both with hot-reload.",
   "scripts": {
     "dev": "concurrently -n api,web -c \"blue.bold,green.bold\" --kill-others-on-fail --prefix \"[{name}]\" \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "cd .. && python -m uvicorn webapp.api.main:app --host 127.0.0.1 --port 8000 --reload",

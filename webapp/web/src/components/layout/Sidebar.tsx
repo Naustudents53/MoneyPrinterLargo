@@ -83,15 +83,24 @@ export function Sidebar() {
                     end={end ?? false}
                     className={({ isActive }) =>
                       cn(
-                        "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",
+                        "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",
                         isActive
-                          ? "bg-primary/10 text-primary shadow-sm"
+                          ? "bg-primary/8 text-foreground"
                           : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                       )
                     }
                   >
                     {({ isActive }) => (
                       <>
+                        <span
+                          aria-hidden
+                          className={cn(
+                            "absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full transition-all",
+                            isActive
+                              ? "bg-primary opacity-100"
+                              : "bg-primary opacity-0 group-hover:opacity-30"
+                          )}
+                        />
                         <Icon
                           className={cn(
                             "h-4 w-4 shrink-0 transition-colors",
@@ -108,12 +117,14 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
-      <div className="px-4 py-4 border-t border-border/60 text-[11px] text-muted-foreground space-y-1">
+      <div className="px-4 py-4 border-t border-border/60 text-[11px] text-muted-foreground space-y-1.5">
         <div className="flex items-center justify-between">
-          <span>v1.0.0</span>
-          <span className="font-mono">MPP</span>
+          <span className="tracking-wider">v1.0.0</span>
+          <span className="font-mono tracking-widest">MPL</span>
         </div>
-        <div className="brand-text font-semibold">Print smarter, not harder.</div>
+        <div className="brand-text font-semibold tracking-tight">
+          Imprime largo, edita poco.
+        </div>
       </div>
     </aside>
   );

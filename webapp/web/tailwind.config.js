@@ -70,6 +70,12 @@ export default {
           DEFAULT: "hsl(var(--gold))",
           foreground: "hsl(var(--gold-foreground))",
         },
+        rose: {
+          DEFAULT: "hsl(var(--rose))",
+        },
+        ink: {
+          DEFAULT: "hsl(var(--ink))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -102,7 +108,9 @@ export default {
       },
       backgroundImage: {
         "brand-gradient":
-          "linear-gradient(135deg, hsl(var(--brand-start)) 0%, hsl(var(--brand-mid)) 50%, hsl(var(--brand-end)) 100%)",
+          "linear-gradient(120deg, hsl(var(--brand-start)) 0%, hsl(var(--brand-mid)) 45%, hsl(var(--brand-end)) 100%)",
+        "brand-gradient-deep":
+          "linear-gradient(135deg, hsl(var(--brand-mid)) 0%, hsl(var(--brand-end)) 55%, hsl(var(--brand-deep)) 100%)",
       },
     },
   },

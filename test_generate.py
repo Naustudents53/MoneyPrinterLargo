@@ -1,5 +1,5 @@
 """
-MoneyPrinterPro - YouTube Short Generator (standalone test)
+MoneyPrinterLargo - YouTube Short Generator (standalone test)
 Canal: Mind Glitch | Nicho: Science & Mystery Facts
 Voz: Carlos (es-MX) | 100% FREE tools
 """

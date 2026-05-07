@@ -1,5 +1,5 @@
 @echo off
-REM MoneyPrinter Pro — launches both backend (FastAPI) and frontend (Vite)
+REM MoneyPrinter Largo — launches both backend (FastAPI) and frontend (Vite)
 REM Run from the project root: webapp\start.bat
 
 setlocal
@@ -7,7 +7,7 @@ cd /d %~dp0\..
 
 echo.
 echo ===================================================
-echo   MoneyPrinter Pro — starting backend + frontend
+echo   MoneyPrinter Largo — starting backend + frontend
 echo ===================================================
 echo.
 
@@ -19,13 +19,13 @@ if exist venv\Scripts\python.exe (
 )
 
 echo [api] Starting FastAPI on http://127.0.0.1:8000 ...
-start "MPP API" cmd /k "%PY% -m uvicorn webapp.api.main:app --host 127.0.0.1 --port 8000 --reload"
+start "MPL API" cmd /k "%PY% -m uvicorn webapp.api.main:app --host 127.0.0.1 --port 8000 --reload"
 
 REM Give the API a moment before launching the frontend
 timeout /t 2 /nobreak >nul
 
 echo [web] Starting Vite on http://127.0.0.1:5173 ...
-start "MPP Web" cmd /k "cd webapp\web && npm run dev"
+start "MPL Web" cmd /k "cd webapp\web && npm run dev"
 
 echo.
 echo Both services launched in separate windows.

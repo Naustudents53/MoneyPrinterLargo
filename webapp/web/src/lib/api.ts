@@ -1,5 +1,5 @@
 /**
- * API client for the MoneyPrinter Pro backend.
+ * API client for the MoneyPrinter Largo backend.
  *
  * Vite dev server proxies /api → http://127.0.0.1:8000 (see vite.config.ts).
  * In production builds, set VITE_API_BASE if the backend lives elsewhere.
@@ -26,6 +26,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 // ---------- Types ----------
+
+// Allowed short-video duration presets, mirroring SHORT_DURATION_PRESETS in
+// src/classes/duration_presets.py. Keep these in sync if the backend list
+// changes — the API rejects anything else with HTTP 400.
+export const SHORT_DURATION_OPTIONS = [60, 120, 180] as const;
+export type ShortDurationSeconds = (typeof SHORT_DURATION_OPTIONS)[number];
 
 export interface Channel {
   id: string;
@@ -263,6 +269,7 @@ export const api = {
     image_mode?: "ai" | "photos";
     auto_upload?: boolean;
     series_id?: string;
+    duration_seconds?: ShortDurationSeconds;
   }): string {
     const qs = new URLSearchParams();
     qs.set("kind", params.kind);
@@ -270,6 +277,9 @@ export const api = {
     if (params.image_mode) qs.set("image_mode", params.image_mode);
     if (params.auto_upload) qs.set("auto_upload", "true");
     if (params.series_id) qs.set("series_id", params.series_id);
+    if (params.kind === "short" && params.duration_seconds) {
+      qs.set("duration_seconds", String(params.duration_seconds));
+    }
     return `${BASE}/api/channels/${id}/generate?${qs.toString()}`;
   },
   uploadLastUrl: (id: string, kind: "short" | "long" = "short") =>

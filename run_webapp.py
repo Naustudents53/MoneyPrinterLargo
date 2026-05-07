@@ -1,5 +1,5 @@
 """
-One-command launcher for MoneyPrinter Pro (FastAPI + Vite) — runs both
+One-command launcher for MoneyPrinter Largo (FastAPI + Vite) — runs both
 processes in the SAME terminal with prefixed, color-coded output, and
 shuts everything down cleanly on Ctrl-C.
 
@@ -163,7 +163,7 @@ def main() -> int:
     if not args.no_web and not (WEB_DIR / "node_modules").is_dir():
         print(color("sys", "[sys] node_modules missing — run `npm install` inside webapp/web first."))
 
-    print(color("sys", "═══ MoneyPrinter Pro launcher ═══"))
+    print(color("sys", "═══ MoneyPrinter Largo launcher ═══"))
     print(color("sys", f"[sys] Python: {python_exe()}"))
     print(color("sys", f"[sys] Root:   {ROOT}"))
 

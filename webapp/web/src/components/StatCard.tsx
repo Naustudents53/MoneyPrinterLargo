@@ -11,11 +11,36 @@ interface StatCardProps {
   className?: string;
 }
 
-const accentStyles = {
-  primary: "from-primary/15 to-primary/0 text-primary",
-  accent: "from-accent/15 to-accent/0 text-accent",
-  gold: "from-gold/15 to-gold/0 text-gold",
-  success: "from-success/15 to-success/0 text-success",
+const accentStyles: Record<NonNullable<StatCardProps["accent"]>, {
+  rule: string;
+  iconBg: string;
+  iconColor: string;
+  wash: string;
+}> = {
+  primary: {
+    rule: "bg-primary",
+    iconBg: "bg-primary/10",
+    iconColor: "text-primary",
+    wash: "from-primary/8 to-transparent",
+  },
+  accent: {
+    rule: "bg-accent",
+    iconBg: "bg-accent/10",
+    iconColor: "text-accent",
+    wash: "from-accent/8 to-transparent",
+  },
+  gold: {
+    rule: "bg-gold",
+    iconBg: "bg-gold/15",
+    iconColor: "text-gold",
+    wash: "from-gold/10 to-transparent",
+  },
+  success: {
+    rule: "bg-success",
+    iconBg: "bg-success/10",
+    iconColor: "text-success",
+    wash: "from-success/8 to-transparent",
+  },
 };
 
 export function StatCard({
@@ -26,35 +51,37 @@ export function StatCard({
   accent = "primary",
   className,
 }: StatCardProps) {
+  const a = accentStyles[accent];
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border/60 bg-card p-5 shadow-sm transition-all hover:border-border hover:shadow-md",
+        "group relative overflow-hidden rounded-xl border border-border/60 bg-card p-5 transition-all",
+        "hover:border-foreground/15 hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-18px_hsl(var(--brand-deep)/0.35)]",
         className
       )}
     >
+      {/* editorial top rule — semantic accent */}
+      <span aria-hidden className={cn("absolute left-5 top-0 h-[3px] w-10 rounded-b-full", a.rule)} />
+      {/* very soft corner wash */}
       <div
         className={cn(
-          "absolute -top-12 -right-12 h-40 w-40 rounded-full bg-gradient-to-br blur-2xl opacity-60",
-          accentStyles[accent]
+          "absolute -top-16 -right-16 h-40 w-40 rounded-full bg-gradient-to-br blur-2xl opacity-70",
+          a.wash
         )}
       />
-      <div className="relative flex items-start justify-between">
-        <div className="space-y-1">
-          <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+      <div className="relative flex items-start justify-between pt-3">
+        <div className="space-y-1.5">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {label}
           </div>
-          <div className="font-display text-3xl font-bold tracking-tight">{value}</div>
+          <div className="font-display text-3xl font-bold tracking-tight tabular-nums">
+            {value}
+          </div>
           {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
         </div>
         {Icon && (
-          <div
-            className={cn(
-              "rounded-lg p-2.5 bg-gradient-to-br",
-              accentStyles[accent]
-            )}
-          >
-            <Icon className="h-5 w-5" />
+          <div className={cn("rounded-lg p-2.5", a.iconBg, a.iconColor)}>
+            <Icon className="h-5 w-5" strokeWidth={1.75} />
           </div>
         )}
       </div>

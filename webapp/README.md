@@ -1,6 +1,6 @@
-# MoneyPrinter Pro
+# MoneyPrinter Largo
 
-Webapp completa estilo CRM para administrar todo MoneyPrinterPro desde el navegador:
+Webapp completa estilo CRM para administrar todo MoneyPrinterLargo desde el navegador:
 canales de YouTube, cuentas Twitter/X, generación de shorts y videos largos con
 **progreso en vivo**, series, configuración, y más.
 
@@ -36,7 +36,7 @@ webapp/
 
 ## Setup (primera vez)
 
-Desde la raíz del proyecto, con el venv de MoneyPrinterPro activado:
+Desde la raíz del proyecto, con el venv de MoneyPrinterLargo activado:
 
 ```powershell
 # Windows
@@ -128,7 +128,7 @@ MoviePy, ffmpeg) que pueden tardar minutos. Para verlas en vivo:
 Si cierras el modal mientras el job corre, el subprocess **sigue ejecutándose**
 hasta terminar — solo se desconecta el stream en el cliente.
 
-## Notas de integración con MoneyPrinterPro
+## Notas de integración con MoneyPrinterLargo
 
 - Reutiliza `src/cache.py` para leer/escribir `.mp/youtube.json`,
   `.mp/twitter.json`, `.mp/afm.json`.
@@ -149,7 +149,7 @@ hasta terminar — solo se desconecta el stream en el cliente.
 ## Limitaciones conocidas
 
 - El usuario debe tener el venv del proyecto principal activo y dependencias
-  de MoneyPrinterPro instaladas (Selenium, MoviePy, ffmpeg, ImageMagick).
+  de MoneyPrinterLargo instaladas (Selenium, MoviePy, ffmpeg, ImageMagick).
 - Outreach corre en proceso largo y aún no expone progreso por SSE.
 - El programa no maneja autenticación — pensado para uso local.
 - Subir/eliminar videos fuera de YouTube Studio (la API de YouTube real)

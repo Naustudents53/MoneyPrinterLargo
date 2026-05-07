@@ -10,6 +10,7 @@ import {
   BookOpen,
   Hash,
   Clapperboard,
+  Timer,
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { PageShell } from '@/components/layout/AppShell';
@@ -35,7 +36,13 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ProgressDialog } from '@/components/ProgressDialog';
-import { api, type Channel, type SeriesEntry } from '@/lib/api';
+import {
+  api,
+  SHORT_DURATION_OPTIONS,
+  type Channel,
+  type SeriesEntry,
+  type ShortDurationSeconds,
+} from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -51,6 +58,7 @@ export function Generate() {
   const [imageMode, setImageMode] = useState<'ai' | 'photos'>('ai');
   const [seriesId, setSeriesId] = useState('');
   const [autoUpload, setAutoUpload] = useState(false);
+  const [shortDuration, setShortDuration] = useState<ShortDurationSeconds>(60);
 
   const [progressOpen, setProgressOpen] = useState(false);
   const [sseUrl, setSseUrl] = useState<string | null>(null);
@@ -86,6 +94,7 @@ export function Generate() {
       image_mode: imageMode,
       auto_upload: autoUpload,
       series_id: seriesId || undefined,
+      duration_seconds: kind === 'short' ? shortDuration : undefined,
     });
     setSseUrl(url);
     setProgressOpen(true);
@@ -180,6 +189,37 @@ export function Generate() {
                     placeholder="Déjalo vacío para que el LLM elija un tema según el niche del canal"
                   />
                 </div>
+
+                {/* Duration preset (only for shorts) */}
+                {kind === 'short' && (
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-1.5">
+                      <Timer className="h-4 w-4" /> Duración del short
+                    </Label>
+                    <div className="grid grid-cols-3 gap-3">
+                      {SHORT_DURATION_OPTIONS.map((opt) => (
+                        <DurationCard
+                          key={opt}
+                          active={shortDuration === opt}
+                          onClick={() => setShortDuration(opt)}
+                          minutes={opt / 60}
+                          seconds={opt}
+                          description={
+                            opt === 60
+                              ? '~150 palabras · 12 frases · 6 imgs'
+                              : opt === 120
+                                ? '~310 palabras · 22 frases · 10 imgs'
+                                : '~470 palabras · 32 frases · 14 imgs'
+                          }
+                        />
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Calibrado para narración en español a ~150 wpm. El render
+                      cae sobre la marca, nunca por debajo.
+                    </p>
+                  </div>
+                )}
 
                 {/* Image mode (only for shorts) */}
                 {kind === 'short' && (
@@ -419,6 +459,43 @@ function ModeCard({
         {active && <Badge className="ml-auto">activo</Badge>}
       </div>
       <p className="text-xs text-muted-foreground mt-2">{description}</p>
+    </button>
+  );
+}
+
+function DurationCard({
+  active,
+  onClick,
+  minutes,
+  seconds,
+  description,
+}: {
+  active: boolean;
+  onClick: () => void;
+  minutes: number;
+  seconds: number;
+  description: string;
+}) {
+  const label = Number.isInteger(minutes) ? `${minutes} min` : `${seconds}s`;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'text-left rounded-lg border p-3 transition-all',
+        active
+          ? 'border-primary bg-primary/5 shadow-sm'
+          : 'border-border hover:border-border/80 hover:bg-muted/30',
+      )}
+    >
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-lg font-semibold">{label}</span>
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          ({seconds}s)
+        </span>
+        {active && <Badge className="ml-auto">activo</Badge>}
+      </div>
+      <p className="text-xs text-muted-foreground mt-1.5">{description}</p>
     </button>
   );
 }

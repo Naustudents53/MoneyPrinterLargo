@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MoneyPrinter Pro — launches both backend (FastAPI) and frontend (Vite)
+# MoneyPrinter Largo — launches both backend (FastAPI) and frontend (Vite)
 # Run from the project root: bash webapp/start.sh
 set -e
 

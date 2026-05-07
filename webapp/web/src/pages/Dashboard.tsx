@@ -52,24 +52,31 @@ export function Dashboard() {
       />
 
       <PageShell>
-        {/* Hero brand panel */}
-        <Card className="overflow-hidden border-border/60 bg-gradient-to-br from-card to-card/50">
-          <div className="relative p-6 sm:p-8">
-            <div className="absolute inset-0 bg-brand-gradient opacity-[0.07]" />
-            <div className="relative flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-              <div className="space-y-2 max-w-2xl">
-                <Badge variant="gold" className="font-semibold uppercase tracking-wider">
-                  MoneyPrinter Pro · v1.0
-                </Badge>
-                <h2 className="font-display text-2xl sm:text-3xl font-bold tracking-tight">
-                  Tu pipeline de contenido en un solo lugar.
+        {/* Hero brand panel — editorial layout */}
+        <Card className="overflow-hidden border-border/60 bg-card grain">
+          <div className="relative p-6 sm:p-10">
+            {/* warm wash, very subtle */}
+            <div className="absolute inset-0 bg-brand-gradient opacity-[0.05]" />
+            {/* thin accent rule, top-left, to anchor hierarchy */}
+            <div className="relative flex flex-col lg:flex-row lg:items-end lg:justify-between gap-8">
+              <div className="space-y-4 max-w-2xl">
+                <div className="flex items-center gap-3">
+                  <span aria-hidden className="block h-px w-10 bg-primary" />
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-primary">
+                    MoneyPrinter Largo · v1.0
+                  </span>
+                </div>
+                <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight leading-[1.05]">
+                  Tu estudio de contenido,{" "}
+                  <span className="brand-text">en formato largo</span>.
                 </h2>
-                <p className="text-muted-foreground text-sm sm:text-base">
-                  Administra canales de YouTube, cuentas de Twitter, series, generación de
-                  shorts y videos largos — todo desde aquí, en tiempo real.
+                <p className="text-muted-foreground text-sm sm:text-base max-w-xl leading-relaxed">
+                  Canales de YouTube, cuentas de Twitter, series y generación
+                  de shorts y videos largos — orquestado desde un solo lugar,
+                  con progreso en vivo.
                 </p>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 lg:shrink-0">
                 <Button asChild variant="brand" size="lg" className="gap-2">
                   <Link to="/generate">
                     <Sparkles className="h-4 w-4" /> Generar contenido

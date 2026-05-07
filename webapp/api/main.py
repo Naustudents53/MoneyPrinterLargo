@@ -1,7 +1,7 @@
 """
-MoneyPrinter Pro — FastAPI backend.
+MoneyPrinter Largo — FastAPI backend.
 
-Wraps the existing MoneyPrinterPro Python CLI (src/) into a REST API + SSE
+Wraps the existing MoneyPrinterLargo Python CLI (src/) into a REST API + SSE
 streaming endpoints so the React frontend can drive every workflow:
 channels CRUD, video listing/deletion, generation + upload with live logs,
 series, settings, system status.
@@ -41,7 +41,7 @@ MP_DIR = ROOT_DIR / ".mp"
 THUMB_DIR = ROOT_DIR / "thumbnails"
 CONFIG_PATH = ROOT_DIR / "config.json"
 
-# Make MoneyPrinterPro importable. The original config.py computes ROOT_DIR as
+# Make MoneyPrinterLargo importable. The original config.py computes ROOT_DIR as
 # os.path.dirname(sys.path[0]) which only works when invoked as `python src/main.py`
 # from the project root. To survive any invocation (uvicorn reload, tests, etc.)
 # we (a) add src/ to sys.path and (b) overwrite config.ROOT_DIR after import.
@@ -67,8 +67,8 @@ from cache import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="MoneyPrinter Pro API",
-    description="REST + SSE API exposing MoneyPrinterPro functionality",
+    title="MoneyPrinter Largo API",
+    description="REST + SSE API exposing MoneyPrinterLargo functionality",
     version="1.0.0",
 )
 
@@ -855,12 +855,23 @@ async def generate_video(
     image_mode: str = "ai",
     auto_upload: bool = False,
     series_id: str = "",
+    duration_seconds: int = 0,
 ):
     ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
     if not ch:
         raise HTTPException(404, "Channel not found")
     if kind not in ("short", "long"):
         raise HTTPException(400, "kind must be 'short' or 'long'")
+
+    # Validate duration preset early so the user gets a clean 400 instead of
+    # waiting for the subprocess to warn and silently fall back.
+    if kind == "short" and duration_seconds:
+        from classes.duration_presets import ALLOWED_SHORT_DURATIONS
+        if duration_seconds not in ALLOWED_SHORT_DURATIONS:
+            raise HTTPException(
+                400,
+                f"duration_seconds must be one of {list(ALLOWED_SHORT_DURATIONS)}",
+            )
 
     args = [
         "generate",
@@ -874,6 +885,8 @@ async def generate_video(
         args += ["--upload"]
     if series_id:
         args += ["--series-id", series_id]
+    if kind == "short" and duration_seconds:
+        args += ["--duration", str(duration_seconds)]
 
     label = "Short" if kind == "short" else "Long video"
     title = f"Generando {label} — {ch.get('nickname', channel_id)}"

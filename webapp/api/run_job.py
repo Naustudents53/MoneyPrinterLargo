@@ -1,5 +1,5 @@
 """
-MoneyPrinter Pro — job runner (subprocess driver).
+MoneyPrinter Largo — job runner (subprocess driver).
 
 Spawned by the FastAPI backend to execute long-running tasks (video
 generation, upload, tweet posting) in an isolated process so progress can
@@ -133,6 +133,18 @@ def cmd_generate(args):
         print(f"[runner] ERROR: channel {args.channel_id} not found", flush=True)
         sys.exit(2)
 
+    # Duration preset (60/120/180s) only applies to shorts; long videos ignore it.
+    target_duration: int | None = None
+    if args.kind == "short" and getattr(args, "duration", 0):
+        from classes.duration_presets import ALLOWED_SHORT_DURATIONS
+        if args.duration in ALLOWED_SHORT_DURATIONS:
+            target_duration = args.duration
+        else:
+            print(
+                f"[runner] WARN: duration {args.duration}s not in {ALLOWED_SHORT_DURATIONS}; using default",
+                flush=True,
+            )
+
     print(f"[runner] Initializing channel '{acc.get('nickname')}'", flush=True)
     youtube = YouTube(
         acc["id"],
@@ -145,6 +157,7 @@ def cmd_generate(args):
         long_voice=acc.get("long_voice", ""),
         hook_profile=acc.get("hook_profile", ""),
         voice_drama=acc.get("voice_drama", False),
+        target_duration_seconds=target_duration,
     )
     tts = TTS()
 
@@ -353,6 +366,8 @@ def main():
     p_gen.add_argument("--image-mode", default="ai")
     p_gen.add_argument("--upload", action="store_true")
     p_gen.add_argument("--series-id", default="")
+    # Target short duration in seconds (60/120/180). 0 = use legacy default.
+    p_gen.add_argument("--duration", type=int, default=0)
 
     p_ul = sub.add_parser("upload-last")
     p_ul.add_argument("--channel-id", required=True)
