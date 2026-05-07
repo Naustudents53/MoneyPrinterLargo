@@ -357,6 +357,7 @@ class YouTube:
         long_voice: str = "",
         hook_profile: str = "",
         voice_drama: bool = False,
+        target_duration_seconds: int | None = None,
     ) -> None:
         """
         Constructor for YouTube Class.
@@ -385,6 +386,19 @@ class YouTube:
         self._long_voice: str = (long_voice or "").strip()
         self._hook_profile: str = (hook_profile or "").strip().lower()
         self._voice_drama: bool = bool(voice_drama)
+
+        # Target Short duration → drives sentence count, target word count,
+        # and image count. Resolved through a single source of truth so we
+        # never have to keep two preset tables in sync.
+        from classes.duration_presets import resolve_short_duration
+        if target_duration_seconds is not None:
+            d, s, w, n = resolve_short_duration(target_duration_seconds)
+        else:
+            d, s, w, n = (None, None, None, None)
+        self._target_duration_seconds: int | None = d
+        self._sentence_length_override: int | None = s
+        self._target_word_count: int | None = w
+        self._n_prompts_override: int | None = n
 
         self.images = []
         self._used_stock_urls: set = set()
@@ -915,7 +929,25 @@ OUTPUT FORMAT (strict):
         """
         import random
 
-        sentence_length = get_script_sentence_length()
+        sentence_length = self._sentence_length_override or get_script_sentence_length()
+        target_words = self._target_word_count
+        target_seconds = self._target_duration_seconds
+
+        # Word count is the load-bearing instruction: LLMs hit word counts
+        # much more reliably than sentence counts, and final TTS duration
+        # tracks word count almost linearly. Sentence count is kept as a
+        # secondary structural guide.
+        if target_words and target_seconds:
+            duration_clause = (
+                f"TARGET DURATION: ~{target_seconds} seconds of narration. "
+                f"Aim for {target_words} words total (±10%). Average sentence "
+                f"length: ~{max(8, target_words // max(1, sentence_length))} words. "
+                f"DO NOT undershoot — a script that comes in short produces a "
+                f"video noticeably below {target_seconds}s, which is worse than "
+                f"running slightly long."
+            )
+        else:
+            duration_clause = ""
 
         # Rotate hook style per run so every short doesn't open the same way.
         # The preset is picked from HOOK_PROFILES by self._hook_profile (set per
@@ -932,6 +964,7 @@ OUTPUT FORMAT (strict):
             info(f" => Hook profile: {profile_name} | style: {hook_style}")
 
         prompt = f"""Write a narration script for a short video in EXACTLY {sentence_length} sentences.
+{duration_clause}
 
 TOPIC: {self.subject}
 
@@ -1055,7 +1088,7 @@ ABSOLUTE RULES:
         Returns:
             image_prompts (List[str]): Generated List of image prompts.
         """
-        n_prompts = 6
+        n_prompts = self._n_prompts_override or 6
 
         # Split script into sections so the LLM knows exactly what each image must show
         sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', self.script) if s.strip()]
@@ -1567,6 +1600,163 @@ Example format:
         baseline)."""
         out = f"{query}, dramatic lighting, highly detailed composition"
         return self._apply_channel_style(out)
+
+    @staticmethod
+    def load_metadata_sidecar(video_path: str) -> dict | None:
+        """Read a `<video>.meta.json` and return a flat dict
+        ``{title, description, subject, thumbnail_path, is_long}``.
+
+        Handles both sidecar formats currently in the wild:
+
+        * Nested (the format ``_persist_metadata_sidecar`` writes today)::
+
+              {"subject": ..., "metadata": {"title": ..., "description": ...},
+               "is_long": ..., "thumbnail_path": ...}
+
+        * Flat (older / refactor-branch format)::
+
+              {"title": ..., "description": ..., "subject": ...,
+               "thumbnail_path": ...}
+
+        Returns ``None`` if the sidecar is missing or unreadable.
+        """
+        sidecar = os.path.splitext(video_path)[0] + ".meta.json"
+        if not os.path.isfile(sidecar):
+            return None
+        try:
+            with open(sidecar, "r", encoding="utf-8") as f:
+                raw = json.load(f) or {}
+        except Exception:
+            return None
+
+        meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else None
+        title = (meta or raw).get("title", "") or ""
+        description = (meta or raw).get("description", "") or ""
+        return {
+            "title": title,
+            "description": description,
+            "subject": raw.get("subject", "") or "",
+            "thumbnail_path": raw.get("thumbnail_path", "") or "",
+            "is_long": bool(raw.get("is_long", False)),
+        }
+
+    def _transcribe_video_audio(self, video_path: str) -> str:
+        """Run faster-whisper over the audio of a rendered .mp4 and return the
+        concatenated transcript. Used as a metadata-recovery fallback when
+        re-uploading an orphan video that lost its sidecar.
+        """
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as e:
+            raise RuntimeError(
+                "faster-whisper is required for transcript-based metadata "
+                "recovery. Install it (`pip install faster-whisper`) or "
+                "provide the topic manually."
+            ) from e
+
+        info(f"  [Whisper] Loading model '{get_whisper_model()}'...")
+        model = WhisperModel(
+            get_whisper_model(),
+            device=get_whisper_device(),
+            compute_type=get_whisper_compute_type(),
+        )
+        info("  [Whisper] Transcribing audio (this may take a minute)...")
+        segments, _ = model.transcribe(video_path, vad_filter=True)
+        text = " ".join(s.text.strip() for s in segments if s.text and s.text.strip())
+        return text.strip()
+
+    def reupload_video(self, video_path: str, subject: str | None = None) -> bool:
+        """Re-upload an already-rendered .mp4 by reusing the standard
+        ``upload_video`` Selenium flow.
+
+        Metadata source priority:
+
+        1. ``<video>.meta.json`` sidecar — fastest, no LLM call.
+        2. *subject* argument — generate title + description from the topic.
+        3. Whisper transcript — recover from the audio when there is no
+           sidecar and the user does not remember the topic.
+
+        Returns whatever ``upload_video`` returns.
+        """
+        if not os.path.isfile(video_path):
+            error(f"Cannot re-upload: file not found at '{video_path}'.")
+            return False
+
+        self.video_path = video_path
+
+        # 1) Sidecar
+        sidecar = self.load_metadata_sidecar(video_path)
+        if sidecar and sidecar.get("title") and sidecar.get("description"):
+            self.subject = sidecar.get("subject", "")
+            self.metadata = {
+                "title": sidecar["title"],
+                "description": sidecar["description"],
+            }
+            saved_thumb = sidecar.get("thumbnail_path", "")
+            if saved_thumb and os.path.isfile(saved_thumb):
+                self.thumbnail_path = saved_thumb
+                info(f" => Restored thumbnail from sidecar: {saved_thumb}")
+            info(" => Loaded saved metadata from sidecar.")
+            success(f" => Title: {self.metadata['title']}")
+            return self.upload_video()
+
+        # 2) Subject provided → ask the LLM for title + description.
+        if subject and subject.strip():
+            self.subject = subject.strip()
+            info(f" => Generating title + description for subject: {self.subject}")
+            title_prompt = (
+                f"Please generate a YouTube Video Title for the following subject: {self.subject}. "
+                f"Optionally include 1-2 relevant hashtags at the end (but only if they fit naturally). "
+                f"Only return the title, nothing else. Limit the title under 80 characters. Be concise. "
+                f"YOU MUST WRITE THE TITLE IN {self._language}. Do NOT wrap the title in quotes."
+            )
+            desc_prompt = (
+                f"Please generate a YouTube Video Description (2-4 sentences) for a video about: {self.subject}. "
+                f"Only return the description, nothing else. Do NOT wrap it in quotes. "
+                f"YOU MUST WRITE THE DESCRIPTION IN {self._language}."
+            )
+        else:
+            # 3) Whisper fallback.
+            transcript = self._transcribe_video_audio(video_path)
+            if not transcript:
+                error("Whisper produced an empty transcript — cannot generate metadata.")
+                return False
+            preview = transcript[:160] + ("..." if len(transcript) > 160 else "")
+            info(f"  [Whisper] Transcript: {preview}")
+            self.subject = transcript[:200]
+            title_prompt = (
+                f"Generate a YouTube Video Title that fits this video transcript:\n\n{transcript[:1500]}\n\n"
+                f"Optionally include 1-2 relevant hashtags. Only return the title. "
+                f"Limit under 80 characters. Be concise. "
+                f"YOU MUST WRITE THE TITLE IN {self._language}. Do NOT wrap in quotes."
+            )
+            desc_prompt = (
+                f"Generate a YouTube Video Description (2-4 sentences) that fits this transcript:\n\n{transcript[:2500]}\n\n"
+                f"Only return the description, nothing else. Do NOT wrap in quotes. "
+                f"YOU MUST WRITE THE DESCRIPTION IN {self._language}."
+            )
+
+        title = self.generate_response(title_prompt)
+        title = re.sub(r'^[\"\'“”‘’]+|[\"\'“”‘’]+$', '', title.strip()).strip()
+        if len(title) > 100:
+            if "#" in title:
+                title = title[:title.index("#")].strip()
+            if len(title) > 100:
+                title = title[:100]
+
+        description = self.generate_response(desc_prompt)
+        description = re.sub(r'^[\"\'“”‘’]+|[\"\'“”‘’]+$', '', description.strip()).strip()
+
+        self.metadata = {"title": title, "description": description}
+        success(f" => Title: {title}")
+        info(f" => Description: {description[:120]}{'...' if len(description) > 120 else ''}")
+
+        # Persist a sidecar so a future retry skips the LLM/Whisper round.
+        # Detect long-vs-short from existing sidecar if any; default short.
+        is_long = bool((sidecar or {}).get("is_long", False))
+        self._persist_metadata_sidecar(is_long=is_long)
+
+        return self.upload_video()
 
     def _persist_metadata_sidecar(self, is_long: bool) -> None:
         """Write a `<video_basename>.meta.json` next to the rendered .mp4 with
@@ -5752,6 +5942,16 @@ No markdown. No explanation. Just the JSON array."""
             driver.execute_script("arguments[0].click();", title_el)
             time.sleep(0.5)
 
+            # YouTube auto-fills the title with the file's UUID basename when
+            # the .mp4 is selected. Without clearing first, our title gets
+            # APPENDED to that UUID and the resulting title is "<uuid> <real
+            # title>" — uglier and over the 100-char limit. Select-all + Delete
+            # wipes the prefilled value before typing.
+            title_el.send_keys(Keys.CONTROL, "a")
+            time.sleep(0.2)
+            title_el.send_keys(Keys.DELETE)
+            time.sleep(0.3)
+
             # Type the new title character by character to avoid issues
             clean_title = self.metadata["title"].replace("\n", " ")[:100]
             title_el.send_keys(clean_title)
@@ -5772,6 +5972,13 @@ No markdown. No explanation. Just the JSON array."""
             time.sleep(0.5)
             driver.execute_script("arguments[0].click();", description_el)
             time.sleep(0.5)
+
+            # Clear any pre-filled content (channel default description, etc.)
+            # before writing ours. Same Ctrl+A / Delete trick as the title.
+            description_el.send_keys(Keys.CONTROL, "a")
+            time.sleep(0.2)
+            description_el.send_keys(Keys.DELETE)
+            time.sleep(0.3)
 
             clean_desc = self.metadata["description"].replace("\n", " ")[:5000]
             description_el.send_keys(clean_desc)

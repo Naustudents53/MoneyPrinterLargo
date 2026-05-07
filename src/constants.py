@@ -32,6 +32,7 @@ YOUTUBE_OPTIONS = [
     "Upload Long Video",
     "Show all Videos",
     "Clean up saved videos",
+    "Re-upload existing video",
     "Setup CRON Job",
     "Quit"
 ]

@@ -294,6 +294,26 @@ def main():
                             "Image source - [1] AI (default), [2] Real photos: "
                         ).strip()
                         image_mode = "photos" if image_choice == "2" else "ai"
+
+                        duration_choice = question(
+                            "Duración del short - [1] 1 minuto (default), [2] 2 minutos, [3] 3 minutos: "
+                        ).strip()
+                        duration_seconds = {"2": 120, "3": 180}.get(duration_choice, 60)
+
+                        # Apply duration overrides via the centralized presets.
+                        # Re-resolve here so this menu remains the single user-facing
+                        # entry point even if the YouTube instance was constructed
+                        # without target_duration_seconds.
+                        from classes.duration_presets import resolve_short_duration
+                        d, s, w, n = resolve_short_duration(duration_seconds)
+                        youtube._target_duration_seconds = d
+                        youtube._sentence_length_override = s
+                        youtube._target_word_count = w
+                        youtube._n_prompts_override = n
+                        info(
+                            f" => Target: {d}s | {s} sentences | ~{w} words | {n} images"
+                        )
+
                         video_path = youtube.generate_video(
                             tts,
                             custom_topic=custom_topic,
@@ -386,6 +406,85 @@ def main():
                             else:
                                 info(" => Cancelled.")
                     elif user_input == 5:
+                        # Re-upload existing video — pick an .mp4 from .mp/
+                        # and run the standard Selenium upload against it.
+                        # If the .meta.json sidecar is present, use it; else
+                        # fall back to a typed topic or Whisper transcript.
+                        mp_dir = os.path.join(ROOT_DIR, ".mp")
+                        try:
+                            mp4s = sorted(
+                                [
+                                    os.path.join(mp_dir, f)
+                                    for f in os.listdir(mp_dir)
+                                    if f.lower().endswith(".mp4")
+                                ],
+                                key=os.path.getmtime,
+                                reverse=True,
+                            )
+                        except FileNotFoundError:
+                            mp4s = []
+
+                        if not mp4s:
+                            warning(" => No saved videos found in .mp/ to re-upload.")
+                        else:
+                            info(f"\n => Found {len(mp4s)} saved video(s):")
+                            for i, p in enumerate(mp4s, 1):
+                                size_mb = os.path.getsize(p) / (1024 * 1024)
+                                mtime = datetime.fromtimestamp(os.path.getmtime(p)).strftime("%Y-%m-%d %H:%M")
+                                meta = YouTube.load_metadata_sidecar(p)
+                                if meta and meta.get("title"):
+                                    tag = colored(f"  [meta: {meta['title'][:50]}]", "green")
+                                else:
+                                    tag = colored("  [no metadata]", "yellow")
+                                print(colored(f"   {i}. {os.path.basename(p)}  ({size_mb:.1f} MB, {mtime})", "cyan") + tag)
+
+                            sel = question("\nSelect a video to re-upload (number, or empty to cancel): ").strip()
+                            if not sel:
+                                info(" => Cancelled.")
+                            else:
+                                try:
+                                    idx = int(sel) - 1
+                                    if not (0 <= idx < len(mp4s)):
+                                        raise ValueError()
+                                except ValueError:
+                                    warning(" => Invalid selection.")
+                                else:
+                                    chosen_path = mp4s[idx]
+                                    saved_meta = YouTube.load_metadata_sidecar(chosen_path)
+                                    subj_to_pass = None
+                                    proceed = True
+
+                                    if saved_meta and saved_meta.get("title") and saved_meta.get("description"):
+                                        info(f" => Found saved metadata: {saved_meta['title']}")
+                                        if not confirm("Use saved metadata?", default=True):
+                                            saved_meta = None
+
+                                    if not saved_meta:
+                                        info("\n => No saved metadata. Recovery options:")
+                                        print(colored("   1. Auto-transcribe with Whisper (recovers original content)", "cyan"))
+                                        print(colored("   2. Type a topic manually (LLM generates title + description)", "cyan"))
+                                        print(colored("   3. Cancel", "cyan"))
+                                        choice = question("Select [1/2/3]: ").strip()
+                                        if choice == "1":
+                                            subj_to_pass = None
+                                        elif choice == "2":
+                                            subj_to_pass = question("Enter the topic: ").strip()
+                                            if not subj_to_pass:
+                                                warning(" => Empty topic — cancelled.")
+                                                proceed = False
+                                        else:
+                                            info(" => Cancelled.")
+                                            proceed = False
+
+                                    if proceed:
+                                        try:
+                                            youtube.reupload_video(chosen_path, subj_to_pass)
+                                        except KeyboardInterrupt:
+                                            warning(f"\nUpload cancelled by user. Video preserved at: {chosen_path}")
+                                        except Exception as _re_err:
+                                            error(f"Re-upload failed: {type(_re_err).__name__}: {_re_err}")
+                                            warning(f"Video preserved at: {chosen_path}")
+                    elif user_input == 6:
                         # Setup CRON Job
                         info("How often do you want to upload?")
 
@@ -414,7 +513,7 @@ def main():
                             success("Set up CRON Job.")
                         else:
                             break
-                    elif user_input == 6:
+                    elif user_input == 7:
                         if get_verbose():
                             info(" => Climbing Options Ladder...", False)
                         break
