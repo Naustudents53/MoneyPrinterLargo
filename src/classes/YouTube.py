@@ -115,196 +115,14 @@ HOOK_PROFILES: dict = {
 }
 
 
-# Civilization era anchors. When the video subject matches keywords from one
-# of these civilizations, `era_brief` is injected into the LLM image-prompt
-# task so the generated scene descriptions stay period-accurate (clothing,
-# architecture, weapons, objects). Local LLMs (Ollama) drift into modern
-# visuals on abstract script lines without this anchor. Keyword matching is
-# accent-insensitive and case-insensitive; edit freely.
-CIVILIZATIONS: dict = {
-    "roman": {
-        "name": "Ancient Rome",
-        "era_brief": "togas, tunics, leather sandals, bronze cuirass and plumed helmets, gladius swords, marble columns, Roman arches, mosaics, terracotta tile roofs, oil lamps, papyrus scrolls, Roman Forum, amphitheaters, chariots, laurel wreaths",
-        "keywords": [
-            "roma", "romano", "romana", "romanos", "rome", "roman",
-            "cesar", "augusto", "neron", "caligula", "trajano", "adriano",
-            "constantino", "imperio romano", "republica romana",
-            "pompeya", "pompeii", "coliseo", "colosseum", "vestal",
-            "legion romana", "gladiador", "centurion",
-        ],
-    },
-    "greek": {
-        "name": "Ancient Greece",
-        "era_brief": "white chitons and peplos robes, leather sandals, bronze hoplite armor, round shields, long spears, Doric and Ionic marble columns, white marble temples, agoras, amphorae, olive trees, oil lamps, laurel wreaths",
-        "keywords": [
-            "grecia", "griego", "griega", "griegos", "greece", "greek",
-            "atenas", "athens", "esparta", "sparta",
-            "alejandro magno", "alexander the great",
-            "platon", "plato", "aristoteles", "aristotle", "socrates",
-            "homero", "homer", "iliada", "iliad", "odisea", "odyssey",
-            "olimpo", "olympus", "partenon", "parthenon",
-            "helenico", "hellenic", "minoico", "micenico", "mycenaean",
-        ],
-    },
-    "chinese": {
-        "name": "Imperial China",
-        "era_brief": "hanfu silk robes, dynasty-specific headwear, jade ornaments, calligraphy ink brushes and bamboo scrolls, pagodas, curved tile roofs, painted screens, paper lanterns, dragons, tea ceremony objects, Forbidden City courtyards",
-        "keywords": [
-            "china", "chino", "chinos", "chinese",
-            "qin shi huang", "shi huang",
-            "dinastia han", "dinastia tang", "dinastia song",
-            "dinastia ming", "dinastia qing",
-            "confucio", "confucius", "lao tse", "laozi",
-            "muralla china", "great wall",
-            "ciudad prohibida", "forbidden city",
-            "guerreros de terracota", "terracotta army",
-        ],
-    },
-    "japanese": {
-        "name": "Feudal Japan",
-        "era_brief": "kimonos and yukatas, samurai armor (do, kabuto helmet), katana and wakizashi, tatami mats, shoji paper screens, pagodas, torii gates, paper lanterns, cherry blossoms, Edo-period streets, Mt. Fuji backdrop",
-        "keywords": [
-            "japon", "japan", "japones", "japonesa", "japanese",
-            "samurai", "shogun", "ronin", "ninja",
-            "kioto", "kyoto", "tokio", "tokyo",
-            "periodo edo", "edo period", "meiji", "kamikaze",
-            "bushido", "geisha", "yamato",
-        ],
-    },
-    "indian": {
-        "name": "Ancient and Medieval India",
-        "era_brief": "saris, dhotis, turbans, ornate gold jewelry, Mughal architecture with onion domes and pointed arches, intricately carved Hindu temples, elephants with howdahs, palace marble jali screens, sitar and tabla instruments",
-        "keywords": [
-            "india", "indio", "indios", "indian", "hindu", "hinduismo",
-            "buda", "buddha", "ashoka", "mauryan", "maurya",
-            "mughal", "mogol", "rajput",
-            "ganges", "varanasi", "delhi", "taj mahal",
-        ],
-    },
-    "mayan": {
-        "name": "Maya civilization",
-        "era_brief": "cotton huipiles and loincloths, jade ornaments, jaguar pelt and feather headdresses, stepped stone pyramids, glyph-carved stelae, ball courts, jungle backdrops, codex screenfold books, obsidian-edged weapons, feathered serpent motifs",
-        "keywords": [
-            "maya", "mayas", "mayan",
-            "tikal", "chichen", "palenque", "yucatan",
-            "kukulkan", "popol vuh", "bonampak", "copan",
-        ],
-    },
-    "inca": {
-        "name": "Inca Empire",
-        "era_brief": "wool tunics with geometric patterns, llama-wool sandals, gold ornaments, terraced mountain cities, polygonal stone block masonry without mortar, llamas, quipu knot strings, Andes mountain backdrops, Machu Picchu-style citadels",
-        "keywords": [
-            "inca", "incas", "incaico", "incaica",
-            "machu picchu", "cuzco", "cusco",
-            "atahualpa", "manco capac",
-            "imperio incaico", "imperio inca", "andino", "andean", "quechua",
-        ],
-    },
-    "egyptian": {
-        "name": "Ancient Egypt",
-        "era_brief": "linen schenti kilts, white pleated dresses, kohl eye makeup, gold collars, nemes royal headdresses, pyramids, sphinxes, hieroglyph-covered temple walls, papyrus scrolls, oil lamps, Nile river, palm trees, falcon and scarab motifs, lotus columns",
-        "keywords": [
-            "egipto", "egipcio", "egipcia", "egipcios", "egypt", "egyptian",
-            "faraon", "pharaoh", "tutankamon", "tutankhamun",
-            "cleopatra", "ramses", "ramesses", "nefertiti",
-            "nilo", "nile",
-            "piramide", "piramides", "pyramid", "pyramids",
-            "esfinge", "sphinx",
-            "horus", "anubis", "osiris", "isis", "luxor", "tebas", "thebes",
-        ],
-    },
-    "renaissance": {
-        "name": "Italian Renaissance",
-        "era_brief": "doublet jackets, hose, fur-trimmed gowns, ruffed collars, velvet caps, Florence and Venice cityscapes, domed cathedrals, marble palaces, frescoed walls, easel paintings on wooden panels, quill pens, oil lanterns, gondolas, period nobility and merchants",
-        "keywords": [
-            "renacimiento", "renaissance",
-            "leonardo da vinci", "miguel angel", "michelangelo",
-            "rafael sanzio", "raphael", "botticelli",
-            "florencia", "florence", "medici", "savonarola", "vasari", "donatello",
-            "humanismo", "humanism",
-        ],
-    },
-    "viking": {
-        "name": "Viking Age Norse",
-        "era_brief": "wool tunics with brooches, fur cloaks, leather boots, conical iron helmets (no horns), round wooden shields, longswords and battle-axes, longhouses with thatched roofs, longships (drakkar), runestones, fjord landscapes",
-        "keywords": [
-            "vikingo", "vikinga", "vikingos", "viking", "vikings",
-            "ragnar", "odin", "thor", "valhalla",
-            "nordico", "norse", "runa", "runas", "drakkar",
-        ],
-    },
-    "aztec": {
-        "name": "Aztec Empire",
-        "era_brief": "maxtlatl loincloths, quechquemitl shawls, feathered headdresses, jaguar and eagle warrior costumes, obsidian-edged macuahuitl swords, stepped temple pyramids, painted codices, chinampa floating gardens, Lake Texcoco, Tenochtitlan plaza",
-        "keywords": [
-            "azteca", "aztecas", "aztec",
-            "tenochtitlan", "moctezuma", "montezuma",
-            "mexica", "huitzilopochtli", "quetzalcoatl",
-            "codice azteca", "codice borgia",
-        ],
-    },
-    "persian": {
-        "name": "Ancient Persia",
-        "era_brief": "long flowing robes with embroidered borders, conical Persian caps, ornate jewelry, recurve bows, scale armor, lamassu winged-bull statues, columns with double-bull capitals, Persepolis bas-reliefs, formal gardens, cypress trees",
-        "keywords": [
-            "persia", "persa", "persas", "persian",
-            "ciro el grande", "cyrus the great", "dario", "darius",
-            "jerjes", "xerxes",
-            "aquemenida", "achaemenid", "sasanida", "sassanid",
-            "zoroastro", "zoroaster", "persepolis",
-        ],
-    },
-    "mesopotamian": {
-        "name": "Ancient Mesopotamia",
-        "era_brief": "long woolen kaunakes tunics with fringed hems, conical hats, beards in tight curls, ziggurats, mud-brick walls, cuneiform clay tablets, cylinder seals, recurve bows, cedar gates, palm trees, Tigris and Euphrates river scenes",
-        "keywords": [
-            "mesopotamia", "mesopotamico",
-            "sumerio", "sumeria", "sumerian",
-            "babilonia", "babylon", "babilonico",
-            "asirio", "asiria", "assyrian",
-            "hammurabi", "gilgamesh",
-            "uruk", "ninive", "nineveh",
-            "ziggurat", "cuneiforme", "cuneiform",
-        ],
-    },
-    "ottoman": {
-        "name": "Ottoman Empire",
-        "era_brief": "long caftans and turbans, embroidered sashes, scimitar swords, Janissary uniforms with tall caps, domed mosques with slender minarets, Iznik blue-tile interiors, palace gardens, Topkapi-style architecture, bazaars, ornate carpets",
-        "keywords": [
-            "otomano", "otomana", "otomanos", "ottoman",
-            "imperio otomano", "ottoman empire",
-            "suleiman", "suleyman", "soliman el magnifico",
-            "mehmed ii", "topkapi",
-            "sultan otomano",
-        ],
-    },
-    "byzantine": {
-        "name": "Byzantine Empire",
-        "era_brief": "long ornate robes with gold embroidery, jeweled imperial crowns, mosaic-decorated church interiors, Hagia Sophia-style domes, gold-leaf icons, marble columns, candle-lit halls, Constantinople walls",
-        "keywords": [
-            "bizantino", "bizantina", "bizantinos", "byzantine",
-            "imperio bizantino", "byzantine empire",
-            "justiniano", "justinian", "teodora bizantina",
-            "santa sofia", "hagia sophia",
-            "constantinopla", "constantinople",
-            "iconoclasia", "iconoclasm",
-        ],
-    },
-    "medieval": {
-        "name": "Medieval Europe",
-        "era_brief": "tunics, hose, hooded cloaks, chainmail and plate armor, kite shields, longswords, knightly heraldry on tabards, stone castles with battlements, gothic cathedrals, peasant villages with thatched roofs, illuminated manuscripts, monks in robes",
-        "keywords": [
-            "medieval", "edad media", "middle ages",
-            "feudalismo", "feudal",
-            "caballero medieval", "knight templar",
-            "cruzada", "cruzadas", "crusade", "crusades",
-            "templario", "templarios", "templar",
-            "carlomagno", "charlemagne",
-            "ricardo corazon de leon", "saladino", "saladin",
-            "peste negra", "black death",
-        ],
-    },
-}
+# Visual context anchoring is now niche-agnostic and computed per-video by
+# `_get_context_profile()` — see that method. The LLM is asked once per video
+# to derive a setting + visual anchors + things-to-avoid brief from the
+# channel niche + topic + script, and that brief is injected into image-prompt
+# generation. This replaces the previous hardcoded CIVILIZATIONS dict, which
+# only covered ~17 historical eras and pushed every channel toward
+# civilization-flavored content. The new approach works for any niche
+# (history, science, finance, sports, food, tech, modern stories, etc.).
 
 
 class YouTube:
@@ -1084,20 +902,28 @@ INSTRUCTIONS:
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         else:
-            # Detect civilization for SOFT context only — used as setting hints,
-            # never as a per-prompt armor/clothing checklist (the previous
-            # implementation forced "lorica segmentata + plumed helmet + gladius"
-            # into every prompt, which produced 6 near-identical "Roman in armor"
-            # portraits and lost the actual story being told).
-            civ_info = self._get_civilization_info()
+            # SOFT setting context — used as background hints only, never as a
+            # per-prompt prop/clothing checklist (the previous civilization-
+            # focused implementation forced armor enumerations into every
+            # prompt and produced repetitive portraits). The brief is derived
+            # per-video from the niche + topic + script by the LLM, so it
+            # works for any subject — historical, modern, sports, food, tech.
+            ctx = self._get_context_profile()
             era_context = ""
-            if civ_info:
+            if ctx and (ctx.get("setting") or ctx.get("visual_anchors")):
+                bits = []
+                if ctx.get("setting"):
+                    bits.append(f"the story is set in **{ctx['setting']}**")
+                if ctx.get("visual_anchors"):
+                    bits.append(f"recurring visual cues for this setting: {ctx['visual_anchors']}")
+                if ctx.get("must_avoid"):
+                    bits.append(f"avoid: {ctx['must_avoid']}")
                 era_context = (
-                    f"\n\nERA CONTEXT (background only, not a checklist): the story is set in "
-                    f"**{civ_info['name']}**. Period clothing, architecture and props should appear "
-                    f"NATURALLY in scenes because the story happens in that time — never enumerate "
-                    f"armor pieces as a list. AVOID: modern uniforms, firearms, cars, electricity, "
-                    f"industrial-era clothing or architecture."
+                    "\n\nSETTING CONTEXT (background only, not a checklist): "
+                    + ". ".join(bits)
+                    + ". Setting-appropriate clothing, architecture and props should appear NATURALLY "
+                      "in scenes — never enumerate them as a list. Each prompt still focuses on a "
+                      "specific story beat, not a costume description."
                 )
 
             video_title = (self.metadata or {}).get("title", "") if hasattr(self, "metadata") else ""
@@ -1130,19 +956,20 @@ STEP 2 — Write each prompt applying ALL these rules:
 
 1. ENGLISH ONLY. Even if the script is in Spanish, every prompt is written in English. Translate proper nouns naturally ("Platón" → "Plato", "Alejandro" → "Alexander"). No Spanish words anywhere.
 
-2. ACTION FIRST. Open with a verb-driven action. The first 6-8 words of the prompt MUST contain the main verb. Examples of correct openings:
+2. ACTION FIRST. Open with a verb-driven action. The first 6-8 words of the prompt MUST contain the main verb. Examples of correct openings (the openings vary with the setting — historical, modern, sports, domestic, etc.):
      "[subject] grips the wooden handle of a heavy plow…"
      "A messenger runs across a wheat field at dawn…"
-     "[subject] lays the folded documents on the marble steps…"
-   FORBIDDEN openings (these produce static portraits): "[Name] standing in armor", "[Name] portrait", "A figure looking intently", "[Name] in golden cuirass in front of marble columns".
+     "[subject] slides three monitors aside and dials his broker…"
+     "The coach paces the sideline as the clock hits two minutes…"
+   FORBIDDEN openings (these produce static portraits regardless of subject): "[Name] standing in [costume]", "[Name] portrait", "A figure looking intently", "[Name] in [outfit] in front of [backdrop]".
 
-3. NARRATIVE OBJECT — MANDATORY. Every prompt names at least one CONCRETE OBJECT specific to THIS story (the plow, the oxen, the fasces, the wax tablet, the modest farmhouse, the senator's scroll). Without a story-specific object, the image becomes a generic period scene and you've failed the task.
+3. NARRATIVE OBJECT — MANDATORY. Every prompt names at least one CONCRETE OBJECT specific to THIS story (could be a plow, a wax tablet, a stack of trade tickets, a playbook, a wrench, a cracked phone screen — whatever the script actually contains). Without a story-specific object, the image becomes a generic setting scene and you've failed the task.
 
 4. UNIQUE BEATS. The {n_prompts} prompts must NEVER show the same scene twice. If you find yourself writing two prompts where the same character is doing roughly the same thing in the same place, scrap one and pick a different beat from the script.
 
 5. NAMED PERSON ANCHOR. When a real person appears, give a SHORT physical anchor (one phrase, max ~10 words) so the generator renders the right person — but the action and the object are the FOCUS, not the costume. Example: "[the protagonist], a sun-weathered older man with grey stubble, in a simple work tunic, grips the plow handle…" — the anchor is the brief clause, the action is the rest.
 
-6. ERA AS BACKGROUND. Period clothing/architecture appears NATURALLY in the scene because the story happens then. NEVER write a checklist like "wearing lorica segmentata, plumed Galea helmet, holding a gladius sword" — that's the failure mode we are explicitly avoiding. One or two natural era cues per prompt is enough.
+6. SETTING AS BACKGROUND. Setting-appropriate clothing, architecture and props appear NATURALLY in the scene because the story happens there. NEVER write a costume/prop checklist (e.g. "wearing X armor, helmet Y, holding Z sword" or "in a slim grey suit, silk navy tie, gold cufflinks, pocket square"). One or two natural setting cues per prompt is enough.
 
 7. NO ART-STYLE WORDS. Describe scenes only. NEVER write: "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art", "watercolor", "sketch". The visual style is added downstream.
 
@@ -1152,17 +979,17 @@ STEP 2 — Write each prompt applying ALL these rules:
 
 10. LENGTH. 35-60 English words per prompt.
 
-STRUCTURAL EXAMPLES — these show the PATTERN only; the names and objects below are placeholders. Your actual prompts must use the real subject, objects, and setting from THIS video's script, not anything from these examples.
+STRUCTURAL EXAMPLES — these show the PATTERN across different settings; the names, settings and objects below are placeholders. Your actual prompts must use the real subject, objects, and setting of THIS video's script.
 
-   GOOD ✓ "[subject] grips the wooden handle of a heavy plow behind two yoked oxen at dawn, bare-chested, sweat on his shoulders, freshly turned soil in long furrows, his sandals caked in dark earth, a low farmhouse on the rise behind."
-   GOOD ✓ "Two officials in formal garments hurry up a dirt path between old trees, urgent documents clutched against their chests, a small dwelling and grazing animals visible at the top of the rise."
-   GOOD ✓ "[subject] lays the bundle of authority symbols and a folded ceremonial garment on the stone steps of the hall, his back already half-turned toward the door, bystanders around him stunned with hands raised, slanted afternoon sun across the floor."
-   GOOD ✓ "[subject] walks back down a worn road toward his home at golden hour, his tool visible in the distant field, a modest house silhouetted against the sunset, his shadow long behind him."
+   GOOD ✓ (historical) "[subject] grips the wooden handle of a heavy plow behind two yoked oxen at dawn, bare-chested, sweat on his shoulders, freshly turned soil in long furrows, his sandals caked in dark earth, a low farmhouse on the rise behind."
+   GOOD ✓ (modern office) "A startup founder stares at a red downward chart on a wide monitor, knuckles white on a coffee mug, sticky notes peeling off the wall behind him, his cofounder pacing in the background phone in hand, dim evening light through floor-to-ceiling windows."
+   GOOD ✓ (sports) "The point guard cuts through two defenders and lays the ball off the glass under the rim, scoreboard frozen at 89-89, the home crowd half-standing, a referee's whistle still in mid-blow at the baseline."
+   GOOD ✓ (domestic / present-day) "A teenage girl stuffs a hoodie into her backpack on her bed, phone face-down on the duvet, posters peeling off the walls, her mother knocking on the half-open door behind her, late afternoon light through the blinds."
 
-   BAD ✗ "[subject] in elaborate armor standing in front of columns." (no verb, no narrative object, generic portrait — exact failure mode)
-   BAD ✗ "A warrior wearing full armor, holding a sword in the city square, dramatic side lighting." (costume checklist instead of story; no action specific to the script)
-   BAD ✗ "Officials in formal clothing in the meeting hall." (no specific moment, no story-specific object)
-   BAD ✗ "[subject] portrait, weathered face, wearing official robes, columns behind him." (forbidden opening — static portrait)
+   BAD ✗ "[subject] in elaborate outfit standing in front of [backdrop]." (no verb, no narrative object, generic portrait — exact failure mode)
+   BAD ✗ "A figure wearing a full uniform / kit / suit, holding a tool in the location, dramatic side lighting." (costume checklist instead of story; no action specific to the script)
+   BAD ✗ "Officials / players / employees in formal clothing in the meeting room." (no specific moment, no story-specific object)
+   BAD ✗ "[subject] portrait, weathered face, wearing official outfit, [backdrop] behind him." (forbidden opening — static portrait)
 
 Return ONLY a JSON array of {n_prompts} prompt strings, in chronological order following the script. No markdown, no explanation, no preamble. Just the array.
 
@@ -1260,29 +1087,19 @@ Example format:
                 if not prompts:
                     return "no prompts"
 
-                # 1. STATIC PORTRAIT — opens with "[Name] in/wearing/with [armor]"
-                #    or "A Roman/Greek/... [role] standing/looking/posing".
+                # 1. STATIC PORTRAIT — opens with a name/title followed by a
+                #    pose verb ("standing", "posing", "looking", "stares") or a
+                #    costume preposition ("in", "wearing", "with"). Niche-
+                #    agnostic: catches the failure mode regardless of subject
+                #    matter (history, sports, finance, etc.).
                 portrait_re = re.compile(
-                    r"^\s*(?:[A-ZÁÉÍÓÚÑ]\w+\s+(?:in|wearing|with|stands|stood|standing|posing|portrait)"
-                    r"|(?:A |An )?(?:Roman|Greek|Egyptian|Chinese|Japanese|Indian|Mayan|Inca|Aztec|Persian|"
-                    r"Mesopotamian|Ottoman|Byzantine|Medieval|Viking|Renaissance)\s+\w+\s+"
-                    r"(?:standing|posing|looking|stares?|stood))",
+                    r"^\s*(?:[A-ZÁÉÍÓÚÑ]\w+(?:\s+\w+){0,3}\s+"
+                    r"(?:in|wearing|with|stands|stood|standing|posing|portrait|stares?|looks|looking))\b",
                     re.IGNORECASE,
                 )
                 portrait_count = sum(1 for p in prompts if portrait_re.search(p or ""))
                 if portrait_count >= max(2, len(prompts) // 2):
                     return f"{portrait_count}/{len(prompts)} prompts open with a static portrait pattern"
-
-                # 2. ARMOR-CHECKLIST — many prompts mention 3+ armor pieces.
-                armor_terms = {"cuirass", "helmet", "gladius", "lorica", "galea",
-                               "greaves", "breastplate", "spear", "sword", "shield",
-                               "armor", "armour", "scabbard", "vambrace"}
-                def _armor_hits(p: str) -> int:
-                    low = (p or "").lower()
-                    return sum(1 for t in armor_terms if t in low)
-                heavy_armor = sum(1 for p in prompts if _armor_hits(p) >= 3)
-                if heavy_armor >= max(2, len(prompts) // 2):
-                    return f"{heavy_armor}/{len(prompts)} prompts read as armor checklists"
 
                 # 3. LEXICAL DUPLICATION — many prompts share their first 5 words.
                 first5 = [" ".join((p or "").lower().split()[:5]) for p in prompts]
@@ -1650,24 +1467,29 @@ Example format:
         will average between the two and produce neither.
         """
         clean_prompt = self._sanitize_image_prompt(prompt).rstrip(', .')
-        civ_info = self._get_civilization_info()
+        ctx = self._get_context_profile()
         custom_style = (self._image_style or "").strip()
 
         parts: list[str] = []
 
         if custom_style:
             # Style anchored at front for maximum weight, then scene, then a
-            # neutral era clause, then style repeated at the end as reminder.
+            # neutral setting clause, then style repeated at the end as reminder.
             short_style = custom_style if len(custom_style) <= 200 else custom_style[:200].rsplit(",", 1)[0]
             parts.append(f"ART STYLE — render the entire image in this style: {custom_style}")
             parts.append(clean_prompt)
-            if civ_info and civ_info.get("era_brief"):
-                parts.append(
-                    f"Era context — the scene is set in {civ_info['name']}. "
-                    f"Include era-appropriate items in the composition (clothing, architecture, weapons, "
-                    f"objects from this list, drawn in the art style above): {civ_info['era_brief']}. "
-                    f"No modern uniforms, no firearms, no industrial-era objects."
+            if ctx and (ctx.get("setting") or ctx.get("visual_anchors")):
+                setting_clause = (
+                    f"Scene context — the story is set in {ctx['setting']}. " if ctx.get("setting") else ""
                 )
+                anchors_clause = (
+                    f"Include setting-appropriate items naturally in the composition (drawn in the art style above): {ctx['visual_anchors']}. "
+                    if ctx.get("visual_anchors") else ""
+                )
+                avoid_clause = (
+                    f"Avoid: {ctx['must_avoid']}." if ctx.get("must_avoid") else ""
+                )
+                parts.append((setting_clause + anchors_clause + avoid_clause).strip())
             parts.append(
                 f"FINAL REMINDER — keep the entire image in the art style described above ({short_style}). "
                 f"Do NOT default to photorealism. Do NOT add realistic skin texture or photographic lighting. "
@@ -1675,13 +1497,19 @@ Example format:
             )
         else:
             parts.append(clean_prompt)
-            if civ_info and civ_info.get("era_brief"):
-                parts.append(
-                    f"Setting: {civ_info['name']}. "
-                    f"Period-accurate visual anchors that MUST appear when relevant — {civ_info['era_brief']}. "
-                    f"Any clothing, armor, weapons, architecture and objects strictly from this era only. "
-                    f"No modern military uniforms, no industrial-era clothing, no anachronistic items."
+            if ctx and (ctx.get("setting") or ctx.get("visual_anchors")):
+                setting_clause = (
+                    f"Setting: {ctx['setting']}. " if ctx.get("setting") else ""
                 )
+                anchors_clause = (
+                    f"Visual anchors that should appear naturally when relevant — {ctx['visual_anchors']}. "
+                    if ctx.get("visual_anchors") else ""
+                )
+                avoid_clause = (
+                    f"Avoid anachronistic / off-setting elements: {ctx['must_avoid']}."
+                    if ctx.get("must_avoid") else ""
+                )
+                parts.append((setting_clause + anchors_clause + avoid_clause).strip())
             parts.append(self.DEFAULT_BASE_STYLE)
 
         combined = ". ".join(p for p in parts if p)
@@ -1689,116 +1517,105 @@ Example format:
         # cap, so this leaves headroom while preventing prompt explosion.
         return combined[:1500]
 
-    def _niche_is_historical(self) -> bool:
+    def _get_context_profile(self) -> dict:
         """
-        True only if the channel niche explicitly references history, antiquity,
-        mythology, archaeology, an empire, or a medieval/ancient setting.
-        Used to gate civilization detection — modern-narrative channels
-        (drama, suspense, fitness, tech, etc.) should never have ancient-era
-        visual anchors injected because of an incidental "Platón" mention in
-        the script. Note: matches ``\\bhistoria\\b`` as a whole word so it
-        does NOT trigger on "Historias" (Spanish for "stories").
+        Niche-agnostic context anchor for image-prompt generation.
+
+        Uses the LLM to derive a per-video brief from the channel niche +
+        topic + script, returning a dict shaped like:
+
+            {
+                "setting": "<short descriptor of where/when/in-what-world the
+                            video takes place — e.g. 'Ancient Rome',
+                            'Modern Wall Street trading floor',
+                            'Pro NFL stadium', 'Tokyo high-end omakase
+                            kitchen', 'Suburban American household 2020s'>",
+                "visual_anchors": "<comma-separated concrete props, clothing,
+                            architecture, objects and environmental cues that
+                            should appear naturally in scenes for this video>",
+                "must_avoid": "<comma-separated visual elements that would be
+                            anachronistic or off-topic for this setting>"
+            }
+
+        Replaces the previous hardcoded CIVILIZATIONS keyword-matching system,
+        which only covered ~17 historical eras and forced every channel into
+        civilization-flavored visuals. The new approach works for any niche —
+        history, science, finance, sports, food, tech, modern stories, etc.
+
+        Cached per (subject, len(script)) tuple. Returns {} on parse failure
+        or when the LLM declines (in which case no extra anchor is injected
+        and the prompt falls back to scene-only content).
         """
-        import unicodedata, re
-
-        niche = (getattr(self, "niche", "") or "").strip()
-        if not niche:
-            return False
-
-        norm = "".join(
-            c for c in unicodedata.normalize("NFD", niche.lower())
-            if unicodedata.category(c) != "Mn"
-        )
-
-        word_kw = (
-            r"historia|historica|historico|historicas|historicos"
-            r"|history|historical"
-            r"|antigua|antiguo|antiguas|antiguos|ancient|antiquity"
-            r"|medieval|medievales|medievo"
-            r"|imperio|imperios|empire|empires"
-        )
-        if re.search(rf"\b(?:{word_kw})\b", norm):
-            return True
-
-        substr_kw = ("civilizacion", "arqueolog", "mitolog", "mythology", "archaeology")
-        return any(s in norm for s in substr_kw)
-
-    def _detect_civilization(self) -> str:
-        """
-        Match the topic + script against CIVILIZATIONS keyword lists and return
-        the winning civ key (or "" if none). Matching is accent- and
-        case-insensitive; highest keyword-hit count wins. Subject keywords
-        weigh 3x because the title is a stronger signal than the body. Cached
-        per (subject, script) pair.
-
-        Looking at the script too matters because abstract titles like "El
-        código de honor más extremo" don't carry civ keywords, but the body
-        of the script will mention Sparta, hoplites, etc.
-
-        Gated on ``_niche_is_historical()``: channels whose niche is not about
-        history (e.g. modern-drama "Impacto Stories") never trigger civ
-        detection, even if the LLM happens to drop a "Platón" quote in the
-        script.
-        """
-        import unicodedata
-
-        if not self._niche_is_historical():
-            return ""
-
         subject = (getattr(self, "subject", "") or "").strip()
         script = (getattr(self, "script", "") or "").strip()
+        niche = (getattr(self, "niche", "") or "").strip()
         if not subject and not script:
-            return ""
+            return {}
 
         cache_key = (subject, len(script))
-        if getattr(self, "_civ_cache_key", None) == cache_key:
-            return getattr(self, "_civ_key_cached", "") or ""
+        cached = getattr(self, "_ctx_profile_cached", None)
+        if getattr(self, "_ctx_profile_key", None) == cache_key and cached is not None:
+            return cached
 
-        def _norm(s: str) -> str:
-            s = s.lower()
-            return "".join(
-                c for c in unicodedata.normalize("NFD", s)
-                if unicodedata.category(c) != "Mn"
-            )
+        script_excerpt = script[:1200]
+        prompt = f"""You are a visual research assistant. Read the channel niche, the video topic and the script excerpt, and produce a JSON brief that will anchor image generation for this single video.
 
-        norm_subject = _norm(subject)
-        norm_script = _norm(script[:4000])  # cap so huge scripts don't dominate
+CHANNEL NICHE: {niche or "(not specified)"}
+VIDEO TOPIC: {subject or "(not specified)"}
+SCRIPT EXCERPT:
+\"\"\"
+{script_excerpt}
+\"\"\"
 
-        best_civ = ""
-        best_score = 0
-        for civ, data in CIVILIZATIONS.items():
-            score = 0
-            for kw in data["keywords"]:
-                k = _norm(kw)
-                if k in norm_subject:
-                    score += 3
-                if k in norm_script:
-                    score += 1
-            if score > best_score:
-                best_score = score
-                best_civ = civ
+Return ONLY a JSON object with EXACTLY these three string fields:
+- "setting": a short descriptor of WHERE and WHEN the story happens — pick the most specific real-world setting that fits the topic and script (e.g. "Ancient Rome, late Republic", "Modern Wall Street trading floor", "Pro NFL stadium, game day", "Tokyo high-end omakase kitchen", "Silicon Valley startup office, 2020s", "Rural American farmhouse, present day", "Open ocean, modern container ship"). Do NOT default to "ancient civilization" unless the topic clearly requires it.
+- "visual_anchors": a comma-separated list of CONCRETE props, clothing, architecture, vehicles, tools, environmental details that should appear naturally in scenes from this setting. 8 to 14 items. Be specific (materials, eras, styles).
+- "must_avoid": a comma-separated list of visual elements that would be anachronistic, off-topic or break immersion for this setting. 4 to 8 items.
 
-        self._civ_cache_key = cache_key
-        self._civ_key_cached = best_civ
-        if best_civ and get_verbose():
-            info(f" => Detected civilization: {best_civ} (score {best_score})")
-        return best_civ
-
-    def _get_civilization_info(self) -> dict:
-        """
-        Returns {"key": ..., "name": ..., "era_brief": ...} for the civilization
-        detected from self.subject, or {} if none. Used by `generate_prompts` /
-        `generate_long_prompts` to anchor every scene to the correct historical era.
-        """
-        civ_key = self._detect_civilization()
-        if not civ_key:
+RULES:
+- Match the SETTING to the actual subject. A topic about a modern athlete must NOT get a "Greek Olympics" setting just because the channel niche mentions sports history.
+- If the topic is abstract or the script is generic, pick the setting that most viewers would picture when reading the topic.
+- Output ONLY the JSON object — no markdown, no preamble, no explanation. No code fences.
+"""
+        try:
+            raw = str(self.generate_response(prompt) or "").strip()
+        except Exception as e:
+            if get_verbose():
+                warning(f"Context profile LLM call failed: {e}")
+            self._ctx_profile_key = cache_key
+            self._ctx_profile_cached = {}
             return {}
-        data = CIVILIZATIONS.get(civ_key, {})
-        return {
-            "key": civ_key,
-            "name": data.get("name", civ_key.title()),
-            "era_brief": data.get("era_brief", ""),
-        }
+
+        cleaned = raw.replace("```json", "").replace("```", "").strip()
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if match:
+            cleaned = match.group(0)
+
+        profile: dict = {}
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                profile = {
+                    "setting": str(parsed.get("setting", "")).strip(),
+                    "visual_anchors": str(parsed.get("visual_anchors", "")).strip(),
+                    "must_avoid": str(parsed.get("must_avoid", "")).strip(),
+                }
+                # Drop the brief entirely if the LLM produced an empty / useless
+                # blob — prevents injecting a placeholder anchor that would
+                # confuse the image-prompt model.
+                if not profile["setting"] and not profile["visual_anchors"]:
+                    profile = {}
+        except Exception as e:
+            if get_verbose():
+                warning(f"Context profile JSON parse failed: {e}")
+            profile = {}
+
+        if profile and get_verbose():
+            info(f" => Context profile: setting='{profile.get('setting', '')[:80]}'")
+
+        self._ctx_profile_key = cache_key
+        self._ctx_profile_cached = profile
+        return profile
 
     def _resolve_voice(self, voice: str) -> str:
         """Resolve a voice alias (e.g. 'Pablo') or raw Edge-TTS ID to its full voice ID."""
@@ -4319,45 +4136,56 @@ Return ONLY the JSON. No markdown, no explanation."""
             f'\nSECTION {i+1}: "{sec}"\n' for i, sec in enumerate(sections)
         )
 
-        # Era anchor — names the historical period inside the prompt so the LLM
-        # doesn't drift into modern visuals on abstract script lines.
-        civ_info = self._get_civilization_info()
+        # Setting anchor — names the world/era of THIS video inside the prompt
+        # so the LLM doesn't drift into off-setting visuals on abstract script
+        # lines. Niche-agnostic: works for history, modern, sports, food, tech,
+        # etc. (see `_get_context_profile`).
+        ctx = self._get_context_profile()
         era_clause = ""
-        if civ_info:
+        if ctx and (ctx.get("setting") or ctx.get("visual_anchors")):
+            setting_line = ctx.get("setting") or "(see niche)"
+            anchors_line = ctx.get("visual_anchors") or "(infer from topic)"
+            avoid_line = ctx.get("must_avoid") or "anything that breaks the setting's immersion"
             era_clause = (
-                f"\n\n=== HISTORICAL ERA — NON-NEGOTIABLE ===\n"
-                f"This documentary is set in: **{civ_info['name']}**.\n"
-                f"Period visual anchors: {civ_info['era_brief']}.\n"
-                f"FORBIDDEN: modern military uniforms, industrial-era clothing, firearms, tanks, cars, "
-                f"modern architecture, electricity, anachronistic objects of any kind.\n"
-                f"REQUIRED in every prompt with a person: at least 2 specific period clothing/armor terms "
-                f"from the era markers above.\n"
+                f"\n\n=== SETTING — NON-NEGOTIABLE ===\n"
+                f"This documentary is set in: **{setting_line}**.\n"
+                f"Visual anchors that should appear naturally when relevant: {anchors_line}.\n"
+                f"FORBIDDEN visual elements (anachronistic / off-setting): {avoid_line}.\n"
+                f"REQUIRED in every prompt with a person: clothing, props and architecture that belong to the setting above.\n"
                 f"=========================================="
             )
 
-        prompt = f"""Task: write {n_prompts} image prompts for a long-form documentary about "{self.subject}".{era_clause}
+        # Inline guidance string for the PERIOD ACCURACY rule below — kept
+        # short to avoid bloating the prompt.
+        period_inline = (
+            f"Setting is **{ctx['setting']}**. Every prompt with a person MUST name at least 2 specific clothing/prop items that belong to this setting, and AVOID: {ctx.get('must_avoid', '')}. "
+            if (ctx and ctx.get("setting")) else ""
+        )
 
-You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section talks about "the senators debating in the curia at noon", the image is exactly that.
+        prompt = f"""Task: write {n_prompts} image prompts for a long-form video about "{self.subject}".{era_clause}
+
+You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section talks about "the team debating in the boardroom at noon", the image is exactly that.
 
 ABSOLUTE RULES (every prompt):
-1. ENGLISH ONLY — NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns naturally (e.g. "Platón" -> "Plato", "Alejandro Magno" -> "Alexander the Great"). NO Spanish words anywhere in the output.
+1. ENGLISH ONLY — NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns naturally. NO Spanish words anywhere in the output.
 2. SCENE FIDELITY. Open with a concrete action (subject + verb) drawn from the section text. Whatever the section is talking about, that is what the image shows.
-3. NAMED CHARACTER IDENTITY. When the script names a real historical person, do NOT just write their name — describe them physically (age, hair, beard, build) so the image generator can render the correct person. Examples: Plato -> "an old Greek philosopher with a long white beard, balding head, in white himation"; Caesar -> "a stern middle-aged Roman general, short curly hair, clean-shaven, in purple-bordered toga"; Cleopatra -> "young Egyptian queen, dark kohl-lined eyes, straight black hair with gold beaded braids, white linen pleated dress, gold collar". The physical description MUST appear every time they're shown.
-4. PERIOD ACCURACY — STRICT. {("Era is **" + civ_info['name'] + "**. Every prompt with a person MUST name at least 2 specific period clothing/armor items from this era. No modern military uniforms, no firearms, no industrial-era visuals — ever. ") if civ_info else ""}If a person appears, describe their clothing exactly as it would be in the right historical period/place/culture (fabric, cut, color, footwear, headwear). Same for architecture, weapons, tools, transport, and 2-3 supporting objects. If the section names a real person, place or event, use that proper noun.
+3. NAMED CHARACTER IDENTITY. When the script names a real person, do NOT just write their name — describe them physically (age, hair, beard, build, clothing) so the image generator can render the correct person. The physical description MUST appear every time they're shown.
+4. SETTING ACCURACY — STRICT. {period_inline}If a person appears, describe their clothing exactly as it would look in the setting of this video (fabric, cut, color, footwear, headwear). Same for architecture, tools, vehicles and 2-3 supporting objects. If the section names a real person, place or event, use that proper noun.
 5. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing — but never the level of realism.
 6. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later — your job is content only.
 7. LENGTH. 40-70 English words per prompt. No camera or lens jargon.
 
-Examples of GOOD scene-only prompts:
-- "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his Thirteenth Legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces."
-- "A samurai in dark lacquered do armor stands mid-strike with his katana in a wooden dojo, paper shoji screens around him, morning light falling on tatami mats, wooden practice swords stacked against a beam, sweat on his temple."
-- "A Byzantine sailor on a dromon warship leans over a bronze siphon and ignites a jet of Greek fire toward an enemy galley, flames arcing over the dark sea, gold-trimmed sails, oars mid-stroke, the walls of Constantinople in the distance."
+Examples of GOOD scene-only prompts (the PATTERN matters — names and props will differ for your topic):
+- (Historical setting) "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces."
+- (Modern setting) "A young trader leans over three glowing monitors on the floor of the New York Stock Exchange, mouth open mid-shout, paper tickets crumpled on his keyboard, the index ticker spiking red overhead, colleagues running behind him."
+- (Sports setting) "A quarterback in a navy and red jersey throws a tight spiral over the defensive line under stadium floodlights, mud streaking his white pants, breath visible in cold air, tens of thousands of blurred fans behind the end zone."
+- (Domestic / present-day setting) "A father in a flannel shirt kneels beside an open dishwasher in a small kitchen at night, holding a flashlight, water pooling at his knees, his daughter watching from the hallway in pyjamas, single warm bulb above the sink."
 
 Examples of BAD prompts (DO NOT WRITE THESE):
-- "An ancient Roman scene." (too vague, no action)
-- "Stylized cartoon of Caesar crossing a river." (forbidden art-style word)
-- "A historical illustration of a samurai." (forbidden art-style word, no action)
-- "Symbolic image of Byzantine power." (no concrete moment)
+- "An ancient scene." (too vague, no action, no setting)
+- "Stylized cartoon of [subject] doing [action]." (forbidden art-style word)
+- "A historical illustration of [subject]." (forbidden art-style word, no action)
+- "Symbolic image of [subject]'s power." (no concrete moment)
 
 {sections_text}
 Forbidden words (art-style / camera jargon): cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, ukiyo-e, sketch.
