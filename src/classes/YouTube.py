@@ -3406,7 +3406,10 @@ Tema: {self.subject}
 {brief_block}
 ESTRUCTURA OBLIGATORIA (usa estos marcadores EXACTOS):
 [INTRO]
-Gancho inicial poderoso (5-7 oraciones, 120-180 palabras). Empieza con un dato impactante, pregunta provocadora o afirmación audaz.
+Gancho inicial poderoso seguido de una breve invitación al like (6-8 oraciones, 140-200 palabras). Estructura:
+1. Empieza con un dato impactante, pregunta provocadora o afirmación audaz que enganche al espectador.
+2. Desarrolla brevemente la promesa del video (qué van a descubrir).
+3. Antes de arrancar el tema, incluye 1-2 oraciones naturales y cálidas invitando al espectador a dar "me gusta" si disfruta este tipo de contenido, para apoyar a seguir creando videos así. Redáctalo de forma orgánica y humana, NO suene a publicidad ni a lista de instrucciones.
 
 {sections_block}
 
@@ -3518,8 +3521,11 @@ REGLAS DE ESTILO:
         intro_prompt = f"""Eres un narrador experto de documentales. Escribe SOLO la INTRODUCCIÓN de un guion documental sobre: {self.subject}
 {brief_block}
 REGLAS:
-- 5-7 oraciones (120-180 palabras).
-- Empieza con un gancho poderoso: dato impactante, pregunta provocadora o afirmación audaz.
+- 6-8 oraciones (140-200 palabras).
+- Estructura de la intro:
+  1. Empieza con un gancho poderoso: dato impactante, pregunta provocadora o afirmación audaz.
+  2. Desarrolla brevemente la promesa del video (qué va a descubrir el espectador).
+  3. Antes de arrancar el tema, incluye 1-2 oraciones naturales y cálidas invitando al espectador a dar "me gusta" si disfruta este tipo de contenido, para apoyar a seguir creando videos así. Redáctalo de forma orgánica y humana, NO suene a publicidad ni a lista de instrucciones.
 - Lenguaje vívido y sensorial. Oraciones CORTAS (máximo 20 palabras).
 - ESCRIBE TODO EN {lang}. NO uses inglés.
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
