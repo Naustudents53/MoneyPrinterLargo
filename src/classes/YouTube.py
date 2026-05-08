@@ -1105,10 +1105,14 @@ Example format:
                     "setting from the others. NEVER write \"X standing in armor in front of "
                     "columns\" — that is the exact pattern we are rejecting."
                 )
-                retry_completion = (
-                    str(self.generate_response(stricter))
-                    .replace("```json", "").replace("```", "").strip()
-                )
+                try:
+                    retry_completion = (
+                        str(self.generate_response(stricter))
+                        .replace("```json", "").replace("```", "").strip()
+                    )
+                except Exception:
+                    warning("   Stricter retry failed (all LLM providers unavailable); keeping original prompts.")
+                    retry_completion = ""
                 retry_prompts: List[str] = []
                 try:
                     retry_prompts = _extract_prompts(json.loads(retry_completion))
