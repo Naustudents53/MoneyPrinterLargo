@@ -87,16 +87,18 @@ _GENERIC_TOPIC_TOKENS = {
 # `hook_profile` — falls back to "educational" if missing or unknown.
 HOOK_PROFILES: dict = {
     "educational": [
-        ("Classic curiosity question", '"¿Sabías que...?"'),
-        ("Invitation to imagine a scene", '"Imagínate esto:" o "Imagina que..."'),
-        ("Direct shocking statistic (no question)", '"El 90% de la gente no sabe que..."'),
-        ("Hidden secret reveal", '"Hay algo que nadie te contó sobre..."'),
-        ("Counterintuitive claim", '"Todo lo que crees sobre X está mal."'),
-        ("Negation cliffhanger", '"No vas a creer lo que pasó cuando..."'),
-        ("Time-warp opener", '"Hace dos mil años, en [lugar], [escena breve]..." o "En [siglo o año], [lugar] vivía un día como cualquier otro, hasta que..."'),
-        ("Stakes-first pivotal moment", '"Una sola idea, una sola decisión o una sola noche cambió el rumbo de [civilización, era o pueblo]."'),
-        ("Cultural lens flip", '"Para nosotros sería [reacción moderna: impensable, una locura, un crimen], pero en [época o civilización] era [normalidad opuesta: lo más natural, una virtud, lo esperado]."'),
-        ("Hidden origin reveal", '"Lo que hoy conocemos como [cosa familiar] empezó con algo que casi nadie recuerda: [origen olvidado]."'),
+        ("You-are-there immersion", 'Abre con una escena inmersiva en segunda persona que coloca al espectador en el momento exacto: "En este preciso instante, hace [tiempo], [lugar concreto]. [Escena sensorial breve: qué se ve, qué se escucha, qué ocurre]. Nada de lo que conoces hoy existiría si esto hubiera salido distinto."'),
+        ("Impossible true fact", 'Arranca con un hecho que suena falso pero es 100% real, enunciado como afirmación rotunda sin pregunta: "[Hecho completamente contraintuitivo sobre el tema, enunciado como verdad absoluta]. No es ficción. Ocurrió de verdad."'),
+        ("Scale of time awe", 'Usa la escala del tiempo para crear vértigo existencial: "Si comprimieras toda la historia de [la Tierra / la humanidad / la civilización] en [una hora / un año / un día], [el evento del video] ocurriría exactamente en [momento preciso]. Todo lo que vino después cambió en segundos."'),
+        ("Survival on the edge", 'Perfecto para prehistoria y eventos de extinción: "Hubo un momento en que [especie / civilización / grupo] éramos menos de [número pequeño]. Un solo error, una sola tormenta, una sola mala decisión, y esta historia no existiría. Nosotros tampoco."'),
+        ("The consequence chain", 'Revela la cadena de consecuencias de un solo evento: "Sin [evento o decisión del tema], [cosa completamente familiar hoy] no existiría. El mundo entero sería diferente. Y todo empezó con algo que casi nadie recuerda."'),
+        ("Time-warp scene drop", 'Suelta al espectador directamente en el momento histórico sin preámbulo: "[Año o época exacta], [lugar preciso]. [Escena de dos frases: lo que ocurre, lo que está en juego]. Nadie en ese momento sabía que estaban cambiando el mundo."'),
+        ("The reversal", 'Destruye una creencia popular con una afirmación directa: "Durante [siglos / décadas / toda la historia], todos creyeron que [idea popular sobre el tema]. Estaban completamente equivocados. La realidad era algo que nadie quería aceptar."'),
+        ("Discovery shock", 'Arranca desde el momento del descubrimiento arqueológico o científico: "Cuando [arqueólogos / científicos / exploradores] abrieron [lugar o hallazgo del tema], lo que encontraron dentro contradecía todo lo que creíamos saber. Algunos de ellos nunca volvieron a ser los mismos."'),
+        ("The forgotten turning point", 'Rescata un momento decisivo que la historia olvidó: "La historia recuerda [evento famoso o persona famosa]. Pero olvidó por completo el momento en que [evento clave del tema] lo hizo posible. Sin eso, nada de lo que siguió habría ocurrido."'),
+        ("Cultural lens flip", '"Para nosotros sería [reacción moderna: impensable, una locura, un crimen]. Pero en [época o civilización], era exactamente lo contrario: [normalidad opuesta]. Y tenían razones que hoy casi nadie conoce."'),
+        ("Lost world reveal", 'Abre describiendo un mundo radicalmente diferente al nuestro: "Hace [tiempo], existía un mundo tan distinto al nuestro que si pudieras verlo hoy no reconocerías ni el cielo. [Detalle concreto impactante del tema]. Ese mundo desapareció, y lo que lo destruyó también creó todo lo que somos."'),
+        ("The specific moment", 'Ultra-precisión temporal para crear sensación de inevitabilidad: "El [fecha o momento exacto], en [lugar específico], [persona o grupo] tomó [decisión o acción concreta]. En ese instante, sin saberlo, decidió el destino de [civilización / especie / era]."'),
     ],
     # Animated storytelling: epic, horror, mystery, adventure. Hooks designed
     # to be addictive and pull the viewer into the scene immediately.
@@ -902,12 +904,6 @@ INSTRUCTIONS:
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         else:
-            # SOFT setting context — used as background hints only, never as a
-            # per-prompt prop/clothing checklist (the previous civilization-
-            # focused implementation forced armor enumerations into every
-            # prompt and produced repetitive portraits). The brief is derived
-            # per-video from the niche + topic + script by the LLM, so it
-            # works for any subject — historical, modern, sports, food, tech.
             ctx = self._get_context_profile()
             era_context = ""
             if ctx and (ctx.get("setting") or ctx.get("visual_anchors")):
@@ -930,73 +926,56 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
 
             video_title = (self.metadata or {}).get("title", "") if hasattr(self, "metadata") else ""
 
-            # Pass the WHOLE script (not pre-sliced sections) so the LLM can
-            # pick {n_prompts} narratively distinct beats by itself. Mechanical
-            # sectioning into ~equal sentence chunks gives the LLM uselessly
-            # short slices and it falls back to generic character portraits.
-            script_block = (self.script or "").strip()
-
-            prompt = f"""Task: write {n_prompts} image prompts for a YouTube Short. The {n_prompts} prompts together must VISUALLY TELL the story narrated in the script — different moments, different actions, different places. NOT {n_prompts} portraits of the same character.{era_context}
+            prompt = f"""Task: write exactly {n_prompts} image prompts for a YouTube Short. The script has been divided into {n_prompts} sections — write ONE image prompt per section. Each image must visually represent what is being narrated in THAT EXACT SECTION: the specific action happening, the environment where it takes place, and the atmosphere or emotion of that moment.{era_context}
 
 VIDEO TITLE: {video_title or self.subject}
 TOPIC: {self.subject}
 
-FULL SCRIPT (read it whole — do NOT slice mechanically; pick the {n_prompts} most VISUALLY DISTINCT story beats):
-\"\"\"
-{script_block}
-\"\"\"
+SCRIPT DIVIDED INTO {n_prompts} SECTIONS (prompt N must illustrate section N):
+{sections_text}
 
-WORK IN TWO STEPS (internally — only the final JSON is returned):
+RULES FOR EACH PROMPT:
 
-STEP 1 — Pick {n_prompts} NARRATIVELY DISTINCT BEATS from the script. A beat is a single concrete action: "X does Y in place Z with object W". Each beat must:
-  • have a different VERB from the others ("plows", "addresses senators", "lays down the fasces", "walks home through wheat fields", "wraps a toga at dawn")
-  • happen in a different SETTING (a farm, a senate floor, a battlefield, a road, a doorway)
-  • feature a different NARRATIVE OBJECT — a CONCRETE thing that belongs to THIS specific story (a wooden plow, the fasces lictoriae, a wax tablet, oxen, a senator's purple-bordered toga, a humble farmhouse door). NOT generic period props.
-  • {n_prompts} beats = {n_prompts} different visual moments. If two of your beats look similar, replace one.
+1. SECTION FIDELITY — MANDATORY. Read your assigned section carefully. The image must show what is LITERALLY happening in those sentences: the action described, the place mentioned, the object referenced, the emotion conveyed. Do NOT invent a scene unrelated to the section. If the section describes a landscape or a phenomenon with no people, depict that landscape or phenomenon.
 
-STEP 2 — Write each prompt applying ALL these rules:
+2. FULL SCENE DESCRIPTION. Every prompt must describe THREE things together:
+   a) THE ACTION or main subject — what is happening or what is being shown
+   b) THE ENVIRONMENT — where it takes place, time of day, weather, architecture, terrain
+   c) THE ATMOSPHERE — lighting, mood, emotional tone that matches what the narrator is describing
 
-1. ENGLISH ONLY. Even if the script is in Spanish, every prompt is written in English. Translate proper nouns naturally ("Platón" → "Plato", "Alejandro" → "Alexander"). No Spanish words anywhere.
+3. ENGLISH ONLY. Even if the script is in Spanish, every prompt is in English. Translate proper nouns naturally ("Platón" → "Plato", "Alejandro" → "Alexander"). No Spanish words anywhere.
 
-2. ACTION FIRST. Open with a verb-driven action. The first 6-8 words of the prompt MUST contain the main verb. Examples of correct openings (the openings vary with the setting — historical, modern, sports, domestic, etc.):
-     "[subject] grips the wooden handle of a heavy plow…"
-     "A messenger runs across a wheat field at dawn…"
-     "[subject] slides three monitors aside and dials his broker…"
-     "The coach paces the sideline as the clock hits two minutes…"
-   FORBIDDEN openings (these produce static portraits regardless of subject): "[Name] standing in [costume]", "[Name] portrait", "A figure looking intently", "[Name] in [outfit] in front of [backdrop]".
+4. ACTION OR SCENE FIRST. If people appear, open with a verb-driven action. If the section describes a place, landscape, or phenomenon, open with that environment vividly described.
+   FORBIDDEN openings: "[Name] standing in [costume]", "[Name] portrait", "A figure looking intently", "[Name] in [outfit] in front of [backdrop]".
 
-3. NARRATIVE OBJECT — MANDATORY. Every prompt names at least one CONCRETE OBJECT specific to THIS story (could be a plow, a wax tablet, a stack of trade tickets, a playbook, a wrench, a cracked phone screen — whatever the script actually contains). Without a story-specific object, the image becomes a generic setting scene and you've failed the task.
+5. PEOPLE AND EMOTION. When people appear, describe their facial expression and body language to match the emotion of the moment (fear, determination, awe, grief, triumph, etc.). Give a brief physical anchor for named real people (max ~10 words). The emotion must match what the narrator is saying in that section.
 
-4. UNIQUE BEATS. The {n_prompts} prompts must NEVER show the same scene twice. If you find yourself writing two prompts where the same character is doing roughly the same thing in the same place, scrap one and pick a different beat from the script.
+6. CONCRETE OBJECTS. Name at least one specific object from the section (a tool, weapon, structure, artifact, natural element). Generic props are forbidden — use only what the script actually references.
 
-5. NAMED PERSON ANCHOR. When a real person appears, give a SHORT physical anchor (one phrase, max ~10 words) so the generator renders the right person — but the action and the object are the FOCUS, not the costume. Example: "[the protagonist], a sun-weathered older man with grey stubble, in a simple work tunic, grips the plow handle…" — the anchor is the brief clause, the action is the rest.
+7. UNIQUE SCENES. No two prompts may show the same scene. Each of the {n_prompts} sections happens at a different moment — use that to ensure visual variety.
 
-6. SETTING AS BACKGROUND. Setting-appropriate clothing, architecture and props appear NATURALLY in the scene because the story happens there. NEVER write a costume/prop checklist (e.g. "wearing X armor, helmet Y, holding Z sword" or "in a slim grey suit, silk navy tie, gold cufflinks, pocket square"). One or two natural setting cues per prompt is enough.
+8. NO ART-STYLE WORDS. Describe scenes only. NEVER write: "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art", "watercolor", "sketch". The visual style is added downstream.
 
-7. NO ART-STYLE WORDS. Describe scenes only. NEVER write: "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art", "watercolor", "sketch". The visual style is added downstream.
+9. NO CAMERA JARGON. NEVER write: "cinematic", "photograph", "camera", "shot", "lens", "close-up", "4K", "8K", "HD", "render", "bokeh", "macro", "aerial".
 
-8. NO CAMERA JARGON. NEVER write: "cinematic", "photograph", "camera", "shot", "lens", "close-up", "4K", "8K", "HD", "render", "bokeh", "macro", "aerial".
+10. NO MULTI-IMAGE TRIGGERS: "series", "sequence", "scenes" (plural), "panels", "panel", "storyboard", "montage", "collage", "grid", "split screen", "frames", "multiple", "diptych", "triptych", "side by side".
 
-9. NO MULTI-IMAGE TRIGGERS (these make generators output collages): "series", "sequence", "scenes" (plural), "panels", "panel", "storyboard", "comic strip", "montage", "collage", "grid", "split screen", "frames", "multiple", "diptych", "triptych", "before-and-after", "side by side".
+11. LENGTH. 40-65 English words per prompt.
 
-10. LENGTH. 35-60 English words per prompt.
+EXAMPLES — pattern only, not templates to copy:
+   GOOD ✓ (person + action + emotion) "A exhausted soldier drops to his knees on a smoldering battlefield at dusk, clutching a broken spear, his face streaked with ash and tears, enemy fortifications burning in the distance behind him, smoke rising into an orange sky."
+   GOOD ✓ (landscape / no people) "A vast primeval forest stretches to the horizon under a hazy amber sky, enormous ferns and cycad trees towering over a muddy river delta, volcanic mountains smoking faintly in the far background, the air thick with mist at dawn."
+   GOOD ✓ (phenomenon) "A massive wall of glacial ice advances slowly across a flat tundra plain under a pale grey sky, uprooting ancient trees in its path, frozen mammoths visible beneath the translucent surface, a herd of woolly rhinoceroses fleeing in the foreground."
+   GOOD ✓ (discovery moment) "An archaeologist kneels in a narrow underground chamber, trembling hand holding a torch over a perfectly preserved golden death mask resting on stone, dust particles floating in the warm light, rough-hewn rock walls pressing close on all sides."
 
-STRUCTURAL EXAMPLES — these show the PATTERN across different settings; the names, settings and objects below are placeholders. Your actual prompts must use the real subject, objects, and setting of THIS video's script.
+   BAD ✗ "A figure in historical clothing stands in front of a landscape." (no action, no emotion, no concrete object, no environment detail)
+   BAD ✗ "[Name] portrait with dramatic lighting." (forbidden opening, no scene)
+   BAD ✗ "Ancient battle scene with soldiers fighting." (too generic — must reflect the specific section content)
 
-   GOOD ✓ (historical) "[subject] grips the wooden handle of a heavy plow behind two yoked oxen at dawn, bare-chested, sweat on his shoulders, freshly turned soil in long furrows, his sandals caked in dark earth, a low farmhouse on the rise behind."
-   GOOD ✓ (modern office) "A startup founder stares at a red downward chart on a wide monitor, knuckles white on a coffee mug, sticky notes peeling off the wall behind him, his cofounder pacing in the background phone in hand, dim evening light through floor-to-ceiling windows."
-   GOOD ✓ (sports) "The point guard cuts through two defenders and lays the ball off the glass under the rim, scoreboard frozen at 89-89, the home crowd half-standing, a referee's whistle still in mid-blow at the baseline."
-   GOOD ✓ (domestic / present-day) "A teenage girl stuffs a hoodie into her backpack on her bed, phone face-down on the duvet, posters peeling off the walls, her mother knocking on the half-open door behind her, late afternoon light through the blinds."
-
-   BAD ✗ "[subject] in elaborate outfit standing in front of [backdrop]." (no verb, no narrative object, generic portrait — exact failure mode)
-   BAD ✗ "A figure wearing a full uniform / kit / suit, holding a tool in the location, dramatic side lighting." (costume checklist instead of story; no action specific to the script)
-   BAD ✗ "Officials / players / employees in formal clothing in the meeting room." (no specific moment, no story-specific object)
-   BAD ✗ "[subject] portrait, weathered face, wearing official outfit, [backdrop] behind him." (forbidden opening — static portrait)
-
-Return ONLY a JSON array of {n_prompts} prompt strings, in chronological order following the script. No markdown, no explanation, no preamble. Just the array.
+Return ONLY a JSON array of {n_prompts} prompt strings, one per section in order. No markdown, no explanation, no preamble.
 
 Example format:
-["beat 1 prompt …", "beat 2 prompt …", "beat 3 prompt …", "beat 4 prompt …", "beat 5 prompt …", "beat 6 prompt …"]"""
+["section 1 prompt …", "section 2 prompt …", "section 3 prompt …", "section 4 prompt …", "section 5 prompt …", "section 6 prompt …"]"""
 
         completion = (
             str(self.generate_response(prompt))
