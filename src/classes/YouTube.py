@@ -3674,9 +3674,13 @@ REGLAS:
                 f"Genera un título para un video largo de YouTube sobre: {self.subject}.\n"
                 f"REQUISITOS DEL TÍTULO:\n"
                 f"- Máximo 70 caracteres.\n"
-                f"- Clickbait MODERADO: incluye exactamente 1 o 2 palabras clave en MAYÚSCULAS para enfatizar "
-                f"(ejemplos: SECRETO, NUNCA, JAMÁS, NADIE, OCULTO, VERDAD, IMPOSIBLE, REAL, PROHIBIDO, INCREÍBLE).\n"
-                f"- Despierta curiosidad o promete una revelación.\n"
+                f"- Puede incluir opcionalmente 1 palabra en MAYÚSCULAS para énfasis, elegida según lo que "
+                f"mejor encaje con el tema específico del video. Ejemplos de palabras válidas según contexto: "
+                f"NUNCA, JAMÁS, NADIE, VERDAD, REAL, IMPOSIBLE, PROHIBIDO, INCREÍBLE, OLVIDADO, PERDIDO, "
+                f"OCULTO, BRUTAL, EXTREMO, DEFINITIVO, ÚNICO, ABSOLUTO, ÉPICO. "
+                f"PROHIBIDO usar SECRETO o SECRETOS — están sobreutilizados. Elige la palabra que mejor describa "
+                f"el tono real del video, no la primera que se te ocurra.\n"
+                f"- Despierta curiosidad o promete una revelación basada en el tema real.\n"
                 f"- SIN signos de exclamación ni de interrogación.\n"
                 f"- SIN emojis, SIN comillas, SIN hashtags.\n"
                 f"- ESCRIBE EN {self.language}.\n"
@@ -5280,7 +5284,7 @@ No markdown. No explanation. Just the JSON array."""
                     warning(f"URL-resolve navigation failed (attempt {attempt}): {e}")
                     time.sleep(3)
                     continue
-                time.sleep(4 if attempt == 1 else 6)
+                time.sleep(6 if attempt == 1 else 10)
 
                 try:
                     videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
@@ -5299,10 +5303,10 @@ No markdown. No explanation. Just the JSON array."""
                     warning(
                         f"URL-resolve listing showed an error page (attempt {attempt}/5). Retrying..."
                     )
-                    time.sleep(2)
+                    time.sleep(8)
                     continue
                 # No rows, no error — listing might just be slow. Retry anyway.
-                time.sleep(2)
+                time.sleep(5)
 
             chosen_href = None
             for row in videos[:15]:
@@ -5683,6 +5687,21 @@ No markdown. No explanation. Just the JSON array."""
 
             is_long_video = bool(getattr(self, "_is_long_video", False))
 
+            # Try to capture the video ID from the upload tab URL immediately
+            # after Done — Studio often redirects to /video/{ID}/edit.
+            # This is more reliable than navigating the listing tab.
+            _url_from_tab = ""
+            try:
+                time.sleep(4)
+                tab_url = driver.current_url or ""
+                m = re.search(r"/video/([A-Za-z0-9_\-]{8,15})/", tab_url)
+                if m:
+                    _url_from_tab = build_url(m.group(1))
+                    if verbose:
+                        info(f"\t=> Video ID captured from upload tab URL: {m.group(1)}")
+            except Exception:
+                pass
+
             # CRITICAL: persist the cache entry RIGHT NOW with a placeholder URL.
             # Even if Firefox crashes / network drops mid-upload, the title, description,
             # subject and date are saved so nothing is lost.
@@ -5748,7 +5767,9 @@ No markdown. No explanation. Just the JSON array."""
             url = None
 
             if is_long_video:
-                url = self._resolve_video_url_safe(driver, listing_tab) or None
+                # Primary: use the video ID captured from the upload tab URL right after Done.
+                # Fallback: navigate the listing tab.
+                url = _url_from_tab or self._resolve_video_url_safe(driver, listing_tab) or None
             else:
                 # Shorts: original behavior (navigate the same tab — Firefox is
                 # about to be closed anyway when the short upload is confirmed).
