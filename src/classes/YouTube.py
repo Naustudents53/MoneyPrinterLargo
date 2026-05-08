@@ -915,15 +915,17 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 if ctx.get("setting"):
                     bits.append(f"the story is set in **{ctx['setting']}**")
                 if ctx.get("visual_anchors"):
-                    bits.append(f"recurring visual cues for this setting: {ctx['visual_anchors']}")
+                    bits.append(f"period-accurate elements that MUST appear naturally: {ctx['visual_anchors']}")
                 if ctx.get("must_avoid"):
-                    bits.append(f"avoid: {ctx['must_avoid']}")
+                    bits.append(f"FORBIDDEN (anachronistic or off-era): {ctx['must_avoid']}")
                 era_context = (
-                    "\n\nSETTING CONTEXT (background only, not a checklist): "
+                    "\n\nERA & SETTING — MANDATORY FOR PERIOD ACCURACY: "
                     + ". ".join(bits)
-                    + ". Setting-appropriate clothing, architecture and props should appear NATURALLY "
-                      "in scenes — never enumerate them as a list. Each prompt still focuses on a "
-                      "specific story beat, not a costume description."
+                    + ". Every prompt MUST be visually faithful to this era. All clothing, "
+                      "architecture, objects, lighting conditions and environments must belong "
+                      "to this specific time and place. A viewer must immediately recognize the "
+                      "correct historical period just by looking at the image. "
+                      "Do not enumerate props as a costume checklist — weave them into the action naturally."
                 )
 
             video_title = (self.metadata or {}).get("title", "") if hasattr(self, "metadata") else ""
@@ -1480,14 +1482,14 @@ Example format:
             parts.append(clean_prompt)
             if ctx and (ctx.get("setting") or ctx.get("visual_anchors")):
                 setting_clause = (
-                    f"Scene context — the story is set in {ctx['setting']}. " if ctx.get("setting") else ""
+                    f"ERA ACCURACY — this scene takes place in {ctx['setting']}. All clothing, architecture, objects and environment MUST be period-faithful to this era. " if ctx.get("setting") else ""
                 )
                 anchors_clause = (
-                    f"Include setting-appropriate items naturally in the composition (drawn in the art style above): {ctx['visual_anchors']}. "
+                    f"Period-accurate elements to weave into the scene naturally (in the art style above): {ctx['visual_anchors']}. "
                     if ctx.get("visual_anchors") else ""
                 )
                 avoid_clause = (
-                    f"Avoid: {ctx['must_avoid']}." if ctx.get("must_avoid") else ""
+                    f"FORBIDDEN — anachronistic or off-era elements: {ctx['must_avoid']}." if ctx.get("must_avoid") else ""
                 )
                 parts.append((setting_clause + anchors_clause + avoid_clause).strip())
             parts.append(
@@ -1499,14 +1501,14 @@ Example format:
             parts.append(clean_prompt)
             if ctx and (ctx.get("setting") or ctx.get("visual_anchors")):
                 setting_clause = (
-                    f"Setting: {ctx['setting']}. " if ctx.get("setting") else ""
+                    f"ERA ACCURACY — this scene takes place in {ctx['setting']}. All clothing, architecture, objects and environment MUST be period-faithful to this era. " if ctx.get("setting") else ""
                 )
                 anchors_clause = (
-                    f"Visual anchors that should appear naturally when relevant — {ctx['visual_anchors']}. "
+                    f"Period-accurate elements to weave into the scene naturally: {ctx['visual_anchors']}. "
                     if ctx.get("visual_anchors") else ""
                 )
                 avoid_clause = (
-                    f"Avoid anachronistic / off-setting elements: {ctx['must_avoid']}."
+                    f"FORBIDDEN — anachronistic or off-era elements: {ctx['must_avoid']}."
                     if ctx.get("must_avoid") else ""
                 )
                 parts.append((setting_clause + anchors_clause + avoid_clause).strip())
