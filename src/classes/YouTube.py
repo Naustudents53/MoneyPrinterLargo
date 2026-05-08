@@ -476,7 +476,7 @@ class YouTube:
         _freq: Counter = Counter()
         for _ents in past_entities:
             _freq.update(_ents)
-        _common_threshold = max(3, len(past_entities) // 7)
+        _common_threshold = max(3, len(past_entities) // 10)
         common_entities = {e for e, c in _freq.items() if c > _common_threshold}
 
         # Same frequency filter for bigrams: a 2-word phrase appearing across
@@ -522,7 +522,7 @@ class YouTube:
                 a, b = set(cand_norm.split()), set(p_norm.split())
                 if a and b:
                     overlap = len(a & b) / max(len(a), len(b))
-                    if overlap >= 0.55:
+                    if overlap >= 0.62:
                         return True, original
                 # Raw sequence similarity
                 if SequenceMatcher(None, cand_norm, p_norm).ratio() >= 0.7:
