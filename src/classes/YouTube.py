@@ -5009,7 +5009,7 @@ No markdown. No explanation. Just the JSON array."""
           5. ALWAYS close the new tab and switch back to the original tab.
 
         Args:
-            listing_tab: "short" for Shorts, "upload_video" for long videos.
+            listing_tab: "short" for Shorts, "upload" for long videos.
             kind_label: human-readable label used only in log lines.
             max_wait_s: hard total cap.
             poll_interval_s: time between row reads.
@@ -5023,7 +5023,12 @@ No markdown. No explanation. Just the JSON array."""
         info("\t   (polling in a SEPARATE tab so the upload tab is never disturbed)")
 
         deadline = time.time() + max_wait_s
-        listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+        listing_url = (
+    f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+    if listing_tab == "short"
+    else f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+    f'?d=ud&filter=%5B%5D&sort=%7B%22columnType%22%3A%22date%22%2C%22sortOrder%22%3A%22DESCENDING%22%7D'
+)
         target_title = (self.metadata.get("title") or "").strip()
         target_match = target_title[:50] if target_title else ""
 
@@ -5062,8 +5067,8 @@ No markdown. No explanation. Just the JSON array."""
         status_handle = None
         try:
             existing = set(driver.window_handles)
-            driver.execute_script("window.open('about:blank', '_blank');")
-            time.sleep(1)
+            driver.execute_script(f"window.open('{listing_url}', '_blank');")
+            time.sleep(5)
             new_handles = [h for h in driver.window_handles if h not in existing]
             if not new_handles:
                 warning("\t=> Could not open status-check tab; falling back to in-place wait.")
@@ -5075,8 +5080,7 @@ No markdown. No explanation. Just the JSON array."""
             driver.switch_to.window(status_handle)
 
             try:
-                driver.get(listing_url)
-                time.sleep(5)
+                time.sleep(8)
             except Exception as e:
                 warning(f"\t=> Could not navigate status tab to listing: {e}")
                 return False
@@ -5250,7 +5254,12 @@ No markdown. No explanation. Just the JSON array."""
         """
         if not getattr(self, "channel_id", None):
             return ""
-        listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+        listing_url = (
+    f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+    if listing_tab == "short"
+    else f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+    f'?d=ud&filter=%5B%5D&sort=%7B%22columnType%22%3A%22date%22%2C%22sortOrder%22%3A%22DESCENDING%22%7D'
+)
         target_title = (self.metadata.get("title") or "").strip()
         target_match = target_title[:50] if target_title else ""
 
@@ -5271,13 +5280,14 @@ No markdown. No explanation. Just the JSON array."""
         status_handle = None
         try:
             existing = set(driver.window_handles)
-            driver.execute_script("window.open('about:blank', '_blank');")
-            time.sleep(1)
+            driver.execute_script(f"window.open('{listing_url}', '_blank');")
+            time.sleep(5)
             new_handles = [h for h in driver.window_handles if h not in existing]
             if not new_handles:
                 return ""
             status_handle = new_handles[0]
             driver.switch_to.window(status_handle)
+            time.sleep(6)
 
             # Retry the navigation if YT Studio greets us with the "Oops"
             # error page or with an empty listing. Up to 5 attempts, each
@@ -5743,7 +5753,7 @@ No markdown. No explanation. Just the JSON array."""
                     info("\t=> Long video — polling listing page in a separate tab...")
                 upload_finished = self._wait_for_listing_settled(
                     driver,
-                    listing_tab="upload_video",
+                    listing_tab="upload",
                     kind_label="long video",
                     max_wait_s=10800,        # 3h total cap (HD 30+ min videos can take a while to encode)
                     poll_interval_s=15,
