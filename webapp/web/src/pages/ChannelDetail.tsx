@@ -13,6 +13,10 @@ import {
   Calendar,
   Clapperboard,
   RefreshCw,
+  Eye,
+  ThumbsUp,
+  ThumbsDown,
+  MessageSquare,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
@@ -52,7 +56,7 @@ import { ChannelFormDialog } from "./ChannelFormDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProgressDialog } from "@/components/ProgressDialog";
 import { toast } from "sonner";
-import { formatDate, relativeTime, truncate } from "@/lib/utils";
+import { formatDate, relativeTime, truncate, formatCount } from "@/lib/utils";
 
 export function ChannelDetail() {
   const { id } = useParams<{ id: string }>();
@@ -347,6 +351,7 @@ export function ChannelDetail() {
                       <th className="text-left px-4 py-2 font-medium">Título</th>
                       <th className="text-left px-4 py-2 font-medium hidden md:table-cell">Subject</th>
                       <th className="text-left px-4 py-2 font-medium hidden lg:table-cell">Fecha</th>
+                      <th className="text-left px-4 py-2 font-medium hidden xl:table-cell">Engagement</th>
                       <th className="text-right px-4 py-2 font-medium">Acciones</th>
                     </tr>
                   </thead>
@@ -384,6 +389,26 @@ export function ChannelDetail() {
                           </div>
                           <div className="text-[11px] text-muted-foreground mt-0.5">
                             {relativeTime(v.date)}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 hidden xl:table-cell whitespace-nowrap">
+                          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                            <span className="inline-flex items-center gap-1" title="Visualizaciones">
+                              <Eye className="h-3 w-3" />
+                              {formatCount(v.view_count)}
+                            </span>
+                            <span className="inline-flex items-center gap-1" title="Me gusta">
+                              <ThumbsUp className="h-3 w-3" />
+                              {formatCount(v.like_count)}
+                            </span>
+                            <span className="inline-flex items-center gap-1" title="No me gusta (estimado por Return YouTube Dislike)">
+                              <ThumbsDown className="h-3 w-3" />
+                              {formatCount(v.dislike_count)}
+                            </span>
+                            <span className="inline-flex items-center gap-1" title="Comentarios">
+                              <MessageSquare className="h-3 w-3" />
+                              {formatCount(v.comment_count)}
+                            </span>
                           </div>
                         </td>
                         <td className="px-4 py-3">

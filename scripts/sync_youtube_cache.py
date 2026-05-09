@@ -105,15 +105,41 @@ def fetch_tab(channel_url: str) -> list[dict]:
 _VIDEO_META_CACHE: dict[str, dict] = {}
 
 
+def fetch_dislikes(video_id: str) -> int:
+    """Estimate dislikes via the Return YouTube Dislike public API. YouTube
+    itself stopped exposing dislikes in Dec 2021 — RYD is the de-facto source
+    used by extensions/dashboards. Returns -1 when unavailable so callers can
+    distinguish "no data" from "zero dislikes"."""
+    try:
+        import urllib.request
+        import urllib.error
+        url = f"https://returnyoutubedislikeapi.com/votes?videoId={video_id}"
+        req = urllib.request.Request(url, headers={"User-Agent": "MoneyPrinterLargo/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        d = payload.get("dislikes")
+        return int(d) if d is not None else -1
+    except Exception:
+        return -1
+
+
 def fetch_video_meta(video_id: str) -> dict:
-    """Fetch upload_date + description for a single video. Cached per process.
-    Returns {'date': 'YYYY-MM-DD HH:MM:SS', 'description': str} or empty
-    fields on failure."""
+    """Fetch upload_date + description + engagement counts for a single video.
+    Cached per process. Returns {date, description, view_count, like_count,
+    comment_count, dislike_count}. Missing numeric fields default to -1 so the
+    UI can render "—" instead of confusing zeros."""
     if video_id in _VIDEO_META_CACHE:
         return _VIDEO_META_CACHE[video_id]
     import yt_dlp
     opts = {"quiet": True, "no_warnings": True, "skip_download": True, "ignoreerrors": True}
-    out = {"date": "", "description": ""}
+    out = {
+        "date": "",
+        "description": "",
+        "view_count": -1,
+        "like_count": -1,
+        "comment_count": -1,
+        "dislike_count": -1,
+    }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}",
@@ -133,8 +159,15 @@ def fetch_video_meta(video_id: str) -> dict:
                 if len(ud) == 8:
                     out["date"] = f"{ud[0:4]}-{ud[4:6]}-{ud[6:8]} 00:00:00"
             out["description"] = (info.get("description") or "").strip()
+            for src, dst in (("view_count", "view_count"),
+                             ("like_count", "like_count"),
+                             ("comment_count", "comment_count")):
+                v = info.get(src)
+                if isinstance(v, int):
+                    out[dst] = v
     except Exception as e:
         print(f"      (meta fetch failed for {video_id}: {str(e)[:80]})", flush=True)
+    out["dislike_count"] = fetch_dislikes(video_id)
     _VIDEO_META_CACHE[video_id] = out
     return out
 
@@ -258,6 +291,11 @@ def sync_channel(acc: dict, handle: str, args, all_published: dict[str, dict],
                 v["date"] = meta["date"]
             if meta["description"] and (args.refresh_meta or not (v.get("description") or "").strip()):
                 v["description"] = meta["description"]
+            # Engagement counters: always overwrite with the freshest values
+            # (they are point-in-time, never user-edited).
+            for k in ("view_count", "like_count", "comment_count", "dislike_count"):
+                if meta.get(k, -1) >= 0:
+                    v[k] = meta[k]
             if meta["date"] or meta["description"]:
                 meta_refreshed += 1
             time.sleep(args.sleep)
@@ -280,6 +318,10 @@ def sync_channel(acc: dict, handle: str, args, all_published: dict[str, dict],
                 "date": meta["date"] or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "is_short": bool(info["is_short"]),
                 "thumbnail_path": "",
+                "view_count": meta.get("view_count", -1),
+                "like_count": meta.get("like_count", -1),
+                "comment_count": meta.get("comment_count", -1),
+                "dislike_count": meta.get("dislike_count", -1),
             })
             added += 1
             tag = "SHORT" if info["is_short"] else "LONG "

@@ -202,7 +202,11 @@ export function ProgressDialog({
   };
 
   const canPreview = !!generatedFile && status === "done" && phase === "generate";
-  const canUpload = !!channelId && status === "done" && phase === "generate";
+  // Show the upload button when generation finished AND when an upload itself
+  // failed — the second case lets the user retry without leaving the dialog.
+  const canUpload =
+    !!channelId &&
+    ((status === "done" && phase === "generate") || (status === "error" && phase === "upload"));
 
   return (
     <>
@@ -264,7 +268,8 @@ export function ProgressDialog({
             )}
             {canUpload && (
               <Button variant="brand" size="sm" onClick={triggerUpload} className="gap-2">
-                <UploadCloud className="h-3.5 w-3.5" /> Subir a YouTube
+                <UploadCloud className="h-3.5 w-3.5" />
+                {status === "error" && phase === "upload" ? "Reintentar subida" : "Subir a YouTube"}
               </Button>
             )}
 

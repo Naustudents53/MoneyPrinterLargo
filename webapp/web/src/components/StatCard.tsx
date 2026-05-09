@@ -55,32 +55,29 @@ export function StatCard({
   return (
     <div
       className={cn(
-        "group relative overflow-hidden rounded-xl border border-border/60 bg-card p-5 transition-all",
-        "hover:border-foreground/15 hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-18px_hsl(var(--brand-deep)/0.35)]",
+        "group relative overflow-hidden rounded-lg p-5 studio-surface studio-hover",
         className
       )}
     >
-      {/* editorial top rule — semantic accent */}
-      <span aria-hidden className={cn("absolute left-5 top-0 h-[3px] w-10 rounded-b-full", a.rule)} />
-      {/* very soft corner wash */}
+      {/* studio top rule — semantic accent */}
+      <span aria-hidden className={cn("absolute left-5 top-0 h-[3px] w-12 rounded-b-full", a.rule)} />
+      {/* soft corner wash */}
       <div
         className={cn(
-          "absolute -top-16 -right-16 h-40 w-40 rounded-full bg-gradient-to-br blur-2xl opacity-70",
+          "absolute -top-16 -right-16 h-40 w-40 rounded-full bg-gradient-to-br blur-2xl opacity-80 transition-opacity duration-300 group-hover:opacity-100",
           a.wash
         )}
       />
       <div className="relative flex items-start justify-between pt-3">
         <div className="space-y-1.5">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            {label}
-          </div>
+          <div className="eyebrow">{label}</div>
           <div className="font-display text-3xl font-bold tracking-tight tabular-nums">
             {value}
           </div>
           {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
         </div>
         {Icon && (
-          <div className={cn("rounded-lg p-2.5", a.iconBg, a.iconColor)}>
+          <div className={cn("rounded-lg p-2.5 ring-1 ring-inset ring-foreground/5", a.iconBg, a.iconColor)}>
             <Icon className="h-5 w-5" strokeWidth={1.75} />
           </div>
         )}

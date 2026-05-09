@@ -69,6 +69,12 @@ export interface ChannelVideo {
   url: string;
   date: string;
   is_short: boolean;
+  // Engagement counters from `scripts/sync_youtube_cache.py --refresh-meta`.
+  // -1 means "no data" (yt-dlp couldn't read it / RYD didn't have the video).
+  view_count?: number;
+  like_count?: number;
+  comment_count?: number;
+  dislike_count?: number;
 }
 
 export interface TwitterAccount {
@@ -141,6 +147,10 @@ export interface Mp4FileEntry {
   name: string;
   size_mb: number;
   mtime: string;
+  /** True when the matching <name>.manifest.json has uploaded:true. */
+  uploaded?: boolean;
+  uploaded_url?: string | null;
+  subject?: string | null;
 }
 
 export interface ThumbnailEntry {
@@ -261,6 +271,11 @@ export const api = {
     }),
   clearMp4: () =>
     request<{ ok: boolean; deleted: number }>("/api/storage/mp4/clear", { method: "POST" }),
+  markMp4Uploaded: (name: string) =>
+    request<{ ok: boolean; uploaded_url: string | null }>(
+      `/api/storage/mp4/${encodeURIComponent(name)}/mark-uploaded`,
+      { method: "POST" },
+    ),
 
   // SSE URLs (used by EventSource directly)
   generateUrl(id: string, params: {

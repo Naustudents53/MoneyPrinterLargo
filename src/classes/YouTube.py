@@ -255,6 +255,17 @@ class YouTube:
         # Initialize the Firefox profile
         self.options: Options = Options()
 
+        # YouTube's upload page fires a beforeunload `confirmEx` ("Leave page? —
+        # changes you made may not be saved") whenever Selenium navigates while
+        # an upload is in progress. Default driver policy is "dismiss and notify"
+        # which raises UnexpectedAlertPresentException mid-upload. Tell the
+        # driver to silently accept any such dialog so navigation/clicks keep
+        # flowing.
+        self.options.unhandled_prompt_behavior = "accept"
+        # Belt-and-braces: also disable the prompt at the Firefox layer so the
+        # confirmEx never fires in the first place.
+        self.options.set_preference("dom.disable_beforeunload", True)
+
         # Set headless state of browser
         if get_headless():
             self.options.add_argument("--headless")
@@ -915,11 +926,19 @@ EXAMPLES — pattern only, not templates to copy:
    GOOD ✓ (phenomenon) "A massive wall of glacial ice advances slowly across a flat tundra plain under a pale grey sky, uprooting ancient trees in its path, frozen mammoths visible beneath the translucent surface, a herd of woolly rhinoceroses fleeing in the foreground."
    GOOD ✓ (discovery moment) "An archaeologist kneels in a narrow underground chamber, trembling hand holding a torch over a perfectly preserved golden death mask resting on stone, dust particles floating in the warm light, rough-hewn rock walls pressing close on all sides."
 
-   BAD ✗ "A figure in historical clothing stands in front of a landscape." (no action, no emotion, no concrete object, no environment detail)
-   BAD ✗ "[Name] portrait with dramatic lighting." (forbidden opening, no scene)
-   BAD ✗ "Ancient battle scene with soldiers fighting." (too generic — must reflect the specific section content)
+STRUCTURAL EXAMPLES — these show the PATTERN only (action-first, named anchor, concrete feature, narrative beat). Each GOOD example below is about a DIFFERENT cosmic subject on purpose: your {n_prompts} prompts must use the actual subject, named objects and concrete features from THIS video's script — NOT the subjects in the examples.
 
-Return ONLY a JSON array of {n_prompts} prompt strings, one per section in order. No markdown, no explanation, no preamble.
+   GOOD ✓ (supermassive black hole) "Light bends around the photon ring of TON 618, an orange-white accretion disk swirling at relativistic speeds, gravitationally lensed background galaxies smeared into arcs, deep cosmic blackness beyond, the faint glow of distant quasars sprinkling the field."
+   GOOD ✓ (deep-space mission)     "Voyager 1 drifts past the rings of Saturn at golden hour, its dish antenna angled back toward the inner Solar System, the gold-plated record glinting on its flank, ring shadows striping the spacecraft's body, the pale crescent of Titan in the distance."
+   GOOD ✓ (neutron star)            "A magnetar's twin magnetic-field lines arc thousands of kilometres above its glowing crust, X-ray flares ripple outward in violent pulses, the millisecond-pulsar surface cracks with starquake fissures, surrounding nebular gas glowing blue from the radiation bath."
+   GOOD ✓ (observatory)             "JWST's hexagonal gold mirror unfolds against the blackness of L2, the Carina Nebula reflected in its segments, the sun-shield's silver layers tilted away from the Sun, distant stars dotting the deep-cold backdrop, the spacecraft's struts catching faint sunlight."
+
+   BAD ✗ "A big black hole in deep space with stars around it." (no verb, no concrete feature, generic wallpaper — exact failure mode)
+   BAD ✗ "A supermassive black hole with accretion disk, glowing brightly, with galaxies in the background." (checklist instead of story; no specific action or comparison)
+   BAD ✗ "Outer space with a planet and stars." (no specific moment, no story-specific feature, no named object)
+   BAD ✗ "[subject] portrait, glowing in the void, with stars behind it." (forbidden opening — static stock image)
+
+Return ONLY a JSON array of {n_prompts} prompt strings, in chronological order following the script. No markdown, no explanation, no preamble. Just the array.
 
 Example format:
 ["section 1 prompt …", "section 2 prompt …", "section 3 prompt …", "section 4 prompt …", "section 5 prompt …", "section 6 prompt …"]"""
@@ -5142,9 +5161,62 @@ No markdown. No explanation. Just the JSON array."""
 
         if not session_alive:
             info(" => Conectando con Firefox...")
+            self._free_firefox_profile()
             service = Service(GeckoDriverManager().install())
             self.browser = webdriver.Firefox(service=service, options=self.options)
             success(" => Firefox conectado.")
+
+    def _free_firefox_profile(self) -> None:
+        """
+        Selenium can't open Firefox if the configured profile is already in use
+        (the user has Firefox open, or a previous run left lock files behind).
+        Kill any running firefox.exe / geckodriver.exe and remove stale profile
+        locks so the upcoming `webdriver.Firefox(...)` call gets a clean slate.
+        Best-effort: never raise — if killing fails, Selenium will surface the
+        usual "Process unexpectedly closed with status 0".
+        """
+        import os
+        import sys
+        import time
+        import subprocess
+
+        # 1) Kill any running Firefox / geckodriver. Without this, Selenium's
+        # spawned firefox.exe just hands the URL to the existing window and
+        # exits, leaving the driver with no session.
+        targets = ["firefox.exe", "geckodriver.exe"] if sys.platform == "win32" else ["firefox", "geckodriver"]
+        killed_any = False
+        for proc_name in targets:
+            try:
+                if sys.platform == "win32":
+                    result = subprocess.run(
+                        ["taskkill", "/F", "/IM", proc_name, "/T"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    # taskkill returns 128 if no such process — treat as success.
+                    if result.returncode == 0:
+                        killed_any = True
+                else:
+                    subprocess.run(["pkill", "-f", proc_name], capture_output=True, timeout=10)
+            except Exception:
+                pass
+        if killed_any:
+            info(" => Cerré Firefox abierto para liberar el perfil.")
+            time.sleep(1.5)  # let Windows release file handles
+
+        # 2) Remove stale lock files in the configured profile directory.
+        try:
+            from config import get_firefox_profile_path
+            profile_dir = get_firefox_profile_path()
+        except Exception:
+            profile_dir = None
+        if profile_dir and os.path.isdir(profile_dir):
+            for lock_name in ("parent.lock", ".parentlock", "lock"):
+                lock_path = os.path.join(profile_dir, lock_name)
+                try:
+                    if os.path.exists(lock_path):
+                        os.remove(lock_path)
+                except Exception:
+                    pass
 
     def get_channel_id(self) -> str:
         """

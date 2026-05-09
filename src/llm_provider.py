@@ -8,6 +8,19 @@ _llm_provider: str | None = None
 _disabled_providers: set = set()
 _last_used_provider: str | None = None
 _disabled_gemini_models: set = set()
+_disabled_ollama_models: set = set()
+
+# Ordered fallback chain for Ollama. Tried in order when no explicit model is
+# selected via config (`ollama_model`) or `select_model()`. If every entry
+# fails this session, the outer `generate_text` cascade falls through to
+# Gemini. Models are disabled per-session on failure to avoid retry storms.
+_OLLAMA_FALLBACK_CHAIN: list[str] = [
+    "deepseek-v4-pro:cloud",
+    "Qwen-3.5",
+    "kimi-k2.6:cloud",
+    "gemma4-31b:cloud",
+    "glm-5.1:cloud",
+]
 # Ollama "thinking" budget for the current call. Set via `force_provider` —
 # the long-video pipeline pins it to "high" so DeepSeek V4 Pro Cloud reasons
 # at full depth. None means: don't pass the kwarg at all.
@@ -263,22 +276,7 @@ def _is_garbage_response(text: str) -> bool:
     return any(phrase in start for phrase in garbage_phrases)
 
 
-def _generate_text_ollama(prompt: str, model: str = None) -> str:
-    if not model:
-        from config import get_ollama_model
-        model = get_ollama_model()
-    if not model:
-        raise RuntimeError("No Ollama model configured")
-
-    messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": prompt},
-    ]
-    client = _ollama_client()
-
-    # Pass `think` only when the long-video pipeline (or another caller) asked
-    # for it. Older ollama-python SDKs reject the kwarg with TypeError — fall
-    # back transparently so the call still succeeds without thinking.
+def _ollama_chat_once(client, model: str, messages: list) -> str:
     if _ollama_think is not None:
         try:
             response = client.chat(model=model, messages=messages, think=_ollama_think)
@@ -298,8 +296,52 @@ def _generate_text_ollama(prompt: str, model: str = None) -> str:
             content = (response["message"]["content"] or "").strip()
         except TypeError:
             pass
-
     return content
+
+
+def _generate_text_ollama(prompt: str, model: str = None) -> str:
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+    client = _ollama_client()
+
+    # Explicit model arg (e.g. long-video pipeline pinning DeepSeek V4 Pro)
+    # bypasses the cascade — that caller IS the choice.
+    if model:
+        return _ollama_chat_once(client, model, messages)
+
+    # Build the cascade: configured `ollama_model` first (if any), then the
+    # hard-coded fallback chain. Each failing entry is disabled for the rest
+    # of the session so we don't retry it on every call.
+    from config import get_ollama_model
+    configured = get_ollama_model()
+    chain: list[str] = []
+    if configured:
+        chain.append(configured)
+    for m in _OLLAMA_FALLBACK_CHAIN:
+        if m not in chain:
+            chain.append(m)
+
+    candidates = [m for m in chain if m not in _disabled_ollama_models]
+    if not candidates:
+        raise RuntimeError("All Ollama fallback models have been disabled this session")
+
+    last_error = None
+    for candidate in candidates:
+        try:
+            print(f"  [Ollama] Trying model: {candidate}")
+            content = _ollama_chat_once(client, candidate, messages)
+            if not content:
+                raise RuntimeError("empty response")
+            print(f"  [Ollama] Using model: {candidate}")
+            return content
+        except Exception as e:
+            print(f"  [Ollama] Model '{candidate}' failed: {e}")
+            _disabled_ollama_models.add(candidate)
+            last_error = e
+
+    raise RuntimeError(f"All Ollama fallback models failed. Last error: {last_error}")
 
 
 def _generate_text_gemini(prompt: str) -> str:

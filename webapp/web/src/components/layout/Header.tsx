@@ -17,10 +17,12 @@ import { api, type SystemInfo } from "@/lib/api";
 interface HeaderProps {
   title: string;
   description?: string;
+  /** Optional small label rendered above the title in primary color (e.g. "Canal", "Generar"). */
+  eyebrow?: string;
   actions?: React.ReactNode;
 }
 
-export function Header({ title, description, actions }: HeaderProps) {
+export function Header({ title, description, eyebrow, actions }: HeaderProps) {
   const { theme, setTheme } = useTheme();
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [healthy, setHealthy] = useState<boolean | null>(null);
@@ -42,9 +44,10 @@ export function Header({ title, description, actions }: HeaderProps) {
   }, []);
 
   return (
-    <header className="sticky top-0 z-30 border-b border-border/60 bg-background/85 backdrop-blur-xl">
+    <header className="sticky top-0 z-30 border-b border-border/70 bg-background/80 backdrop-blur-xl">
       <div className="h-16 px-6 flex items-center gap-4">
         <div className="flex-1 min-w-0">
+          {eyebrow && <div className="eyebrow mb-1 truncate">{eyebrow}</div>}
           <h1 className="font-display text-lg sm:text-xl font-bold leading-none tracking-tight truncate">
             {title}
           </h1>
