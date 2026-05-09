@@ -369,124 +369,38 @@ class YouTube:
             # Clear English signal: several English stopwords and more EN than ES
             return en_hits >= 3 and en_hits > es_hits
 
-        def _content_bigrams(norm: str) -> set:
-            """
-            Consecutive non-stopword token pairs from the normalized form.
-            Catches lowercase compound subjects ("fuego griego", "biblioteca
-            alejandria") that `_extract_entities` misses because it only
-            counts capitalized tokens. Bigrams where BOTH tokens are in
-            COMMON_CAP_NOISE are dropped — those are generic phrase-noise
-            ("antigua grecia", "imperio romano") that two different videos
-            can legitimately share without being duplicates.
-            """
-            toks = norm.split()
-            out: set = set()
-            for i in range(len(toks) - 1):
-                a, b = toks[i], toks[i + 1]
-                if a in COMMON_CAP_NOISE and b in COMMON_CAP_NOISE:
-                    continue
-                out.add(f"{a} {b}")
-            return out
-
         # ---- 3. Pre-compute past signatures ----
         past_clean = [_strip_markdown(t) for t in past_topics]
         past_norm = [_normalize(t) for t in past_clean]
-        past_entities = [_extract_entities(t) for t in past_clean]
-        past_bigrams = [_content_bigrams(n) for n in past_norm]
-
-        # Frequency-based filter: an entity that shows up in >15% of past
-        # topics (with a floor of 3) is effectively a channel-wide theme
-        # rather than a distinctive subject — stop treating it as a signature.
-        # This keeps the guard from flagging "different Pharaoh" videos as
-        # duplicates just because both mention "Nilo".
-        from collections import Counter
-        _freq: Counter = Counter()
-        for _ents in past_entities:
-            _freq.update(_ents)
-        _common_threshold = max(3, len(past_entities) // 10)
-        common_entities = {e for e, c in _freq.items() if c > _common_threshold}
-
-        # Same frequency filter for bigrams: a 2-word phrase appearing across
-        # many past videos is a channel-wide theme ("imperio romano" on a Rome
-        # channel), not a distinctive subject signature. Dropping these avoids
-        # false-positive dedupe when the user wants multiple legit angles on
-        # a recurring topic.
-        _bg_freq: Counter = Counter()
-        for _bgs in past_bigrams:
-            _bg_freq.update(_bgs)
-        common_bigrams = {b for b, c in _bg_freq.items() if c > _common_threshold}
 
         def _is_duplicate(candidate: str) -> tuple[bool, str]:
             cand_clean = _strip_markdown(candidate)
             if not cand_clean:
                 return False, ""
             cand_norm = _normalize(cand_clean)
-            cand_ents = _extract_entities(cand_clean)
-            cand_bigrams = _content_bigrams(cand_norm)
-
-            for original, p_norm, p_ents, p_bgs in zip(past_topics, past_norm, past_entities, past_bigrams):
+            for original, p_norm in zip(past_topics, past_norm):
                 if not p_norm:
                     continue
                 # Exact normalized match
                 if cand_norm == p_norm:
                     return True, original
-                # Shared distinctive entities → same subject. Requires 2+
-                # shared entities to avoid false positives: a single shared
-                # entity like "Mesopotamia" or "Roma" can appear in dozens of
-                # completely different videos. Two shared entities (e.g.
-                # "Hammurabi" + "Codigo", "Cesar" + "Rubicon") strongly
-                # indicate the same specific subject.
-                shared = (cand_ents & p_ents) - common_entities
-                if len(shared) >= 2:
-                    return True, original
-                # Shared distinctive bigram → same compound subject in
-                # lowercase ("fuego griego", "muerte negra"). Excludes
-                # channel-wide common bigrams so recurring niche themes
-                # don't auto-collide.
-                shared_bg = (cand_bigrams & p_bgs) - common_bigrams
-                if shared_bg:
-                    return True, original
-                # Token-overlap fallback (tighter threshold than before)
+                # Token overlap: high overlap = same subject rephrased
                 a, b = set(cand_norm.split()), set(p_norm.split())
-                if a and b:
-                    overlap = len(a & b) / max(len(a), len(b))
-                    if overlap >= 0.62:
-                        return True, original
-                # Raw sequence similarity
-                if SequenceMatcher(None, cand_norm, p_norm).ratio() >= 0.7:
+                if a and b and len(a & b) / max(len(a), len(b)) >= 0.65:
+                    return True, original
+                # Sequence similarity: catches near-identical phrasings
+                if SequenceMatcher(None, cand_norm, p_norm).ratio() >= 0.72:
                     return True, original
             return False, ""
 
-        # ---- 4. Build forbidden block (topics + banned entities) ----
-        # IMPORTANT: this block is purely a duplicate-avoidance hint for the LLM.
-        # It must NOT push the model out of the niche. With heavy channel history
-        # (e.g. 100+ videos) the older wording ("FORBIDDEN entities ... Generate a
-        # COMPLETELY DIFFERENT and ORIGINAL idea") read like "abandon the niche",
-        # because every entity listed *was* a niche entity. We now (a) cap counts
-        # tighter, (b) phrase the avoidance as "still WITHIN the niche", and
-        # (c) re-anchor the niche AFTER the avoidance list so the model holds it
-        # in working memory while picking a new angle. The cache-side dedupe
-        # guard (`_is_duplicate`) is unchanged and still catches collisions.
+        # ---- 4. Build forbidden block (recent topics as avoidance hint for the LLM) ----
         forbidden_block = ""
         if past_topics:
             shown = past_clean[-25:]
-            all_ents: set = set()
-            for ents in past_entities[-25:]:
-                all_ents.update(ents)
-            entity_list = sorted(e for e in all_ents if len(e) >= 4)[:40]
             forbidden_block = (
                 "\n\nALREADY COVERED in this niche (pick a DIFFERENT angle, but stay WITHIN the niche):\n"
                 + "\n".join(f"- {t}" for t in shown)
-            )
-            if entity_list:
-                forbidden_block += (
-                    "\n\nSpecific subjects already covered — avoid these particular ones, "
-                    "but DO NOT leave the niche to avoid them (the niche is huge — pick a different "
-                    "person/place/event/concept from the SAME niche):\n"
-                    + ", ".join(entity_list)
-                )
-            forbidden_block += (
-                f"\n\nGenerate a fresh angle WITHIN the niche \"{self.niche}\". "
+                + f"\n\nGenerate a fresh angle WITHIN the niche \"{self.niche}\". "
                 f"The new topic must still unmistakably belong to this niche — "
                 f"only the specific subject should differ from the list above."
             )
