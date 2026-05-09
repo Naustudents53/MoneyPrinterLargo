@@ -384,6 +384,21 @@ class YouTube:
             "atenas", "esparta", "alejandria", "constantinopla", "oriente",
             "occidente", "mediterraneo", "nilo", "tigris", "eufrates",
             "renacimiento", "medieval", "barroco", "ilustracion",
+            # Eras y períodos históricos genéricos (causan falsos positivos
+            # cuando dos temas distintos mencionan la misma época)
+            "edad", "media", "moderna", "contemporanea", "antigua", "antigüedad",
+            "bronce", "hierro", "piedra", "cobre", "paleolitico", "neolitico",
+            "mesolítico", "mesolitico", "pleistoceno", "holoceno", "mioceno",
+            "prehistoria", "prehistorico", "protohistoria",
+            "clasico", "clasica", "arcaico", "arcaica", "helenistico", "helenistica",
+            "republicano", "republicana", "colonial", "colonial", "feudal",
+            "antiguo", "antiguos", "antiguas",
+            # Términos de descubrimiento/ciencia genéricos que aparecen en muchos temas
+            "descubrimiento", "descubrimientos", "hallazgo", "hallazgos",
+            "expedicion", "exploracion", "investigacion", "teoria", "mito", "leyenda",
+            "civilizacion", "civilizaciones", "cultura", "culturas", "pueblo", "pueblos",
+            "tribu", "tribus", "ancestro", "ancestros", "antepasado", "antepasados",
+            "origen", "origenes", "evolucion", "extincion", "migracion",
         }
 
         def _extract_entities(original: str) -> set:
@@ -505,13 +520,14 @@ class YouTube:
                 # Exact normalized match
                 if cand_norm == p_norm:
                     return True, original
-                # Shared distinctive entity → same subject (catches "Hammurabi"
-                # x2, "Cosimo I Medici" x2, etc., even when the rest of the
-                # sentence is completely reworded). Exclude channel-wide
-                # common entities so "two different Pharaoh stories" don't
-                # collide on the shared region/era.
+                # Shared distinctive entities → same subject. Requires 2+
+                # shared entities to avoid false positives: a single shared
+                # entity like "Mesopotamia" or "Roma" can appear in dozens of
+                # completely different videos. Two shared entities (e.g.
+                # "Hammurabi" + "Codigo", "Cesar" + "Rubicon") strongly
+                # indicate the same specific subject.
                 shared = (cand_ents & p_ents) - common_entities
-                if shared:
+                if len(shared) >= 2:
                     return True, original
                 # Shared distinctive bigram → same compound subject in
                 # lowercase ("fuego griego", "muerte negra"). Excludes
