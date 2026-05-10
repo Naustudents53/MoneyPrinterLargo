@@ -11,6 +11,7 @@ import {
   Hash,
   Clapperboard,
   Timer,
+  Eye,
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { PageShell } from '@/components/layout/AppShell';
@@ -58,6 +59,7 @@ export function Generate() {
   const [imageMode, setImageMode] = useState<'ai' | 'photos'>('ai');
   const [seriesId, setSeriesId] = useState('');
   const [autoUpload, setAutoUpload] = useState(false);
+  const [previewAtEnd, setPreviewAtEnd] = useState(false);
   const [shortDuration, setShortDuration] = useState<ShortDurationSeconds>(60);
 
   const [progressOpen, setProgressOpen] = useState(false);
@@ -88,11 +90,15 @@ export function Generate() {
       toast.error('Selecciona un canal');
       return;
     }
+    // When previewAtEnd is on, the upload must wait until the user closes the
+    // preview modal. We render-only on the backend and trigger upload-last
+    // from the frontend after the preview closes.
+    const serverAutoUpload = autoUpload && !previewAtEnd;
     const url = api.generateUrl(channelId, {
       kind,
       custom_topic: topic.trim(),
       image_mode: imageMode,
-      auto_upload: autoUpload,
+      auto_upload: serverAutoUpload,
       series_id: seriesId || undefined,
       duration_seconds: kind === 'short' ? shortDuration : undefined,
     });
@@ -290,6 +296,24 @@ export function Generate() {
                   />
                 </div>
 
+                {/* Preview at end */}
+                <div className="flex items-center justify-between rounded-lg border border-border p-3">
+                  <div className="space-y-0.5">
+                    <Label className="flex items-center gap-1.5">
+                      <Eye className="h-4 w-4" /> Hacer preview al terminar
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      {autoUpload
+                        ? 'Abre el video en un modal cuando termine el render. Al cerrarlo, arranca la subida.'
+                        : 'Abre el video en un modal cuando termine el render para revisarlo.'}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={previewAtEnd}
+                    onCheckedChange={setPreviewAtEnd}
+                  />
+                </div>
+
                 <div className="flex items-center gap-3 pt-2">
                   <Button
                     variant="brand"
@@ -408,13 +432,19 @@ export function Generate() {
         onOpenChange={setProgressOpen}
         title={kind === 'short' ? 'Generando short' : 'Generando video largo'}
         description={
-          autoUpload
-            ? 'Render + upload automático al terminar.'
-            : 'Solo render — al terminar puedes revisar y subir desde aquí.'
+          autoUpload && previewAtEnd
+            ? 'Render → preview al terminar → subida al cerrar el preview.'
+            : autoUpload
+              ? 'Render + upload automático al terminar.'
+              : previewAtEnd
+                ? 'Render → preview al terminar para que lo revises.'
+                : 'Solo render — al terminar puedes revisar y subir desde aquí.'
         }
         sseUrl={sseUrl}
-        channelId={autoUpload ? undefined : channelId}
+        channelId={autoUpload && !previewAtEnd ? undefined : channelId}
         kind={kind}
+        previewOnFinish={previewAtEnd}
+        uploadAfterPreview={autoUpload && previewAtEnd}
       />
     </>
   );

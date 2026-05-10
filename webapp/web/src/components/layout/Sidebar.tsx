@@ -10,6 +10,7 @@ import {
   Film,
   BookOpen,
   Image as ImageIcon,
+  Activity,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -54,7 +55,10 @@ const NAV: NavGroup[] = [
   },
   {
     section: "Sistema",
-    items: [{ to: "/settings", label: "Configuración", icon: Settings }],
+    items: [
+      { to: "/operations", label: "Operaciones", icon: Activity },
+      { to: "/settings", label: "Configuración", icon: Settings },
+    ],
   },
 ];
 

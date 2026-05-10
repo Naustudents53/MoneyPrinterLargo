@@ -1,7 +1,63 @@
+import json as _json
+import os as _os
+import time as _time
 import requests
 from contextlib import contextmanager
 
 from config import get_ollama_base_url, get_llm_provider, get_gemini_api_key, get_gemini_model, get_gemini_models
+
+
+# ---------------------------------------------------------------------------
+# Cost logging (writes to <ROOT>/.mp/cost_log.jsonl). Best-effort — the LLM
+# call must NEVER fail because we couldn't write a log line.
+# ---------------------------------------------------------------------------
+
+_GEMINI_PRICING = {
+    "gemini-2.5-flash":      {"in": 0.30, "out": 2.50},
+    "gemini-2.5-flash-lite": {"in": 0.075, "out": 0.30},
+    "gemini-2.5-pro":        {"in": 1.25, "out": 10.00},
+    "gemini-1.5-flash":      {"in": 0.075, "out": 0.30},
+    "gemini-1.5-pro":        {"in": 1.25, "out": 5.00},
+    "gemini-2.0-flash":      {"in": 0.10, "out": 0.40},
+}
+
+
+def _estimate_gemini_cost(model: str, in_tokens: int, out_tokens: int) -> float:
+    p = _GEMINI_PRICING.get(model)
+    if not p:
+        for k, v in _GEMINI_PRICING.items():
+            if model.startswith(k):
+                p = v
+                break
+    if not p:
+        return 0.0005
+    return (in_tokens / 1_000_000) * p["in"] + (out_tokens / 1_000_000) * p["out"]
+
+
+def _log_cost(provider: str, model: str, in_tokens: int, out_tokens: int,
+              cost_usd: float | None = None) -> None:
+    try:
+        from config import ROOT_DIR
+    except Exception:
+        return
+    if cost_usd is None and provider == "gemini":
+        cost_usd = _estimate_gemini_cost(model, in_tokens, out_tokens)
+    entry = {
+        "ts": _time.time(),
+        "provider": provider,
+        "model": model,
+        "kind": "text",
+        "in_tokens": int(in_tokens),
+        "out_tokens": int(out_tokens),
+        "cost_usd": round(float(cost_usd or 0.0), 6),
+    }
+    try:
+        mp = _os.path.join(str(ROOT_DIR), ".mp")
+        _os.makedirs(mp, exist_ok=True)
+        with open(_os.path.join(mp, "cost_log.jsonl"), "a", encoding="utf-8") as f:
+            f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 _selected_model: str | None = None
 _llm_provider: str | None = None
@@ -16,9 +72,8 @@ _disabled_ollama_models: set = set()
 # Gemini. Models are disabled per-session on failure to avoid retry storms.
 _OLLAMA_FALLBACK_CHAIN: list[str] = [
     "deepseek-v4-pro:cloud",
-    "Qwen-3.5",
-    "kimi-k2.6:cloud",
     "gemma4-31b:cloud",
+    "kimi-k2.6:cloud",
     "glm-5.1:cloud",
 ]
 # Ollama "thinking" budget for the current call. Set via `force_provider` —
@@ -253,8 +308,21 @@ def generate_text(prompt: str, model_name: str = None) -> str:
             return result
         except Exception as e:
             print(f"  [!] LLM provider '{name}' failed: {e}")
-            _disabled_providers.add(name)
-            print(f"  [!] Disabling '{name}' for the rest of this session.")
+            # Only disable a provider for the session when the error indicates
+            # something that won't fix itself: missing API key, or all of its
+            # models exhausted by per-model disabling. A single 503/timeout
+            # from one model must NOT poison the whole provider — try the next
+            # provider this call, but keep this one available next call so a
+            # transient outage doesn't break the rest of the session.
+            msg = str(e).lower()
+            permanent = (
+                "no gemini api key" in msg
+                or "all gemini models" in msg
+                or "all ollama fallback models" in msg
+            )
+            if permanent:
+                _disabled_providers.add(name)
+                print(f"  [!] Disabling '{name}' for the rest of this session.")
             last_error = e
 
     raise RuntimeError(f"All LLM providers failed. Last error: {last_error}")
@@ -306,18 +374,17 @@ def _generate_text_ollama(prompt: str, model: str = None) -> str:
     ]
     client = _ollama_client()
 
-    # Explicit model arg (e.g. long-video pipeline pinning DeepSeek V4 Pro)
-    # bypasses the cascade — that caller IS the choice.
-    if model:
-        return _ollama_chat_once(client, model, messages)
-
-    # Build the cascade: configured `ollama_model` first (if any), then the
-    # hard-coded fallback chain. Each failing entry is disabled for the rest
-    # of the session so we don't retry it on every call.
+    # Build the cascade: explicit model (this call's preference) → configured
+    # `ollama_model` → hard-coded fallback chain. An explicit model is the
+    # *head* of the cascade, not a bypass — so a transient 503 on the caller's
+    # preferred model still falls through to the rest of the chain instead of
+    # killing the whole Ollama provider for the session.
     from config import get_ollama_model
     configured = get_ollama_model()
     chain: list[str] = []
-    if configured:
+    if model:
+        chain.append(model)
+    if configured and configured not in chain:
         chain.append(configured)
     for m in _OLLAMA_FALLBACK_CHAIN:
         if m not in chain:
@@ -337,8 +404,20 @@ def _generate_text_ollama(prompt: str, model: str = None) -> str:
             print(f"  [Ollama] Using model: {candidate}")
             return content
         except Exception as e:
+            err_msg = str(e).lower()
             print(f"  [Ollama] Model '{candidate}' failed: {e}")
-            _disabled_ollama_models.add(candidate)
+            # Transient server-side errors (5xx, overloaded, timeout, rate
+            # limit) — the model is fine, the cloud is just busy. Don't burn
+            # it for the session; just move on this call so the next call can
+            # retry it. Persistent errors (model not found, auth, "all
+            # disabled") earn the per-session ban.
+            transient_markers = (
+                "503", "504", "overloaded", "timeout", "timed out",
+                "temporarily", "rate limit", "429", "try again",
+            )
+            is_transient = any(t in err_msg for t in transient_markers)
+            if not is_transient:
+                _disabled_ollama_models.add(candidate)
             last_error = e
 
     raise RuntimeError(f"All Ollama fallback models failed. Last error: {last_error}")
@@ -386,6 +465,14 @@ def _generate_text_gemini(prompt: str) -> str:
 
             text = parts[0].get("text", "").strip()
             if text:
+                # Best-effort cost tracking — usageMetadata is included in v1beta
+                # responses but the field is not guaranteed.
+                usage = data.get("usageMetadata") or {}
+                _log_cost(
+                    "gemini", model,
+                    int(usage.get("promptTokenCount") or 0),
+                    int(usage.get("candidatesTokenCount") or 0),
+                )
                 print(f"  [Gemini] Using model: {model}")
                 return text
             raise RuntimeError("Gemini returned empty text")

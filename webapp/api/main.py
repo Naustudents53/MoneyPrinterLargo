@@ -63,6 +63,17 @@ from cache import (  # noqa: E402
     remove_account,
 )
 
+# Operations / observability router (disk, cost, errors, logs, webhooks, backup).
+# Try the package-relative import first (uvicorn invokes us as webapp.api.main);
+# fall back to a sibling import if someone runs main.py directly.
+try:
+    from . import ops  # noqa: E402
+except ImportError:
+    if str(API_DIR) not in sys.path:
+        sys.path.insert(0, str(API_DIR))
+    import ops  # type: ignore  # noqa: E402
+ops.init(ROOT_DIR, MP_DIR, CONFIG_PATH)
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
@@ -80,6 +91,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(ops.router)
 
 
 # ---------------------------------------------------------------------------
@@ -690,11 +703,42 @@ class JobState:
             self.rc = rc
             self.status = "done" if rc == 0 else "error"
             self.finished_at = time.time()
+        # Persist a summary + full log to disk and fire webhooks. Done outside
+        # the lock so a slow webhook can't block log readers.
+        try:
+            _persist_finished_job(self)
+        except Exception as exc:
+            print(f"[ops] WARN: failed to persist job {self.id}: {exc}")
 
     def snapshot(self, since: int):
         with self.lock:
             new_lines = self.lines[since:]
             return new_lines, len(self.lines), self.status, self.rc
+
+
+def _persist_finished_job(job: "JobState") -> None:
+    """Write a one-line summary to .mp/job_log.jsonl, dump the full log to
+    .mp/job_logs/<id>.log, and fire the configured webhook. Idempotent — safe
+    to call once per job."""
+    summary = _job_summary(job)
+    # Persist full log so the History page can display it after the in-memory
+    # buffer ages out (TTL 10 min).
+    log_dir = MP_DIR / "job_logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with open(log_dir / f"{job.id}.log", "w", encoding="utf-8") as f:
+            f.write("\n".join(job.lines))
+    except OSError as exc:
+        print(f"[ops] WARN: could not write job log file: {exc}")
+
+    record = {
+        **summary,
+        "ended_ts": job.finished_at,
+        "log_path": f"job_logs/{job.id}.log",
+    }
+    ops.append_job_record(record)
+    # Webhooks are best-effort — failures are swallowed inside fire_webhook.
+    ops.maybe_notify_job_finished(record)
 
 
 _JOBS: dict[str, JobState] = {}

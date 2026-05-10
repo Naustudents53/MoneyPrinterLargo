@@ -11,6 +11,7 @@ import { Storage } from "./pages/Storage";
 import { Thumbnails } from "./pages/Thumbnails";
 import { Affiliate } from "./pages/Affiliate";
 import { Outreach } from "./pages/Outreach";
+import { Operations } from "./pages/Operations";
 import { NotFound } from "./pages/NotFound";
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="thumbnails" element={<Thumbnails />} />
         <Route path="affiliate" element={<Affiliate />} />
         <Route path="outreach" element={<Outreach />} />
+        <Route path="operations" element={<Operations />} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
