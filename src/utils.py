@@ -535,16 +535,6 @@ SONG_KEYWORDS = {
         "cuantica", "cuántica", "quantum", "schrodinger", "schrödinger",
         "teoria de cuerdas", "teoría de cuerdas",
     ],
-    "cold_moon.mp3": [
-        # Sombrío, aislado — lunas, mundos congelados, soledad cósmica
-        "luna", "lunas", "moon", "moons",
-        "europa", "titán", "titan", "encelado", "enceladus", "io", "ganimedes",
-        "frio", "frío", "congelado", "congelada", "hielo", "ice", "frozen",
-        "desolado", "desolada", "abandonado", "abandonada",
-        "soledad", "aislamiento", "isolation",
-        "perdido en el espacio", "naufragio espacial",
-        "criogenia", "criogenico", "criogénico", "hibernacion", "hibernación",
-    ],
     "blazing_stars.mp3": [
         # Energético, brillante — fenómenos estelares intensos
         "supernova", "supernovas", "supernova explosion",
@@ -655,7 +645,6 @@ SONG_KEYWORDS = {
 # add it to SONG_KEYWORDS without falsely attributing it.
 SOUNDIMAGE_TRACKS = frozenset({
     "blazing_stars.mp3",
-    "cold_moon.mp3",
     "creature_from_the_dark_lagoon.mp3",
     "dark_techno_city.mp3",
     "factory_on_mercury.mp3",

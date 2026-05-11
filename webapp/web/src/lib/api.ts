@@ -69,6 +69,12 @@ export interface ChannelVideo {
   url: string;
   date: string;
   is_short: boolean;
+  // Engagement counters from `scripts/sync_youtube_cache.py --refresh-meta`.
+  // -1 means "no data" (yt-dlp couldn't read it / RYD didn't have the video).
+  view_count?: number;
+  like_count?: number;
+  comment_count?: number;
+  dislike_count?: number;
 }
 
 export interface TwitterAccount {
@@ -141,6 +147,10 @@ export interface Mp4FileEntry {
   name: string;
   size_mb: number;
   mtime: string;
+  /** True when the matching <name>.manifest.json has uploaded:true. */
+  uploaded?: boolean;
+  uploaded_url?: string | null;
+  subject?: string | null;
 }
 
 export interface ThumbnailEntry {
@@ -261,6 +271,11 @@ export const api = {
     }),
   clearMp4: () =>
     request<{ ok: boolean; deleted: number }>("/api/storage/mp4/clear", { method: "POST" }),
+  markMp4Uploaded: (name: string) =>
+    request<{ ok: boolean; uploaded_url: string | null }>(
+      `/api/storage/mp4/${encodeURIComponent(name)}/mark-uploaded`,
+      { method: "POST" },
+    ),
 
   // SSE URLs (used by EventSource directly)
   generateUrl(id: string, params: {
@@ -324,4 +339,168 @@ export const api = {
     if (params.visual) qs.set("visual", params.visual);
     return `${BASE}/api/thumbnails/generate?${qs.toString()}`;
   },
+
+  // ---------- Operations / Observability ----------
+
+  // Disk
+  opsDisk: () => request<DiskUsage>("/api/ops/disk"),
+  opsClearTemp: () =>
+    request<{ deleted: number; bytes_freed: number }>("/api/ops/disk/clear-temp", {
+      method: "POST",
+    }),
+
+  // Cost
+  opsCost: (days = 30) => request<CostSummary>(`/api/ops/cost?days=${days}`),
+  opsResetCost: () =>
+    request<{ ok: boolean }>("/api/ops/cost", { method: "DELETE" }),
+
+  // Errors (upload_failures)
+  opsErrors: () => request<ErrorList>("/api/ops/errors"),
+  opsErrorFileUrl: (name: string, file: string) =>
+    `${BASE}/api/ops/errors/${encodeURIComponent(name)}/file/${encodeURIComponent(file)}`,
+  opsDeleteError: (name: string) =>
+    request<{ ok: boolean }>(`/api/ops/errors/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
+  opsClearErrors: () =>
+    request<{ deleted: number }>("/api/ops/errors/clear", { method: "POST" }),
+
+  // Job log (history)
+  opsJobLog: (params: { q?: string; status?: string; channel_id?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set("q", params.q);
+    if (params.status) qs.set("status", params.status);
+    if (params.channel_id) qs.set("channel_id", params.channel_id);
+    if (params.limit) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<JobLogResponse>(`/api/ops/job-log${q ? "?" + q : ""}`);
+  },
+  opsJobLogDetail: (id: string) =>
+    request<{ job_id: string; content: string }>(
+      `/api/ops/job-log/${encodeURIComponent(id)}`,
+    ),
+  opsClearJobLog: () =>
+    request<{ ok: boolean }>("/api/ops/job-log", { method: "DELETE" }),
+
+  // Notifications
+  opsGetNotifications: () => request<NotifSettings>("/api/ops/notifications"),
+  opsPutNotifications: (payload: NotifSettings) =>
+    request<NotifSettings>("/api/ops/notifications", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  opsTestNotifications: () =>
+    request<Record<string, { ok: boolean; status?: number; error?: string } | null>>(
+      "/api/ops/notifications/test",
+      { method: "POST" },
+    ),
+
+  // Backup / restore
+  opsBackupUrl: (includeVideos = false) =>
+    `${BASE}/api/ops/backup?include_videos=${includeVideos}`,
+  opsRestore: async (file: File, wipe = false) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch(`${BASE}/api/ops/restore?wipe=${wipe}`, {
+      method: "POST",
+      body: fd,
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const body = await res.json();
+        detail = body.detail || JSON.stringify(body);
+      } catch {
+        // ignore
+      }
+      throw new Error(`${res.status}: ${detail}`);
+    }
+    return res.json() as Promise<{ extracted: number; skipped: number; wiped: boolean }>;
+  },
 };
+
+// ---------- Operations types ----------
+
+export interface DiskUsage {
+  total_bytes: number;
+  files: number;
+  by_ext: Array<{ ext: string; bytes: number; count: number }>;
+  biggest: Array<{ path: string; bytes: number; mtime: number }>;
+  oldest: { path: string; bytes: number; mtime: number } | null;
+  disk_free_bytes: number;
+}
+
+export interface CostBucketDay {
+  day: string;
+  cost_usd: number;
+  calls: number;
+}
+export interface CostBucket {
+  cost_usd: number;
+  calls: number;
+  provider?: string;
+  model?: string;
+  channel_id?: string;
+}
+export interface CostSummary {
+  total_usd: number;
+  total_calls: number;
+  by_day: CostBucketDay[];
+  by_provider: CostBucket[];
+  by_model: CostBucket[];
+  by_channel: CostBucket[];
+  recent: Array<{
+    ts: number;
+    provider: string;
+    model: string;
+    kind: string;
+    in_tokens: number;
+    out_tokens: number;
+    cost_usd: number;
+    channel_id?: string;
+    note?: string;
+  }>;
+}
+
+export interface ErrorEntry {
+  name: string;
+  tag: string;
+  ts: number;
+  size_bytes: number;
+  files: Array<{ name: string; bytes: number }>;
+  context: string;
+}
+export interface ErrorList {
+  items: ErrorEntry[];
+  total: number;
+  by_tag: Array<{ tag: string; count: number }>;
+}
+
+export interface JobLogEntry {
+  id: string;
+  title: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  elapsed: number;
+  rc: number | null;
+  last_line: string;
+  log_lines: number;
+  channel_id: string | null;
+  kind: string | null;
+  ended_ts?: number;
+  log_path?: string;
+}
+export interface JobLogResponse {
+  items: JobLogEntry[];
+  total: number;
+}
+
+export interface NotifSettings {
+  discord_webhook_url: string;
+  telegram_bot_token: string;
+  telegram_chat_id: string;
+  on_done: boolean;
+  on_error: boolean;
+  disk_threshold_gb: number;
+}

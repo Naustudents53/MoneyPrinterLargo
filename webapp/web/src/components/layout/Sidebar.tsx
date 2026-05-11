@@ -10,6 +10,7 @@ import {
   Film,
   BookOpen,
   Image as ImageIcon,
+  Activity,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -54,25 +55,28 @@ const NAV: NavGroup[] = [
   },
   {
     section: "Sistema",
-    items: [{ to: "/settings", label: "Configuración", icon: Settings }],
+    items: [
+      { to: "/operations", label: "Operaciones", icon: Activity },
+      { to: "/settings", label: "Configuración", icon: Settings },
+    ],
   },
 ];
 
 export function Sidebar() {
   return (
-    <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-border/60 bg-card/40 backdrop-blur-xl">
+    <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-border/70 bg-card/55 backdrop-blur-xl">
       <NavLink
         to="/"
         end
-        className="h-16 px-5 flex items-center border-b border-border/60 hover:bg-muted/40 transition-colors"
+        className="h-16 px-5 flex items-center border-b border-border/70 hover:bg-muted/40 transition-colors"
         aria-label="Ir al Dashboard"
       >
         <WordMark />
       </NavLink>
-      <nav className="flex-1 overflow-y-auto scrollbar-thin px-3 py-4 space-y-6">
+      <nav className="flex-1 overflow-y-auto scrollbar-thin px-3 py-4 space-y-5">
         {NAV.map((group) => (
           <div key={group.section}>
-            <div className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/80">
+            <div className="px-3 mb-2 eyebrow text-muted-foreground/70">
               {group.section}
             </div>
             <ul className="space-y-0.5">
@@ -83,9 +87,9 @@ export function Sidebar() {
                     end={end ?? false}
                     className={({ isActive }) =>
                       cn(
-                        "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",
+                        "group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all",
                         isActive
-                          ? "bg-primary/8 text-foreground"
+                          ? "bg-gradient-to-r from-primary/15 via-primary/8 to-transparent text-foreground shadow-[inset_0_0_0_1px_hsl(var(--primary)/.2)]"
                           : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                       )
                     }
@@ -97,8 +101,8 @@ export function Sidebar() {
                           className={cn(
                             "absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full transition-all",
                             isActive
-                              ? "bg-primary opacity-100"
-                              : "bg-primary opacity-0 group-hover:opacity-30"
+                              ? "bg-primary opacity-100 shadow-[0_0_12px_hsl(var(--primary)/.6)]"
+                              : "bg-primary opacity-0 group-hover:opacity-40"
                           )}
                         />
                         <Icon
@@ -117,12 +121,12 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
-      <div className="px-4 py-4 border-t border-border/60 text-[11px] text-muted-foreground space-y-1.5">
+      <div className="px-4 py-4 border-t border-border/70 text-[11px] text-muted-foreground space-y-1.5">
         <div className="flex items-center justify-between">
-          <span className="tracking-wider">v1.0.0</span>
-          <span className="font-mono tracking-widest">MPL</span>
+          <span className="font-mono tracking-[0.24em]">v1.0.0</span>
+          <span className="font-mono tracking-[0.32em] text-primary/80">MPL</span>
         </div>
-        <div className="brand-text font-semibold tracking-tight">
+        <div className="brand-text font-display font-semibold tracking-tight">
           Imprime largo, edita poco.
         </div>
       </div>

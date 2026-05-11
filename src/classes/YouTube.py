@@ -111,16 +111,18 @@ _GENERIC_TOPIC_TOKENS = {
 # `hook_profile` — falls back to "educational" if missing or unknown.
 HOOK_PROFILES: dict = {
     "educational": [
-        ("Classic curiosity question", '"¿Sabías que...?"'),
-        ("Invitation to imagine a cosmic scene", '"Imagínate esto:" o "Imagina que estás flotando a un millón de kilómetros del Sol..."'),
-        ("Direct shocking statistic (no question)", '"El 95% del universo es invisible para nosotros..." o "El 99,86% de la masa del sistema solar está en el Sol..."'),
-        ("Hidden secret reveal", '"Hay algo sobre [objeto cósmico] que casi nadie te ha contado..."'),
-        ("Counterintuitive claim", '"Todo lo que crees sobre [tema] está mal." o "El espacio no es el vacío: está lleno de algo que nadie puede ver."'),
-        ("Negation cliffhanger", '"No vas a creer lo que descubrieron cuando apuntaron el telescopio a..."'),
-        ("Cosmic-scale opener", '"En este momento, a [N] años luz de distancia, [evento cósmico]..." o "Cada segundo, en algún rincón del universo, [proceso físico]..."'),
-        ("Stakes-first pivotal discovery", '"Un solo dato, una sola observación, una sola noche en el observatorio cambió todo lo que creíamos saber sobre [tema]."'),
-        ("Scale-flip", '"Para nosotros [magnitud humana] es [reacción], pero en escala cósmica es [comparación absurda: insignificante, gigantesco, imposible]."'),
-        ("Hidden-origin reveal", '"Lo que hoy llamamos [cosa familiar: oro, agua, los átomos de tu cuerpo] nació en algo que casi nadie recuerda: [origen cósmico: una supernova, una colisión de estrellas, los primeros minutos del universo]."'),
+        ("You-are-there immersion", 'Abre con una escena inmersiva en segunda persona que coloca al espectador en el momento exacto: "En este preciso instante, hace [tiempo], [lugar concreto]. [Escena sensorial breve: qué se ve, qué se escucha, qué ocurre]. Nada de lo que conoces hoy existiría si esto hubiera salido distinto."'),
+        ("Impossible true fact", 'Arranca con un hecho que suena falso pero es 100% real, enunciado como afirmación rotunda sin pregunta: "[Hecho completamente contraintuitivo sobre el tema, enunciado como verdad absoluta]. No es ficción. Ocurrió de verdad."'),
+        ("Scale of time awe", 'Usa la escala del tiempo para crear vértigo existencial: "Si comprimieras toda la historia de [la Tierra / la humanidad / la civilización] en [una hora / un año / un día], [el evento del video] ocurriría exactamente en [momento preciso]. Todo lo que vino después cambió en segundos."'),
+        ("Survival on the edge", 'Perfecto para prehistoria y eventos de extinción: "Hubo un momento en que [especie / civilización / grupo] éramos menos de [número pequeño]. Un solo error, una sola tormenta, una sola mala decisión, y esta historia no existiría. Nosotros tampoco."'),
+        ("The consequence chain", 'Revela la cadena de consecuencias de un solo evento: "Sin [evento o decisión del tema], [cosa completamente familiar hoy] no existiría. El mundo entero sería diferente. Y todo empezó con algo que casi nadie recuerda."'),
+        ("Time-warp scene drop", 'Suelta al espectador directamente en el momento histórico sin preámbulo: "[Año o época exacta], [lugar preciso]. [Escena de dos frases: lo que ocurre, lo que está en juego]. Nadie en ese momento sabía que estaban cambiando el mundo."'),
+        ("The reversal", 'Destruye una creencia popular con una afirmación directa: "Durante [siglos / décadas / toda la historia], todos creyeron que [idea popular sobre el tema]. Estaban completamente equivocados. La realidad era algo que nadie quería aceptar."'),
+        ("Discovery shock", 'Arranca desde el momento del descubrimiento arqueológico o científico: "Cuando [arqueólogos / científicos / exploradores] abrieron [lugar o hallazgo del tema], lo que encontraron dentro contradecía todo lo que creíamos saber. Algunos de ellos nunca volvieron a ser los mismos."'),
+        ("The forgotten turning point", 'Rescata un momento decisivo que la historia olvidó: "La historia recuerda [evento famoso o persona famosa]. Pero olvidó por completo el momento en que [evento clave del tema] lo hizo posible. Sin eso, nada de lo que siguió habría ocurrido."'),
+        ("Cultural lens flip", '"Para nosotros sería [reacción moderna: impensable, una locura, un crimen]. Pero en [época o civilización], era exactamente lo contrario: [normalidad opuesta]. Y tenían razones que hoy casi nadie conoce."'),
+        ("Lost world reveal", 'Abre describiendo un mundo radicalmente diferente al nuestro: "Hace [tiempo], existía un mundo tan distinto al nuestro que si pudieras verlo hoy no reconocerías ni el cielo. [Detalle concreto impactante del tema]. Ese mundo desapareció, y lo que lo destruyó también creó todo lo que somos."'),
+        ("The specific moment", 'Ultra-precisión temporal para crear sensación de inevitabilidad: "El [fecha o momento exacto], en [lugar específico], [persona o grupo] tomó [decisión o acción concreta]. En ese instante, sin saberlo, decidió el destino de [civilización / especie / era]."'),
     ],
     # Cosmic mystery / awe-driven storytelling. Designed to pull the viewer in
     # with an unsolved cosmic puzzle, an eerie astronomical observation, or a
@@ -140,218 +142,14 @@ HOOK_PROFILES: dict = {
 }
 
 
-# Science / cosmos domain anchors. When the video subject matches keywords
-# from one of these domains, `visual_brief` is injected into the LLM
-# image-prompt task so the generated scene descriptions stay astronomically
-# faithful (palettes, scales, instruments). Local LLMs drift into sci-fi
-# fantasy art ("alien planets", "neon nebulae") on abstract script lines
-# without this anchor. Keyword matching is accent-insensitive and
-# case-insensitive; edit freely.
-SCIENCE_DOMAINS: dict = {
-    "cosmology": {
-        "name": "Cosmology and the early Universe",
-        "visual_brief": "deep dark cosmic backgrounds with subtle filaments of luminous gas, the cosmic microwave background as a mottled radio map, primordial plasma glow in deep red and orange, cosmic web of galaxies in faint threads, stretched spacetime grids, JWST/Planck-mission aesthetic, true-to-data scales (no fictional landmarks)",
-        "keywords": [
-            "big bang", "bigbang", "cosmologia", "cosmology", "cosmologico", "cosmological",
-            "inflacion cosmica", "cosmic inflation",
-            "fondo cosmico", "fondo de microondas", "cosmic microwave background", "cmb",
-            "expansion del universo", "expansion of the universe",
-            "universo primitivo", "early universe", "primordial",
-            "materia oscura", "dark matter", "energia oscura", "dark energy",
-            "constante de hubble", "hubble constant",
-            "wmap", "planck satellite",
-            "multiverso", "multiverse",
-        ],
-    },
-    "black_holes": {
-        "name": "Black holes and event horizons",
-        "visual_brief": "supermassive black hole accretion disks with bright orange-red ionized gas, Doppler-bright jets, gravitational lensing distorting background star fields, photon spheres, Event Horizon Telescope-style ring imagery, Hawking radiation as faint blue-violet haze near the horizon, true-to-physics light bending",
-        "keywords": [
-            "agujero negro", "agujeros negros", "black hole", "black holes",
-            "supermasivo", "supermassive",
-            "ton 618", "ton-618",
-            "sagitario a", "sgr a", "sagittarius a",
-            "m87", "messier 87",
-            "horizonte de sucesos", "event horizon",
-            "disco de acrecion", "accretion disk",
-            "agujero negro estelar", "stellar black hole",
-            "agujero negro intermedio", "intermediate-mass black hole",
-            "radiacion de hawking", "hawking radiation",
-            "singularidad", "singularity",
-            "fusion de agujeros negros", "black hole merger",
-            "ehrt", "event horizon telescope",
-        ],
-    },
-    "stars": {
-        "name": "Stars, supernovae and stellar remnants",
-        "visual_brief": "stellar nurseries inside molecular clouds with pillars of dust illuminated from within, blue and red supergiants, Wolf-Rayet stars with violent winds, supernova shockwaves expanding through interstellar medium, neutron stars with intense magnetic field lines, pulsar beam jets, magnetar surface auroras, true-to-spectrum colors (O-stars deep blue, M-stars deep red)",
-        "keywords": [
-            "estrella", "estrellas", "star", "stars",
-            "supernova", "supernovae",
-            "hipernova", "hypernova",
-            "nova",
-            "estrella de neutrones", "neutron star",
-            "pulsar", "pulsares", "pulsars",
-            "magnetar", "magnetares", "magnetars",
-            "enana blanca", "white dwarf",
-            "enana roja", "red dwarf",
-            "supergigante", "supergiant", "hipergigante", "hypergiant",
-            "betelgeuse", "antares", "vy canis majoris", "vy cma", "uy scuti",
-            "wolf rayet", "wolf-rayet",
-            "secuencia principal", "main sequence",
-            "sn 1987a", "sn1054", "cangrejo", "crab nebula",
-        ],
-    },
-    "galaxies": {
-        "name": "Galaxies and large-scale structure",
-        "visual_brief": "spiral galaxies with bright pink star-forming regions and dark dust lanes, elliptical galaxies as smooth golden ellipsoids, galactic mergers with tidal tails, galaxy clusters with hot gas glowing in X-ray purple, cosmic filaments connecting clusters, the Milky Way edge-on with the galactic bulge and dust band, Hubble/JWST deep field aesthetic",
-        "keywords": [
-            "galaxia", "galaxias", "galaxy", "galaxies",
-            "via lactea", "milky way",
-            "andromeda", "m31", "messier 31",
-            "triangulo", "m33",
-            "galaxia espiral", "spiral galaxy",
-            "galaxia eliptica", "elliptical galaxy",
-            "galaxia enana", "dwarf galaxy",
-            "cumulo galactico", "galaxy cluster",
-            "supercumulo", "supercluster",
-            "brazo galactico", "galactic arm",
-            "fusion galactica", "galaxy merger",
-            "agn", "nucleo galactico activo", "active galactic nucleus",
-            "quasar", "quasares", "quasars", "blazar",
-            "campo profundo", "deep field", "hubble deep field", "hudf",
-        ],
-    },
-    "exoplanets": {
-        "name": "Exoplanets and exoplanetary systems",
-        "visual_brief": "rocky exoplanets with realistic terrain illuminated by their host star, gas giants with banded atmospheres, lava worlds with night-side glow, ocean worlds with thick atmospheres, transit silhouettes against host stars, light-curve dips visualized, comparisons next to Earth or Jupiter for scale, Kepler/TESS/JWST mission aesthetic, NO fictional alien creatures, NO neon fantasy worlds",
-        "keywords": [
-            "exoplaneta", "exoplanetas", "exoplanet", "exoplanets",
-            "kepler", "kepler-186f", "kepler-22b", "kepler 452b",
-            "trappist", "trappist-1",
-            "proxima centauri b", "proxima b",
-            "tess", "transit",
-            "zona habitable", "habitable zone",
-            "supertierra", "super-earth",
-            "mini neptuno", "mini-neptune",
-            "joviano caliente", "hot jupiter",
-            "mundo oceanico", "ocean world",
-            "biosfera", "biosignature",
-            "planeta solitario", "rogue planet",
-        ],
-    },
-    "solar_system": {
-        "name": "The Solar System",
-        "visual_brief": "the Sun with prominences and granulated photosphere, Mercury cratered, Venus with dense yellow clouds, Mars rust-orange surface with polar caps, Jupiter with the Great Red Spot, Saturn with sharp ring shadows, Uranus pale cyan, Neptune deep blue, planetary moons with realistic surfaces (Europa fractured ice, Titan orange haze, Io volcanoes), comets with ion and dust tails — Cassini/Voyager/Juno/New Horizons photography aesthetic",
-        "keywords": [
-            "sistema solar", "solar system",
-            "sol", "sun",
-            "mercurio", "mercury",
-            "venus",
-            "tierra", "earth",
-            "luna", "moon",
-            "marte", "mars",
-            "jupiter",
-            "saturno", "saturn",
-            "urano", "uranus",
-            "neptuno", "neptune",
-            "pluton", "pluto",
-            "ceres", "vesta", "eris", "haumea", "makemake",
-            "europa", "ganimedes", "ganymede", "io", "calisto", "callisto",
-            "titan", "encelado", "enceladus", "miranda", "triton",
-            "fobos", "phobos", "deimos",
-            "cinturon de asteroides", "asteroid belt",
-            "cinturon de kuiper", "kuiper belt",
-            "nube de oort", "oort cloud",
-            "mancha roja", "great red spot",
-        ],
-    },
-    "space_exploration": {
-        "name": "Space exploration and missions",
-        "visual_brief": "real spacecraft and instruments rendered with engineering accuracy: Voyager probes, Hubble Space Telescope, James Webb Space Telescope (gold hexagonal mirrors), the ISS, Apollo lunar modules, Mars rovers (Curiosity, Perseverance), SpaceX Falcon 9 / Starship, gold-foil thermal blankets, antenna dishes, solar panels, true astronaut suits (white EMU or orange ACES), Earth limb in the background, NO fictional starships, NO fantasy uniforms",
-        "keywords": [
-            "voyager", "voyager 1", "voyager 2",
-            "hubble", "telescopio espacial hubble", "hubble space telescope", "hst",
-            "james webb", "jwst", "telescopio james webb",
-            "iss", "estacion espacial internacional", "international space station",
-            "apolo", "apollo", "apollo 11", "apollo 13",
-            "saturno v", "saturn v",
-            "transbordador espacial", "space shuttle",
-            "spacex", "falcon 9", "falcon heavy", "starship", "dragon capsule",
-            "nasa", "esa", "agencia espacial europea", "roscosmos", "isro",
-            "curiosity", "perseverance", "ingenuity",
-            "rover marciano", "mars rover",
-            "new horizons", "cassini", "juno", "galileo",
-            "soyuz",
-            "astronauta", "astronaut", "cosmonauta", "cosmonaut",
-            "spacewalk", "actividad extravehicular", "eva",
-            "artemis", "artemisa",
-            "lanzamiento", "launch", "cohete", "rocket",
-        ],
-    },
-    "quantum_physics": {
-        "name": "Quantum physics and particle physics",
-        "visual_brief": "abstract but physically faithful imagery: probability clouds around atoms, double-slit interference patterns, particle accelerator interiors (LHC blue ring tunnels), bubble-chamber tracks, Feynman-diagram-inspired event sketches, glowing detector cross-sections (CMS, ATLAS), entangled-photon beams as paired light streaks, NO fictional 'quantum portals', NO sci-fi VFX",
-        "keywords": [
-            "fisica cuantica", "quantum physics", "mecanica cuantica", "quantum mechanics",
-            "particula", "particulas", "particle", "particles",
-            "foton", "photon", "electron", "proton", "neutron",
-            "quark", "leptón", "lepton", "bosón", "boson",
-            "boson de higgs", "higgs boson",
-            "modelo estandar", "standard model",
-            "antimateria", "antimatter",
-            "entrelazamiento", "entanglement", "entrelazamiento cuantico", "quantum entanglement",
-            "superposicion", "superposition",
-            "principio de incertidumbre", "uncertainty principle", "heisenberg",
-            "schrodinger", "schrödinger",
-            "lhc", "gran colisionador", "large hadron collider",
-            "cern", "fermilab",
-            "atlas detector", "cms detector",
-            "neutrino", "neutrinos",
-            "decoherencia", "decoherence",
-            "computacion cuantica", "quantum computing",
-        ],
-    },
-    "relativity": {
-        "name": "Relativity and gravitational physics",
-        "visual_brief": "warped spacetime grids around massive objects, gravitational lensing rings (Einstein rings), gravitational waves as ripples on a fabric of spacetime, LIGO laser interferometer arms, time-dilation comparisons (clocks at different speeds/altitudes), light cones, neutron-star and black-hole mergers radiating waves, true GR (general relativity) imagery — no flat metaphors",
-        "keywords": [
-            "relatividad", "relativity",
-            "relatividad general", "general relativity",
-            "relatividad especial", "special relativity",
-            "einstein", "albert einstein",
-            "espacio tiempo", "espacio-tiempo", "spacetime",
-            "dilatacion del tiempo", "time dilation",
-            "ondas gravitacionales", "gravitational waves",
-            "ligo", "virgo interferometer",
-            "lente gravitacional", "gravitational lensing",
-            "anillo de einstein", "einstein ring",
-            "principio de equivalencia", "equivalence principle",
-            "agujero de gusano", "wormhole",
-            "paradoja de los gemelos", "twin paradox",
-        ],
-    },
-    "astrobiology": {
-        "name": "Astrobiology and the search for life",
-        "visual_brief": "extremophile habitats (deep-sea hydrothermal vents, Mars-analog deserts, ice-covered subsurface oceans), realistic microbial mats, biosignature spectra overlaid on planetary discs, Drake-equation visualizations, SETI radio dishes scanning the sky, ocean plumes on Enceladus and Europa, Titan methane lakes, NO little green men, NO fictional aliens",
-        "keywords": [
-            "astrobiologia", "astrobiology",
-            "vida extraterrestre", "extraterrestrial life", "alien life",
-            "extremofilo", "extremofilos", "extremophile", "extremophiles",
-            "biofirma", "biofirmas", "biosignature", "biosignatures",
-            "ecuacion de drake", "drake equation",
-            "paradoja de fermi", "fermi paradox",
-            "seti",
-            "panspermia",
-            "abiogenesis",
-            "origen de la vida", "origin of life",
-            "agua liquida", "liquid water",
-            "metano", "methane",
-            "geiseres de encelado", "enceladus geysers", "enceladus plumes",
-            "oceano subterraneo", "subsurface ocean",
-        ],
-    },
-}
+# Visual context anchoring is now niche-agnostic and computed per-video by
+# `_get_context_profile()` — see that method. The LLM is asked once per video
+# to derive a setting + visual anchors + things-to-avoid brief from the
+# channel niche + topic + script, and that brief is injected into image-prompt
+# generation. This replaces the previous hardcoded CIVILIZATIONS dict, which
+# only covered ~17 historical eras and pushed every channel toward
+# civilization-flavored content. The new approach works for any niche
+# (history, science, finance, sports, food, tech, modern stories, etc.).
 
 
 # Fallback visual style for Shorts when the channel has no `image_style` configured.
@@ -456,6 +254,17 @@ class YouTube:
 
         # Initialize the Firefox profile
         self.options: Options = Options()
+
+        # YouTube's upload page fires a beforeunload `confirmEx` ("Leave page? —
+        # changes you made may not be saved") whenever Selenium navigates while
+        # an upload is in progress. Default driver policy is "dismiss and notify"
+        # which raises UnexpectedAlertPresentException mid-upload. Tell the
+        # driver to silently accept any such dialog so navigation/clicks keep
+        # flowing.
+        self.options.unhandled_prompt_behavior = "accept"
+        # Belt-and-braces: also disable the prompt at the Firefox layer so the
+        # confirmEx never fires in the first place.
+        self.options.set_preference("dom.disable_beforeunload", True)
 
         # Set headless state of browser
         if get_headless():
@@ -619,81 +428,6 @@ class YouTube:
             tokens = [t for t in s.split() if t and t not in STOP and len(t) > 1]
             return " ".join(tokens)
 
-        # Common first-word capitalizations that shouldn't count as entities
-        SENTENCE_STARTERS = {
-            "el", "la", "los", "las", "un", "una", "the", "a", "an", "cuando",
-            "como", "donde", "por", "que", "cual", "hay", "esta", "este", "ese",
-            "esa", "aquel",
-        }
-
-        # Capitalized words that are common nouns/adjectives or broad
-        # region/era labels — too generic to count as a distinctive signature
-        # (otherwise any two videos set in Rome would share "emperador" or
-        # "roma" and get flagged as duplicates).
-        COMMON_CAP_NOISE = {
-            # Generic nouns/adjectives often capitalized
-            "antigua", "antiguo", "antiguos", "antiguas", "historia", "historico",
-            "historica", "mundo", "dios", "dioses", "rey", "reina", "emperador",
-            "faraon", "sabio", "filosofo", "filosofos", "filosofia", "legado",
-            "misterio", "misterios", "secreto", "secretos", "enigma", "leyenda",
-            "epoca", "siglo", "era", "anyo", "ano", "anos", "imperio", "reino",
-            "templo", "ciudad", "ciudades", "conquista", "batalla", "guerra",
-            "muerte", "vida", "revolucion", "civilizacion", "civilizaciones",
-            "new", "ancient", "great", "lost", "hidden", "secret", "mysterious",
-            "age", "bronze", "iron", "stone", "city", "cities", "temple",
-            "empire", "kingdom", "dynasty", "war", "battle",
-            # Broad regions/eras used constantly in historical content
-            "roma", "grecia", "egipto", "china", "persia", "mesopotamia",
-            "babilonia", "india", "japon", "europa", "asia", "africa", "america",
-            "italia", "espanya", "francia", "inglaterra", "alemania", "turquia",
-            "atenas", "esparta", "alejandria", "constantinopla", "oriente",
-            "occidente", "mediterraneo", "nilo", "tigris", "eufrates",
-            "renacimiento", "medieval", "barroco", "ilustracion",
-        }
-
-        def _extract_entities(original: str) -> set:
-            """
-            Distinctive signature tokens: proper nouns (capitalized mid-sentence),
-            roman numerals, and 4-digit years. Lowercased + diacritics stripped
-            so "Hammurabi" == "hammurabi" == "HAMMURABI".
-
-            Deliberately excludes generic capitalized words ("Antigua", "Emperador")
-            and long common nouns — those create false-positive collisions across
-            unrelated topics (e.g. any two videos set in Rome would share
-            "emperador"). A distinctive entity is a *named thing*: a person
-            (Hammurabi, Séneca), place (Pelusio, Medina), object or event
-            (Pelusio, Antikythera, Tzolk'in).
-            """
-            text = _strip_markdown(original)
-            ents: set = set()
-            raw = re.findall(r"[A-Za-zÁÉÍÓÚÑÜáéíóúñü0-9']+", text)
-            for i, tok in enumerate(raw):
-                norm = _strip_diacritics(tok.lower())
-                # Skip pure numbers (including years): a shared year between
-                # two unrelated events is not a signature — e.g. "hallazgo en
-                # 2024" and "desaparición en 2024" are different topics.
-                if re.fullmatch(r"\d+", tok):
-                    continue
-                # Roman numerals length >= 2 (II, III, IV, VI, VIII, XII) —
-                # single "I" is too ambiguous to treat as a signature on its
-                # own (and pairs with a named person next to it anyway).
-                if re.fullmatch(r"[IVXLCDM]{2,}", tok):
-                    ents.add(norm)
-                    continue
-                # Capitalized, not sentence-initial, not an ALL-CAPS acronym,
-                # not a known common/generic capitalized word.
-                if (
-                    tok[0].isupper()
-                    and i > 0
-                    and norm not in STOP
-                    and norm not in SENTENCE_STARTERS
-                    and norm not in COMMON_CAP_NOISE
-                    and len(tok) >= 3
-                    and not tok.isupper()
-                ):
-                    ents.add(norm)
-            return ents
-
         def _looks_english(s: str) -> bool:
             """Heuristic: reject obvious English when the channel is Spanish."""
             if not s:
@@ -709,123 +443,38 @@ class YouTube:
             # Clear English signal: several English stopwords and more EN than ES
             return en_hits >= 3 and en_hits > es_hits
 
-        def _content_bigrams(norm: str) -> set:
-            """
-            Consecutive non-stopword token pairs from the normalized form.
-            Catches lowercase compound subjects ("fuego griego", "biblioteca
-            alejandria") that `_extract_entities` misses because it only
-            counts capitalized tokens. Bigrams where BOTH tokens are in
-            COMMON_CAP_NOISE are dropped — those are generic phrase-noise
-            ("antigua grecia", "imperio romano") that two different videos
-            can legitimately share without being duplicates.
-            """
-            toks = norm.split()
-            out: set = set()
-            for i in range(len(toks) - 1):
-                a, b = toks[i], toks[i + 1]
-                if a in COMMON_CAP_NOISE and b in COMMON_CAP_NOISE:
-                    continue
-                out.add(f"{a} {b}")
-            return out
-
         # ---- 3. Pre-compute past signatures ----
         past_clean = [_strip_markdown(t) for t in past_topics]
         past_norm = [_normalize(t) for t in past_clean]
-        past_entities = [_extract_entities(t) for t in past_clean]
-        past_bigrams = [_content_bigrams(n) for n in past_norm]
-
-        # Frequency-based filter: an entity that shows up in >15% of past
-        # topics (with a floor of 3) is effectively a channel-wide theme
-        # rather than a distinctive subject — stop treating it as a signature.
-        # This keeps the guard from flagging "different Pharaoh" videos as
-        # duplicates just because both mention "Nilo".
-        from collections import Counter
-        _freq: Counter = Counter()
-        for _ents in past_entities:
-            _freq.update(_ents)
-        _common_threshold = max(3, len(past_entities) // 7)
-        common_entities = {e for e, c in _freq.items() if c > _common_threshold}
-
-        # Same frequency filter for bigrams: a 2-word phrase appearing across
-        # many past videos is a channel-wide theme ("imperio romano" on a Rome
-        # channel), not a distinctive subject signature. Dropping these avoids
-        # false-positive dedupe when the user wants multiple legit angles on
-        # a recurring topic.
-        _bg_freq: Counter = Counter()
-        for _bgs in past_bigrams:
-            _bg_freq.update(_bgs)
-        common_bigrams = {b for b, c in _bg_freq.items() if c > _common_threshold}
 
         def _is_duplicate(candidate: str) -> tuple[bool, str]:
             cand_clean = _strip_markdown(candidate)
             if not cand_clean:
                 return False, ""
             cand_norm = _normalize(cand_clean)
-            cand_ents = _extract_entities(cand_clean)
-            cand_bigrams = _content_bigrams(cand_norm)
-
-            for original, p_norm, p_ents, p_bgs in zip(past_topics, past_norm, past_entities, past_bigrams):
+            for original, p_norm in zip(past_topics, past_norm):
                 if not p_norm:
                     continue
                 # Exact normalized match
                 if cand_norm == p_norm:
                     return True, original
-                # Shared distinctive entity → same subject (catches "Hammurabi"
-                # x2, "Cosimo I Medici" x2, etc., even when the rest of the
-                # sentence is completely reworded). Exclude channel-wide
-                # common entities so "two different Pharaoh stories" don't
-                # collide on the shared region/era.
-                shared = (cand_ents & p_ents) - common_entities
-                if shared:
-                    return True, original
-                # Shared distinctive bigram → same compound subject in
-                # lowercase ("fuego griego", "muerte negra"). Excludes
-                # channel-wide common bigrams so recurring niche themes
-                # don't auto-collide.
-                shared_bg = (cand_bigrams & p_bgs) - common_bigrams
-                if shared_bg:
-                    return True, original
-                # Token-overlap fallback (tighter threshold than before)
+                # Token overlap: high overlap = same subject rephrased
                 a, b = set(cand_norm.split()), set(p_norm.split())
-                if a and b:
-                    overlap = len(a & b) / max(len(a), len(b))
-                    if overlap >= 0.55:
-                        return True, original
-                # Raw sequence similarity
-                if SequenceMatcher(None, cand_norm, p_norm).ratio() >= 0.7:
+                if a and b and len(a & b) / max(len(a), len(b)) >= 0.65:
+                    return True, original
+                # Sequence similarity: catches near-identical phrasings
+                if SequenceMatcher(None, cand_norm, p_norm).ratio() >= 0.72:
                     return True, original
             return False, ""
 
-        # ---- 4. Build forbidden block (topics + banned entities) ----
-        # IMPORTANT: this block is purely a duplicate-avoidance hint for the LLM.
-        # It must NOT push the model out of the niche. With heavy channel history
-        # (e.g. 100+ videos) the older wording ("FORBIDDEN entities ... Generate a
-        # COMPLETELY DIFFERENT and ORIGINAL idea") read like "abandon the niche",
-        # because every entity listed *was* a niche entity. We now (a) cap counts
-        # tighter, (b) phrase the avoidance as "still WITHIN the niche", and
-        # (c) re-anchor the niche AFTER the avoidance list so the model holds it
-        # in working memory while picking a new angle. The cache-side dedupe
-        # guard (`_is_duplicate`) is unchanged and still catches collisions.
+        # ---- 4. Build forbidden block (recent topics as avoidance hint for the LLM) ----
         forbidden_block = ""
         if past_topics:
             shown = past_clean[-25:]
-            all_ents: set = set()
-            for ents in past_entities[-25:]:
-                all_ents.update(ents)
-            entity_list = sorted(e for e in all_ents if len(e) >= 4)[:40]
             forbidden_block = (
                 "\n\nALREADY COVERED in this niche (pick a DIFFERENT angle, but stay WITHIN the niche):\n"
                 + "\n".join(f"- {t}" for t in shown)
-            )
-            if entity_list:
-                forbidden_block += (
-                    "\n\nSpecific subjects already covered — avoid these particular ones, "
-                    "but DO NOT leave the niche to avoid them (the niche is huge — pick a different "
-                    "person/place/event/concept from the SAME niche):\n"
-                    + ", ".join(entity_list)
-                )
-            forbidden_block += (
-                f"\n\nGenerate a fresh angle WITHIN the niche \"{self.niche}\". "
+                + f"\n\nGenerate a fresh angle WITHIN the niche \"{self.niche}\". "
                 f"The new topic must still unmistakably belong to this niche — "
                 f"only the specific subject should differ from the list above."
             )
@@ -1213,91 +862,86 @@ INSTRUCTIONS:
 
 Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
         else:
-            # Detect science domain for SOFT context only — used as setting
-            # hints, never as a per-prompt astronomy checklist. The point is
-            # to keep the model from drifting into sci-fi fantasy or random
-            # generic stock imagery on abstract script lines, NOT to force
-            # "JWST + nebula + galaxy" into every single prompt.
-            domain_info = self._get_domain_info()
+            ctx = self._get_context_profile()
             era_context = ""
-            if domain_info:
+            if ctx and (ctx.get("setting") or ctx.get("visual_anchors")):
+                bits = []
+                if ctx.get("setting"):
+                    bits.append(f"the story is set in **{ctx['setting']}**")
+                if ctx.get("visual_anchors"):
+                    bits.append(f"period-accurate elements that MUST appear naturally: {ctx['visual_anchors']}")
+                if ctx.get("must_avoid"):
+                    bits.append(f"FORBIDDEN (anachronistic or off-era): {ctx['must_avoid']}")
                 era_context = (
-                    f"\n\nDOMAIN CONTEXT (background only, not a checklist): the story belongs to "
-                    f"**{domain_info['name']}**. Real instruments, palettes, scales and phenomena from "
-                    f"this domain should appear NATURALLY where the script demands them — never enumerate "
-                    f"every instrument or phenomenon as a list. AVOID: fictional planets, sci-fi spaceships, "
-                    f"alien creatures, neon fantasy nebulae, hand-wavy 'energy portals'."
+                    "\n\nERA & SETTING — MANDATORY FOR PERIOD ACCURACY: "
+                    + ". ".join(bits)
+                    + ". Every prompt MUST be visually faithful to this era. All clothing, "
+                      "architecture, objects, lighting conditions and environments must belong "
+                      "to this specific time and place. A viewer must immediately recognize the "
+                      "correct historical period just by looking at the image. "
+                      "Do not enumerate props as a costume checklist — weave them into the action naturally."
                 )
 
             video_title = (self.metadata or {}).get("title", "") if hasattr(self, "metadata") else ""
 
-            # Pass the WHOLE script (not pre-sliced sections) so the LLM can
-            # pick {n_prompts} narratively distinct beats by itself. Mechanical
-            # sectioning into ~equal sentence chunks gives the LLM uselessly
-            # short slices and it falls back to generic character portraits.
-            script_block = (self.script or "").strip()
-
-            prompt = f"""Task: write {n_prompts} image prompts for a YouTube Short. The {n_prompts} prompts together must VISUALLY TELL the story narrated in the script — different moments, different actions, different places. NOT {n_prompts} portraits of the same character.{era_context}
+            prompt = f"""Task: write exactly {n_prompts} image prompts for a YouTube Short. The script has been divided into {n_prompts} sections — write ONE image prompt per section. Each image must visually represent what is being narrated in THAT EXACT SECTION: the specific action happening, the environment where it takes place, and the atmosphere or emotion of that moment.{era_context}
 
 VIDEO TITLE: {video_title or self.subject}
 TOPIC: {self.subject}
 
-FULL SCRIPT (read it whole — do NOT slice mechanically; pick the {n_prompts} most VISUALLY DISTINCT story beats):
-\"\"\"
-{script_block}
-\"\"\"
+SCRIPT DIVIDED INTO {n_prompts} SECTIONS (prompt N must illustrate section N):
+{sections_text}
 
-WORK IN TWO STEPS (internally — only the final JSON is returned):
+RULES FOR EACH PROMPT:
 
-STEP 1 — Pick {n_prompts} VISUALLY DISTINCT BEATS from the script. A beat is a single concrete moment: "[cosmic object/instrument/scientist] does/shows Y in setting Z with feature W". Each beat must:
-  • have a different VERB or visual focus ("collapses into", "engulfs", "drifts past", "illuminates", "warps", "ignites", "transmits", "scans")
-  • happen in a different SETTING (the surface of a star, the inside of a nebula, an observatory dome, the deck of a probe, the event horizon, an exoplanet system, a particle detector tunnel)
-  • feature a different CONCRETE FEATURE specific to THIS story (the photon ring of a black hole, a JWST mirror reflection, the plasma jet of a quasar, a spacecraft's gold thermal foil, a pulsar's magnetic-field lines, a planet's transit silhouette). NOT generic "space backgrounds".
-  • {n_prompts} beats = {n_prompts} different visual moments. If two of your beats look similar, replace one.
+1. SECTION FIDELITY — MANDATORY. Read your assigned section carefully. The image must show what is LITERALLY happening in those sentences: the action described, the place mentioned, the object referenced, the emotion conveyed. Do NOT invent a scene unrelated to the section. If the section describes a landscape or a phenomenon with no people, depict that landscape or phenomenon.
 
-STEP 2 — Write each prompt applying ALL these rules:
+2. FULL SCENE DESCRIPTION. Every prompt must describe THREE things together:
+   a) THE ACTION or main subject — what is happening or what is being shown
+   b) THE ENVIRONMENT — where it takes place, time of day, weather, architecture, terrain
+   c) THE ATMOSPHERE — lighting, mood, emotional tone that matches what the narrator is describing
 
-1. ENGLISH ONLY. Even if the script is in Spanish, every prompt is written in English. Translate proper nouns naturally ("Vía Láctea" → "Milky Way", "agujero negro" → "black hole"). No Spanish words anywhere.
+3. ENGLISH ONLY. Even if the script is in Spanish, every prompt is in English. Translate proper nouns naturally ("Platón" → "Plato", "Alejandro" → "Alexander"). No Spanish words anywhere.
 
-2. ACTION / PHENOMENON FIRST. Open with a verb-driven phrase or a vivid present-tense state. The first 6-8 words MUST contain the main visual action. Examples of correct openings:
-     "Light bends around the photon ring of TON 618…"
-     "Voyager 1 drifts past Saturn's rings at sunset…"
-     "Plasma jets erupt from the poles of a magnetar…"
-     "JWST's hexagonal mirror reflects the Carina Nebula…"
-   FORBIDDEN openings (these produce static, generic stock images): "A black hole in space", "A galaxy portrait", "A telescope pointing at the sky", "A planet floating".
+4. ACTION OR SCENE FIRST. If people appear, open with a verb-driven action. If the section describes a place, landscape, or phenomenon, open with that environment vividly described.
+   FORBIDDEN openings: "[Name] standing in [costume]", "[Name] portrait", "A figure looking intently", "[Name] in [outfit] in front of [backdrop]".
 
-3. CONCRETE FEATURE — MANDATORY. Every prompt names at least one CONCRETE FEATURE specific to THIS story (the accretion disk, the photon ring, the plasma jet, the gold thermal foil, the JWST hex mirror, the Voyager golden record, the LIGO laser arm, the Cassini RTG). Without a story-specific feature, the image becomes a generic space wallpaper and you've failed the task.
+5. PEOPLE AND EMOTION. When people appear, describe their facial expression and body language to match the emotion of the moment (fear, determination, awe, grief, triumph, etc.). Give a brief physical anchor for named real people (max ~10 words). The emotion must match what the narrator is saying in that section.
 
-4. UNIQUE BEATS. The {n_prompts} prompts must NEVER show the same scene twice. If two prompts both render "a black hole with an accretion disk" or "a galaxy seen from outside", scrap one and pick a different beat from the script (the inside of an event horizon, a jet from the poles, a star being shredded by tidal forces, etc.).
+6. CONCRETE OBJECTS. Name at least one specific object from the section (a tool, weapon, structure, artifact, natural element). Generic props are forbidden — use only what the script actually references.
 
-5. NAMED OBJECT / MISSION ANCHOR. When the script names a real cosmic object, mission, or scientist, give a SHORT factual anchor (one phrase, max ~10 words) so the generator renders the right thing. Examples: "TON 618, a hyperluminous quasar 18.2 billion light-years away…", "Voyager 1, with its gold-covered record and dish antenna…", "JWST, the segmented gold-mirror infrared telescope at L2…". The anchor is brief; the action and feature are the focus.
+7. UNIQUE SCENES. No two prompts may show the same scene. Each of the {n_prompts} sections happens at a different moment — use that to ensure visual variety.
 
-6. SCALE & PHYSICS AS BACKGROUND. Real cosmic scales/instruments/palettes appear NATURALLY because the story is about them. NEVER write a checklist like "with stars, nebulae, planets, galaxies, and aurora". One or two natural domain cues per prompt is enough.
+8. NO ART-STYLE WORDS. Describe scenes only. NEVER write: "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art", "watercolor", "sketch". The visual style is added downstream.
 
-7. NO ART-STYLE WORDS. Describe scenes only. NEVER write: "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "watercolor", "sketch", "comic", "pixel art".
+9. NO CAMERA JARGON. NEVER write: "cinematic", "photograph", "camera", "shot", "lens", "close-up", "4K", "8K", "HD", "render", "bokeh", "macro", "aerial".
 
-8. NO CAMERA JARGON. NEVER write: "cinematic", "photograph", "camera", "shot", "lens", "close-up", "4K", "8K", "HD", "render", "bokeh", "macro", "aerial".
+10. NO MULTI-IMAGE TRIGGERS: "series", "sequence", "scenes" (plural), "panels", "panel", "storyboard", "montage", "collage", "grid", "split screen", "frames", "multiple", "diptych", "triptych", "side by side".
 
-9. NO MULTI-IMAGE TRIGGERS (these make generators output collages): "series", "sequence", "scenes" (plural), "panels", "panel", "storyboard", "comic strip", "montage", "collage", "grid", "split screen", "frames", "multiple", "diptych", "triptych", "before-and-after", "side by side".
+11. LENGTH. 40-65 English words per prompt.
 
-10. LENGTH. 35-60 English words per prompt.
+EXAMPLES — pattern only, not templates to copy:
+   GOOD ✓ (person + action + emotion) "A exhausted soldier drops to his knees on a smoldering battlefield at dusk, clutching a broken spear, his face streaked with ash and tears, enemy fortifications burning in the distance behind him, smoke rising into an orange sky."
+   GOOD ✓ (landscape / no people) "A vast primeval forest stretches to the horizon under a hazy amber sky, enormous ferns and cycad trees towering over a muddy river delta, volcanic mountains smoking faintly in the far background, the air thick with mist at dawn."
+   GOOD ✓ (phenomenon) "A massive wall of glacial ice advances slowly across a flat tundra plain under a pale grey sky, uprooting ancient trees in its path, frozen mammoths visible beneath the translucent surface, a herd of woolly rhinoceroses fleeing in the foreground."
+   GOOD ✓ (discovery moment) "An archaeologist kneels in a narrow underground chamber, trembling hand holding a torch over a perfectly preserved golden death mask resting on stone, dust particles floating in the warm light, rough-hewn rock walls pressing close on all sides."
 
-CONCRETE EXAMPLES (assume the video is about TON 618, the supermassive black hole 66 billion times the mass of the Sun):
+STRUCTURAL EXAMPLES — these show the PATTERN only (action-first, named anchor, concrete feature, narrative beat). Each GOOD example below is about a DIFFERENT cosmic subject on purpose: your {n_prompts} prompts must use the actual subject, named objects and concrete features from THIS video's script — NOT the subjects in the examples.
 
-   GOOD ✓ "Light bends around the photon ring of TON 618, an orange-white accretion disk swirling at relativistic speeds, gravitationally lensed background galaxies smeared into arcs, deep cosmic blackness beyond, the faint glow of distant quasars sprinkling the field."
-   GOOD ✓ "Twin plasma jets shoot from the poles of TON 618, blue-white synchrotron radiation streaming for thousands of light-years, slicing through a host galaxy of dim red stars and dust lanes, the hyperluminous quasar core blazing at the center."
-   GOOD ✓ "A doomed star spirals into the accretion disk of TON 618, stretched into a glowing tidal stream of plasma, its envelope shredded by gravity, sparks of X-ray flares lighting up the disk's inner edge against pitch-black space."
-   GOOD ✓ "A scale comparison floats in front of TON 618's event horizon: the entire orbit of Neptune fits inside it, the Sun shrunk to a pinprick speck beside the colossal silhouette, dim background stars warped by gravitational lensing."
+   GOOD ✓ (supermassive black hole) "Light bends around the photon ring of TON 618, an orange-white accretion disk swirling at relativistic speeds, gravitationally lensed background galaxies smeared into arcs, deep cosmic blackness beyond, the faint glow of distant quasars sprinkling the field."
+   GOOD ✓ (deep-space mission)     "Voyager 1 drifts past the rings of Saturn at golden hour, its dish antenna angled back toward the inner Solar System, the gold-plated record glinting on its flank, ring shadows striping the spacecraft's body, the pale crescent of Titan in the distance."
+   GOOD ✓ (neutron star)            "A magnetar's twin magnetic-field lines arc thousands of kilometres above its glowing crust, X-ray flares ripple outward in violent pulses, the millisecond-pulsar surface cracks with starquake fissures, surrounding nebular gas glowing blue from the radiation bath."
+   GOOD ✓ (observatory)             "JWST's hexagonal gold mirror unfolds against the blackness of L2, the Carina Nebula reflected in its segments, the sun-shield's silver layers tilted away from the Sun, distant stars dotting the deep-cold backdrop, the spacecraft's struts catching faint sunlight."
 
    BAD ✗ "A big black hole in deep space with stars around it." (no verb, no concrete feature, generic wallpaper — exact failure mode)
    BAD ✗ "A supermassive black hole with accretion disk, glowing brightly, with galaxies in the background." (checklist instead of story; no specific action or comparison)
-   BAD ✗ "Outer space with a black hole." (no specific moment, no story-specific feature, no named object)
-   BAD ✗ "TON 618 portrait, glowing in the void, with stars behind it." (forbidden opening — static stock image)
+   BAD ✗ "Outer space with a planet and stars." (no specific moment, no story-specific feature, no named object)
+   BAD ✗ "[subject] portrait, glowing in the void, with stars behind it." (forbidden opening — static stock image)
 
 Return ONLY a JSON array of {n_prompts} prompt strings, in chronological order following the script. No markdown, no explanation, no preamble. Just the array.
 
 Example format:
-["beat 1 prompt …", "beat 2 prompt …", "beat 3 prompt …", "beat 4 prompt …", "beat 5 prompt …", "beat 6 prompt …"]"""
+["section 1 prompt …", "section 2 prompt …", "section 3 prompt …", "section 4 prompt …", "section 5 prompt …", "section 6 prompt …"]"""
 
         completion = (
             str(self.generate_response(prompt))
@@ -1442,10 +1086,14 @@ Example format:
                     "setting from the others. NEVER write \"X standing in armor in front of "
                     "columns\" — that is the exact pattern we are rejecting."
                 )
-                retry_completion = (
-                    str(self.generate_response(stricter))
-                    .replace("```json", "").replace("```", "").strip()
-                )
+                try:
+                    retry_completion = (
+                        str(self.generate_response(stricter))
+                        .replace("```json", "").replace("```", "").strip()
+                    )
+                except Exception:
+                    warning("   Stricter retry failed (all LLM providers unavailable); keeping original prompts.")
+                    retry_completion = ""
                 retry_prompts: List[str] = []
                 try:
                     retry_prompts = _extract_prompts(json.loads(retry_completion))
@@ -1905,7 +1553,7 @@ Example format:
         will average between the two and produce neither.
         """
         clean_prompt = self._sanitize_image_prompt(prompt).rstrip(', .')
-        domain_info = self._get_domain_info()
+        ctx = self._get_context_profile()
         custom_style = (self._image_style or "").strip()
 
         # Guard against placeholder / garbage image_style values like "1", "x",
@@ -1932,17 +1580,22 @@ Example format:
 
         if custom_style:
             # Style anchored at front for maximum weight, then scene, then a
-            # neutral domain clause, then style repeated at the end as reminder.
+            # neutral setting clause, then style repeated at the end as reminder.
             short_style = custom_style if len(custom_style) <= 200 else custom_style[:200].rsplit(",", 1)[0]
             parts.append(f"ART STYLE — render the entire image in this style: {custom_style}")
             parts.append(clean_prompt)
-            if domain_info and domain_info.get("visual_brief"):
-                parts.append(
-                    f"Domain context — the scene belongs to {domain_info['name']}. "
-                    f"Include scientifically faithful elements when relevant (instruments, scales, palettes, "
-                    f"phenomena from this list, drawn in the art style above): {domain_info['visual_brief']}. "
-                    f"No fictional planets, no neon fantasy nebulae, no sci-fi spaceships."
+            if ctx and (ctx.get("setting") or ctx.get("visual_anchors")):
+                setting_clause = (
+                    f"ERA ACCURACY — this scene takes place in {ctx['setting']}. All clothing, architecture, objects and environment MUST be period-faithful to this era. " if ctx.get("setting") else ""
                 )
+                anchors_clause = (
+                    f"Period-accurate elements to weave into the scene naturally (in the art style above): {ctx['visual_anchors']}. "
+                    if ctx.get("visual_anchors") else ""
+                )
+                avoid_clause = (
+                    f"FORBIDDEN — anachronistic or off-era elements: {ctx['must_avoid']}." if ctx.get("must_avoid") else ""
+                )
+                parts.append((setting_clause + anchors_clause + avoid_clause).strip())
             parts.append(
                 f"FINAL REMINDER — keep the entire image in the art style described above ({short_style}). "
                 f"Do NOT default to photorealism. Do NOT add realistic skin texture or photographic lighting. "
@@ -1950,12 +1603,19 @@ Example format:
             )
         else:
             parts.append(clean_prompt)
-            if domain_info and domain_info.get("visual_brief"):
-                parts.append(
-                    f"Domain: {domain_info['name']}. "
-                    f"Astronomically and physically faithful visual anchors that MUST appear when relevant — {domain_info['visual_brief']}. "
-                    f"Real instruments, scales, palettes and phenomena only — no fictional bodies, no fantasy art."
+            if ctx and (ctx.get("setting") or ctx.get("visual_anchors")):
+                setting_clause = (
+                    f"ERA ACCURACY — this scene takes place in {ctx['setting']}. All clothing, architecture, objects and environment MUST be period-faithful to this era. " if ctx.get("setting") else ""
                 )
+                anchors_clause = (
+                    f"Period-accurate elements to weave into the scene naturally: {ctx['visual_anchors']}. "
+                    if ctx.get("visual_anchors") else ""
+                )
+                avoid_clause = (
+                    f"FORBIDDEN — anachronistic or off-era elements: {ctx['must_avoid']}."
+                    if ctx.get("must_avoid") else ""
+                )
+                parts.append((setting_clause + anchors_clause + avoid_clause).strip())
             parts.append(self.DEFAULT_BASE_STYLE)
 
         combined = ". ".join(p for p in parts if p)
@@ -1963,122 +1623,105 @@ Example format:
         # cap, so this leaves headroom while preventing prompt explosion.
         return combined[:1500]
 
-    def _niche_is_scientific(self) -> bool:
+    def _get_context_profile(self) -> dict:
         """
-        True only if the channel niche explicitly references science, the
-        universe, space, astronomy, astrophysics, cosmology, physics, or a
-        related scientific domain. Used to gate science-domain detection —
-        non-science channels should never have astronomy anchors injected
-        because of an incidental "agujero negro" mention in the script.
+        Niche-agnostic context anchor for image-prompt generation.
+
+        Uses the LLM to derive a per-video brief from the channel niche +
+        topic + script, returning a dict shaped like:
+
+            {
+                "setting": "<short descriptor of where/when/in-what-world the
+                            video takes place — e.g. 'Ancient Rome',
+                            'Modern Wall Street trading floor',
+                            'Pro NFL stadium', 'Tokyo high-end omakase
+                            kitchen', 'Suburban American household 2020s'>",
+                "visual_anchors": "<comma-separated concrete props, clothing,
+                            architecture, objects and environmental cues that
+                            should appear naturally in scenes for this video>",
+                "must_avoid": "<comma-separated visual elements that would be
+                            anachronistic or off-topic for this setting>"
+            }
+
+        Replaces the previous hardcoded CIVILIZATIONS keyword-matching system,
+        which only covered ~17 historical eras and forced every channel into
+        civilization-flavored visuals. The new approach works for any niche —
+        history, science, finance, sports, food, tech, modern stories, etc.
+
+        Cached per (subject, len(script)) tuple. Returns {} on parse failure
+        or when the LLM declines (in which case no extra anchor is injected
+        and the prompt falls back to scene-only content).
         """
-        import unicodedata, re
-
-        niche = (getattr(self, "niche", "") or "").strip()
-        if not niche:
-            return False
-
-        norm = "".join(
-            c for c in unicodedata.normalize("NFD", niche.lower())
-            if unicodedata.category(c) != "Mn"
-        )
-
-        word_kw = (
-            r"ciencia|cientifico|cientifica|cientificos|cientificas"
-            r"|science|scientific"
-            r"|universo|universe|cosmos|cosmico|cosmica|cosmic"
-            r"|espacio|space|espacial|spatial"
-            r"|astronomia|astronomy|astronomico|astronomica"
-            r"|astrofisica|astrophysics|astrofisico"
-            r"|fisica|physics|fisico"
-            r"|cosmologia|cosmology|cosmologico"
-            r"|relatividad|relativity"
-            r"|cuantica|quantum"
-            r"|astrobiologia|astrobiology"
-        )
-        if re.search(rf"\b(?:{word_kw})\b", norm):
-            return True
-
-        substr_kw = (
-            "astron", "astrof", "cosmolog", "cuantic", "exoplaneta",
-            "agujero negro", "galaxia", "nasa", "esa",
-        )
-        return any(s in norm for s in substr_kw)
-
-    def _detect_science_domain(self) -> str:
-        """
-        Match the topic + script against SCIENCE_DOMAINS keyword lists and
-        return the winning domain key (or "" if none). Matching is accent-
-        and case-insensitive; highest keyword-hit count wins. Subject
-        keywords weigh 3x because the title is a stronger signal than the
-        body. Cached per (subject, script) pair.
-
-        Looking at the script too matters because abstract titles like "El
-        objeto más extremo del cosmos" don't carry domain keywords, but the
-        body of the script will mention TON 618, accretion disk, etc.
-
-        Gated on ``_niche_is_scientific()``: channels whose niche is not
-        about science never trigger domain detection.
-        """
-        import unicodedata
-
-        if not self._niche_is_scientific():
-            return ""
-
         subject = (getattr(self, "subject", "") or "").strip()
         script = (getattr(self, "script", "") or "").strip()
+        niche = (getattr(self, "niche", "") or "").strip()
         if not subject and not script:
-            return ""
+            return {}
 
         cache_key = (subject, len(script))
-        if getattr(self, "_domain_cache_key", None) == cache_key:
-            return getattr(self, "_domain_key_cached", "") or ""
+        cached = getattr(self, "_ctx_profile_cached", None)
+        if getattr(self, "_ctx_profile_key", None) == cache_key and cached is not None:
+            return cached
 
-        def _norm(s: str) -> str:
-            s = s.lower()
-            return "".join(
-                c for c in unicodedata.normalize("NFD", s)
-                if unicodedata.category(c) != "Mn"
-            )
+        script_excerpt = script[:1200]
+        prompt = f"""You are a visual research assistant. Read the channel niche, the video topic and the script excerpt, and produce a JSON brief that will anchor image generation for this single video.
 
-        norm_subject = _norm(subject)
-        norm_script = _norm(script[:4000])
+CHANNEL NICHE: {niche or "(not specified)"}
+VIDEO TOPIC: {subject or "(not specified)"}
+SCRIPT EXCERPT:
+\"\"\"
+{script_excerpt}
+\"\"\"
 
-        best_domain = ""
-        best_score = 0
-        for domain, data in SCIENCE_DOMAINS.items():
-            score = 0
-            for kw in data["keywords"]:
-                k = _norm(kw)
-                if k in norm_subject:
-                    score += 3
-                if k in norm_script:
-                    score += 1
-            if score > best_score:
-                best_score = score
-                best_domain = domain
+Return ONLY a JSON object with EXACTLY these three string fields:
+- "setting": a short descriptor of WHERE and WHEN the story happens — pick the most specific real-world setting that fits the topic and script (e.g. "Ancient Rome, late Republic", "Modern Wall Street trading floor", "Pro NFL stadium, game day", "Tokyo high-end omakase kitchen", "Silicon Valley startup office, 2020s", "Rural American farmhouse, present day", "Open ocean, modern container ship"). Do NOT default to "ancient civilization" unless the topic clearly requires it.
+- "visual_anchors": a comma-separated list of CONCRETE props, clothing, architecture, vehicles, tools, environmental details that should appear naturally in scenes from this setting. 8 to 14 items. Be specific (materials, eras, styles).
+- "must_avoid": a comma-separated list of visual elements that would be anachronistic, off-topic or break immersion for this setting. 4 to 8 items.
 
-        self._domain_cache_key = cache_key
-        self._domain_key_cached = best_domain
-        if best_domain and get_verbose():
-            info(f" => Detected science domain: {best_domain} (score {best_score})")
-        return best_domain
-
-    def _get_domain_info(self) -> dict:
-        """
-        Returns {"key": ..., "name": ..., "visual_brief": ...} for the science
-        domain detected from self.subject, or {} if none. Used by
-        ``generate_prompts`` / ``generate_long_prompts`` to anchor every scene
-        to the correct astronomical/physical context.
-        """
-        domain_key = self._detect_science_domain()
-        if not domain_key:
+RULES:
+- Match the SETTING to the actual subject. A topic about a modern athlete must NOT get a "Greek Olympics" setting just because the channel niche mentions sports history.
+- If the topic is abstract or the script is generic, pick the setting that most viewers would picture when reading the topic.
+- Output ONLY the JSON object — no markdown, no preamble, no explanation. No code fences.
+"""
+        try:
+            raw = str(self.generate_response(prompt) or "").strip()
+        except Exception as e:
+            if get_verbose():
+                warning(f"Context profile LLM call failed: {e}")
+            self._ctx_profile_key = cache_key
+            self._ctx_profile_cached = {}
             return {}
-        data = SCIENCE_DOMAINS.get(domain_key, {})
-        return {
-            "key": domain_key,
-            "name": data.get("name", domain_key.title()),
-            "visual_brief": data.get("visual_brief", ""),
-        }
+
+        cleaned = raw.replace("```json", "").replace("```", "").strip()
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if match:
+            cleaned = match.group(0)
+
+        profile: dict = {}
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                profile = {
+                    "setting": str(parsed.get("setting", "")).strip(),
+                    "visual_anchors": str(parsed.get("visual_anchors", "")).strip(),
+                    "must_avoid": str(parsed.get("must_avoid", "")).strip(),
+                }
+                # Drop the brief entirely if the LLM produced an empty / useless
+                # blob — prevents injecting a placeholder anchor that would
+                # confuse the image-prompt model.
+                if not profile["setting"] and not profile["visual_anchors"]:
+                    profile = {}
+        except Exception as e:
+            if get_verbose():
+                warning(f"Context profile JSON parse failed: {e}")
+            profile = {}
+
+        if profile and get_verbose():
+            info(f" => Context profile: setting='{profile.get('setting', '')[:80]}'")
+
+        self._ctx_profile_key = cache_key
+        self._ctx_profile_cached = profile
+        return profile
 
     def _resolve_voice(self, voice: str) -> str:
         """Resolve a voice alias (e.g. 'Pablo') or raw Edge-TTS ID to its full voice ID."""
@@ -3946,7 +3589,10 @@ Tema: {self.subject}
 {brief_block}
 ESTRUCTURA OBLIGATORIA (usa estos marcadores EXACTOS):
 [INTRO]
-Gancho inicial poderoso (5-7 oraciones, 120-180 palabras). Empieza con un dato impactante, pregunta provocadora o afirmación audaz.
+Gancho inicial poderoso seguido de una breve invitación al like (6-8 oraciones, 140-200 palabras). Estructura:
+1. Empieza con un dato impactante, pregunta provocadora o afirmación audaz que enganche al espectador.
+2. Desarrolla brevemente la promesa del video (qué van a descubrir).
+3. Antes de arrancar el tema, incluye 1-2 oraciones naturales y cálidas invitando al espectador a dar "me gusta" si disfruta este tipo de contenido, para apoyar a seguir creando videos así. Redáctalo de forma orgánica y humana, NO suene a publicidad ni a lista de instrucciones.
 
 {sections_block}
 
@@ -4058,8 +3704,11 @@ REGLAS DE ESTILO:
         intro_prompt = f"""Eres un narrador experto de documentales. Escribe SOLO la INTRODUCCIÓN de un guion documental sobre: {self.subject}
 {brief_block}
 REGLAS:
-- 5-7 oraciones (120-180 palabras).
-- Empieza con un gancho poderoso: dato impactante, pregunta provocadora o afirmación audaz.
+- 6-8 oraciones (140-200 palabras).
+- Estructura de la intro:
+  1. Empieza con un gancho poderoso: dato impactante, pregunta provocadora o afirmación audaz.
+  2. Desarrolla brevemente la promesa del video (qué va a descubrir el espectador).
+  3. Antes de arrancar el tema, incluye 1-2 oraciones naturales y cálidas invitando al espectador a dar "me gusta" si disfruta este tipo de contenido, para apoyar a seguir creando videos así. Redáctalo de forma orgánica y humana, NO suene a publicidad ni a lista de instrucciones.
 - Lenguaje vívido y sensorial. Oraciones CORTAS (máximo 20 palabras).
 - ESCRIBE TODO EN {lang}. NO uses inglés.
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
@@ -4214,9 +3863,13 @@ REGLAS:
                 f"Genera un título para un video largo de YouTube sobre: {self.subject}.\n"
                 f"REQUISITOS DEL TÍTULO:\n"
                 f"- Máximo 70 caracteres.\n"
-                f"- Clickbait MODERADO: incluye exactamente 1 o 2 palabras clave en MAYÚSCULAS para enfatizar "
-                f"(ejemplos: SECRETO, NUNCA, JAMÁS, NADIE, OCULTO, VERDAD, IMPOSIBLE, REAL, PROHIBIDO, INCREÍBLE).\n"
-                f"- Despierta curiosidad o promete una revelación.\n"
+                f"- Puede incluir opcionalmente 1 palabra en MAYÚSCULAS para énfasis, elegida según lo que "
+                f"mejor encaje con el tema específico del video. Ejemplos de palabras válidas según contexto: "
+                f"NUNCA, JAMÁS, NADIE, VERDAD, REAL, IMPOSIBLE, PROHIBIDO, INCREÍBLE, OLVIDADO, PERDIDO, "
+                f"OCULTO, BRUTAL, EXTREMO, DEFINITIVO, ÚNICO, ABSOLUTO, ÉPICO. "
+                f"PROHIBIDO usar SECRETO o SECRETOS — están sobreutilizados. Elige la palabra que mejor describa "
+                f"el tono real del video, no la primera que se te ocurra.\n"
+                f"- Despierta curiosidad o promete una revelación basada en el tema real.\n"
                 f"- SIN signos de exclamación ni de interrogación.\n"
                 f"- SIN emojis, SIN comillas, SIN hashtags.\n"
                 f"- ESCRIBE EN {self.language}.\n"
@@ -4660,46 +4313,56 @@ Return ONLY the JSON. No markdown, no explanation."""
             f'\nSECTION {i+1}: "{sec}"\n' for i, sec in enumerate(sections)
         )
 
-        # Domain anchor — names the science domain inside the prompt so the LLM
-        # doesn't drift into sci-fi fantasy on abstract script lines.
-        domain_info = self._get_domain_info()
+        # Setting anchor — names the world/era of THIS video inside the prompt
+        # so the LLM doesn't drift into off-setting visuals on abstract script
+        # lines. Niche-agnostic: works for history, modern, sports, food, tech,
+        # etc. (see `_get_context_profile`).
+        ctx = self._get_context_profile()
         era_clause = ""
-        if domain_info:
+        if ctx and (ctx.get("setting") or ctx.get("visual_anchors")):
+            setting_line = ctx.get("setting") or "(see niche)"
+            anchors_line = ctx.get("visual_anchors") or "(infer from topic)"
+            avoid_line = ctx.get("must_avoid") or "anything that breaks the setting's immersion"
             era_clause = (
-                f"\n\n=== SCIENCE DOMAIN — NON-NEGOTIABLE ===\n"
-                f"This documentary belongs to: **{domain_info['name']}**.\n"
-                f"Faithful visual anchors: {domain_info['visual_brief']}.\n"
-                f"FORBIDDEN: fictional planets/moons, alien creatures, fantasy nebulae with neon colors, "
-                f"sci-fi spaceships unrelated to real missions, anachronistic instruments (no Hubble photo "
-                f"of a 1960s mission, no JWST in 1990), 'energy portals', glowing magic effects.\n"
-                f"REQUIRED in every prompt with an object: at least one factually correct feature "
-                f"from the domain markers above (real instrument, real palette, real scale, real phenomenon).\n"
+                f"\n\n=== SETTING — NON-NEGOTIABLE ===\n"
+                f"This documentary is set in: **{setting_line}**.\n"
+                f"Visual anchors that should appear naturally when relevant: {anchors_line}.\n"
+                f"FORBIDDEN visual elements (anachronistic / off-setting): {avoid_line}.\n"
+                f"REQUIRED in every prompt with a person: clothing, props and architecture that belong to the setting above.\n"
                 f"=========================================="
             )
 
-        prompt = f"""Task: write {n_prompts} image prompts for a long-form science documentary about "{self.subject}".{era_clause}
+        # Inline guidance string for the PERIOD ACCURACY rule below — kept
+        # short to avoid bloating the prompt.
+        period_inline = (
+            f"Setting is **{ctx['setting']}**. Every prompt with a person MUST name at least 2 specific clothing/prop items that belong to this setting, and AVOID: {ctx.get('must_avoid', '')}. "
+            if (ctx and ctx.get("setting")) else ""
+        )
 
-You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the cosmic objects, instruments, scientists or phenomena that section describes. Do not invent new events. Do not summarize abstractly. If the section talks about "Voyager 1 entering the heliopause in 2012", the image is exactly that.
+        prompt = f"""Task: write {n_prompts} image prompts for a long-form video about "{self.subject}".{era_clause}
+
+You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section talks about "the team debating in the boardroom at noon", the image is exactly that.
 
 ABSOLUTE RULES (every prompt):
-1. ENGLISH ONLY — NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns naturally (e.g. "Vía Láctea" -> "Milky Way", "agujero negro" -> "black hole", "Encélado" -> "Enceladus"). NO Spanish words anywhere in the output.
-2. SCENE FIDELITY. Open with a concrete action or vivid present-tense state drawn from the section text. Whatever the section is talking about, that is what the image shows.
-3. NAMED OBJECT IDENTITY. When the script names a real cosmic object, mission or scientist, do NOT just drop the name — describe the object factually so the image generator renders the right thing. Examples: Voyager 1 -> "the Voyager 1 probe with its 3.7-meter dish antenna, gold thermal blankets, RTG power module, and the Golden Record bolted to its side"; JWST -> "the James Webb Space Telescope with its 18 hexagonal gold-coated beryllium mirror segments and tennis-court-sized silver sunshield"; TON 618 -> "TON 618, a hyperluminous quasar whose accretion disk shines brighter than 140 trillion Suns". The factual description MUST appear every time the object is shown.
-4. PHYSICAL ACCURACY — STRICT. {("Domain is **" + domain_info['name'] + "**. Every prompt MUST include at least one factually correct feature (real instrument, palette, scale, or phenomenon) from this domain. No fictional planets, no alien lifeforms, no neon fantasy nebulae, no sci-fi spaceships unrelated to real missions — ever. ") if domain_info else ""}If a probe, telescope, rover or astronaut appears, describe it exactly as it really looks (materials, color, shape, instruments). Same for cosmic bodies (true colors, true scales, true rotation), instruments (real arrays, real domes, real detectors), and 2-3 supporting elements. If the section names a real object, mission or place, use that proper noun.
-5. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME physical universe — same realism level, same scientific accuracy. No image should feel like it comes from a different show. Vary scale, vantage point, framing — but never the level of realism.
-6. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "watercolor", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later — your job is content only.
+1. ENGLISH ONLY — NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns naturally. NO Spanish words anywhere in the output.
+2. SCENE FIDELITY. Open with a concrete action (subject + verb) drawn from the section text. Whatever the section is talking about, that is what the image shows.
+3. NAMED CHARACTER IDENTITY. When the script names a real person, do NOT just write their name — describe them physically (age, hair, beard, build, clothing) so the image generator can render the correct person. The physical description MUST appear every time they're shown.
+4. SETTING ACCURACY — STRICT. {period_inline}If a person appears, describe their clothing exactly as it would look in the setting of this video (fabric, cut, color, footwear, headwear). Same for architecture, tools, vehicles and 2-3 supporting objects. If the section names a real person, place or event, use that proper noun.
+5. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing — but never the level of realism.
+6. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later — your job is content only.
 7. LENGTH. 40-70 English words per prompt. No camera or lens jargon.
 
-Examples of GOOD scene-only prompts:
-- "Voyager 1 drifts past the rings of Saturn at twilight, its 3.7-meter parabolic dish angled back toward Earth, gold thermal foil glinting against the deep black of space, the planet's banded cloudtops glowing in pale gold below, the Golden Record visible on its bus."
-- "A magnetar's magnetic field lines erupt as twisting lavender arcs reaching outward thousands of kilometers, while the dense neutron-star surface glows hot orange beneath, X-ray flares lighting up cooling iron plates of the crust, a halo of charged particles spiraling above the poles."
-- "Inside the LHC tunnel at CERN, the deep blue cryostat segments curve into the distance, frost on the helium pipes, technicians in white coats standing beside a pillar, the toroidal ATLAS detector cross-section glowing faintly with simulated particle tracks projected on its inner walls."
+Examples of GOOD scene-only prompts (the PATTERN matters — names and props will differ for your topic):
+- (Historical setting) "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces."
+- (Modern setting) "A young trader leans over three glowing monitors on the floor of the New York Stock Exchange, mouth open mid-shout, paper tickets crumpled on his keyboard, the index ticker spiking red overhead, colleagues running behind him."
+- (Sports setting) "A quarterback in a navy and red jersey throws a tight spiral over the defensive line under stadium floodlights, mud streaking his white pants, breath visible in cold air, tens of thousands of blurred fans behind the end zone."
+- (Domestic / present-day setting) "A father in a flannel shirt kneels beside an open dishwasher in a small kitchen at night, holding a flashlight, water pooling at his knees, his daughter watching from the hallway in pyjamas, single warm bulb above the sink."
 
 Examples of BAD prompts (DO NOT WRITE THESE):
-- "A cosmic scene with stars." (too vague, no action, no specific object)
-- "Stylized cartoon of a black hole." (forbidden art-style word)
-- "A scientific illustration of a galaxy." (forbidden art-style word, no specific object)
-- "Symbolic image of the universe expanding." (no concrete moment, abstract metaphor)
+- "An ancient scene." (too vague, no action, no setting)
+- "Stylized cartoon of [subject] doing [action]." (forbidden art-style word)
+- "A historical illustration of [subject]." (forbidden art-style word, no action)
+- "Symbolic image of [subject]'s power." (no concrete moment)
 
 {sections_text}
 Forbidden words (art-style / camera jargon): cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, sketch.
@@ -5504,9 +5167,62 @@ No markdown. No explanation. Just the JSON array."""
 
         if not session_alive:
             info(" => Conectando con Firefox...")
+            self._free_firefox_profile()
             service = Service(GeckoDriverManager().install())
             self.browser = webdriver.Firefox(service=service, options=self.options)
             success(" => Firefox conectado.")
+
+    def _free_firefox_profile(self) -> None:
+        """
+        Selenium can't open Firefox if the configured profile is already in use
+        (the user has Firefox open, or a previous run left lock files behind).
+        Kill any running firefox.exe / geckodriver.exe and remove stale profile
+        locks so the upcoming `webdriver.Firefox(...)` call gets a clean slate.
+        Best-effort: never raise — if killing fails, Selenium will surface the
+        usual "Process unexpectedly closed with status 0".
+        """
+        import os
+        import sys
+        import time
+        import subprocess
+
+        # 1) Kill any running Firefox / geckodriver. Without this, Selenium's
+        # spawned firefox.exe just hands the URL to the existing window and
+        # exits, leaving the driver with no session.
+        targets = ["firefox.exe", "geckodriver.exe"] if sys.platform == "win32" else ["firefox", "geckodriver"]
+        killed_any = False
+        for proc_name in targets:
+            try:
+                if sys.platform == "win32":
+                    result = subprocess.run(
+                        ["taskkill", "/F", "/IM", proc_name, "/T"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    # taskkill returns 128 if no such process — treat as success.
+                    if result.returncode == 0:
+                        killed_any = True
+                else:
+                    subprocess.run(["pkill", "-f", proc_name], capture_output=True, timeout=10)
+            except Exception:
+                pass
+        if killed_any:
+            info(" => Cerré Firefox abierto para liberar el perfil.")
+            time.sleep(1.5)  # let Windows release file handles
+
+        # 2) Remove stale lock files in the configured profile directory.
+        try:
+            from config import get_firefox_profile_path
+            profile_dir = get_firefox_profile_path()
+        except Exception:
+            profile_dir = None
+        if profile_dir and os.path.isdir(profile_dir):
+            for lock_name in ("parent.lock", ".parentlock", "lock"):
+                lock_path = os.path.join(profile_dir, lock_name)
+                try:
+                    if os.path.exists(lock_path):
+                        os.remove(lock_path)
+                except Exception:
+                    pass
 
     def get_channel_id(self) -> str:
         """
@@ -5604,7 +5320,7 @@ No markdown. No explanation. Just the JSON array."""
           5. ALWAYS close the new tab and switch back to the original tab.
 
         Args:
-            listing_tab: "short" for Shorts, "upload_video" for long videos.
+            listing_tab: "short" for Shorts, "upload" for long videos.
             kind_label: human-readable label used only in log lines.
             max_wait_s: hard total cap.
             poll_interval_s: time between row reads.
@@ -5618,7 +5334,12 @@ No markdown. No explanation. Just the JSON array."""
         info("\t   (polling in a SEPARATE tab so the upload tab is never disturbed)")
 
         deadline = time.time() + max_wait_s
-        listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+        listing_url = (
+    f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+    if listing_tab == "short"
+    else f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+    f'?d=ud&filter=%5B%5D&sort=%7B%22columnType%22%3A%22date%22%2C%22sortOrder%22%3A%22DESCENDING%22%7D'
+)
         target_title = (self.metadata.get("title") or "").strip()
         target_match = target_title[:50] if target_title else ""
 
@@ -5694,8 +5415,7 @@ No markdown. No explanation. Just the JSON array."""
             driver.switch_to.window(status_handle)
 
             try:
-                driver.get(listing_url)
-                time.sleep(5)
+                time.sleep(8)
             except Exception as e:
                 warning(f"\t=> Could not navigate status tab to listing: {e}")
                 return False
@@ -5869,7 +5589,12 @@ No markdown. No explanation. Just the JSON array."""
         """
         if not getattr(self, "channel_id", None):
             return ""
-        listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+        listing_url = (
+    f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+    if listing_tab == "short"
+    else f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+    f'?d=ud&filter=%5B%5D&sort=%7B%22columnType%22%3A%22date%22%2C%22sortOrder%22%3A%22DESCENDING%22%7D'
+)
         target_title = (self.metadata.get("title") or "").strip()
         target_match = target_title[:50] if target_title else ""
 
@@ -5890,13 +5615,14 @@ No markdown. No explanation. Just the JSON array."""
         status_handle = None
         try:
             existing = set(driver.window_handles)
-            driver.execute_script("window.open('about:blank', '_blank');")
-            time.sleep(1)
+            driver.execute_script(f"window.open('{listing_url}', '_blank');")
+            time.sleep(5)
             new_handles = [h for h in driver.window_handles if h not in existing]
             if not new_handles:
                 return ""
             status_handle = new_handles[0]
             driver.switch_to.window(status_handle)
+            time.sleep(6)
 
             # Retry the navigation if YT Studio greets us with the "Oops"
             # error page or with an empty listing. Up to 5 attempts, each
@@ -5909,7 +5635,7 @@ No markdown. No explanation. Just the JSON array."""
                     warning(f"URL-resolve navigation failed (attempt {attempt}): {e}")
                     time.sleep(3)
                     continue
-                time.sleep(4 if attempt == 1 else 6)
+                time.sleep(6 if attempt == 1 else 10)
 
                 try:
                     videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
@@ -5928,10 +5654,10 @@ No markdown. No explanation. Just the JSON array."""
                     warning(
                         f"URL-resolve listing showed an error page (attempt {attempt}/5). Retrying..."
                     )
-                    time.sleep(2)
+                    time.sleep(8)
                     continue
                 # No rows, no error — listing might just be slow. Retry anyway.
-                time.sleep(2)
+                time.sleep(5)
 
             chosen_href = None
             for row in videos[:15]:
@@ -6370,7 +6096,7 @@ No markdown. No explanation. Just the JSON array."""
                     info("\t=> Long video — polling listing page in a separate tab...")
                 upload_finished = self._wait_for_listing_settled(
                     driver,
-                    listing_tab="upload_video",
+                    listing_tab="upload",
                     kind_label="long video",
                     max_wait_s=10800,        # 3h total cap (HD 30+ min videos can take a while to encode)
                     poll_interval_s=15,

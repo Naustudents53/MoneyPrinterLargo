@@ -4,113 +4,126 @@
 
 @layer base {
   :root {
-    /* Editorial light theme — warm parchment, clay primary, sage + brass accents */
-    --background: 38 36% 97%;            /* warm parchment */
-    --foreground: 222 28% 16%;           /* soft ink */
+    /* Creator studio light theme: warm canvas, crisp ink, mixed signal accents */
+    --background: 42 43% 96%;
+    --foreground: 222 31% 13%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222 28% 16%;
+    --card-foreground: 222 31% 13%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222 28% 16%;
+    --popover-foreground: 222 31% 13%;
 
-    --primary: 16 38% 46%;               /* warm terracotta / clay */
-    --primary-foreground: 38 40% 98%;
+    --primary: 183 82% 36%;
+    --primary-foreground: 42 43% 98%;
 
-    --secondary: 36 22% 93%;
-    --secondary-foreground: 222 28% 16%;
+    --secondary: 220 20% 91%;
+    --secondary-foreground: 222 31% 13%;
 
-    --muted: 36 18% 92%;
-    --muted-foreground: 222 12% 42%;
+    --muted: 220 18% 91%;
+    --muted-foreground: 222 13% 42%;
 
-    --accent: 168 22% 38%;               /* dusty sage / muted teal */
-    --accent-foreground: 38 40% 98%;
+    --accent: 14 88% 58%;
+    --accent-foreground: 42 43% 98%;
 
-    --destructive: 4 58% 50%;
+    --destructive: 0 78% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    --success: 152 28% 38%;
+    --success: 149 70% 34%;
     --success-foreground: 0 0% 100%;
 
-    --warning: 36 62% 50%;
-    --warning-foreground: 222 28% 16%;
+    --warning: 39 92% 52%;
+    --warning-foreground: 222 31% 13%;
 
-    --gold: 38 48% 54%;                  /* muted brass — not neon amber */
-    --gold-foreground: 222 28% 16%;
+    --gold: 43 91% 50%;
+    --gold-foreground: 222 31% 13%;
 
-    --rose: 12 38% 70%;                  /* dusty rose mid-tone */
-    --ink: 225 30% 18%;                  /* deep editorial ink */
+    --rose: 337 78% 62%;
+    --ink: 224 35% 12%;
 
-    --border: 30 14% 87%;
-    --input: 30 14% 87%;
-    --ring: 16 38% 46%;
+    --border: 220 18% 83%;
+    --input: 220 18% 83%;
+    --ring: 183 82% 36%;
 
-    --brand-start: 38 48% 56%;           /* brass */
-    --brand-mid: 16 42% 52%;             /* terracotta */
-    --brand-end: 168 22% 36%;            /* sage */
-    --brand-deep: 225 30% 22%;           /* ink */
+    --brand-start: 183 90% 42%;
+    --brand-mid: 14 92% 60%;
+    --brand-end: 75 86% 44%;
+    --brand-deep: 252 58% 38%;
 
-    --radius: 0.875rem;
+    --radius: 0.625rem;
   }
 
   .dark {
-    /* Editorial dark theme — deep ink base, warm muted accents */
-    --background: 224 30% 8%;
-    --foreground: 38 30% 94%;
+    /* Creator studio dark theme: deep ink, electric accents, readable contrast */
+    --background: 224 39% 6%;
+    --foreground: 43 32% 94%;
 
-    --card: 224 26% 11%;
-    --card-foreground: 38 30% 94%;
+    --card: 224 34% 10%;
+    --card-foreground: 43 32% 94%;
 
-    --popover: 224 30% 9%;
-    --popover-foreground: 38 30% 94%;
+    --popover: 224 38% 8%;
+    --popover-foreground: 43 32% 94%;
 
-    --primary: 16 42% 60%;               /* warm clay, lifted for dark */
-    --primary-foreground: 224 30% 8%;
+    --primary: 181 92% 50%;
+    --primary-foreground: 224 39% 6%;
 
-    --secondary: 224 20% 16%;
-    --secondary-foreground: 38 30% 94%;
+    --secondary: 225 26% 15%;
+    --secondary-foreground: 43 32% 94%;
 
-    --muted: 224 18% 18%;
-    --muted-foreground: 36 14% 70%;
+    --muted: 225 24% 16%;
+    --muted-foreground: 42 17% 68%;
 
-    --accent: 168 24% 56%;               /* sage, lifted */
-    --accent-foreground: 224 30% 8%;
+    --accent: 14 94% 66%;
+    --accent-foreground: 224 39% 6%;
 
-    --destructive: 4 60% 58%;
+    --destructive: 0 78% 62%;
     --destructive-foreground: 0 0% 100%;
 
-    --success: 152 32% 54%;
-    --success-foreground: 224 30% 8%;
+    --success: 151 72% 47%;
+    --success-foreground: 224 39% 6%;
 
-    --warning: 36 62% 60%;
-    --warning-foreground: 224 30% 8%;
+    --warning: 41 96% 58%;
+    --warning-foreground: 224 39% 6%;
 
-    --gold: 38 50% 62%;
-    --gold-foreground: 224 30% 8%;
+    --gold: 43 96% 60%;
+    --gold-foreground: 224 39% 6%;
 
-    --rose: 12 38% 72%;
-    --ink: 225 30% 18%;
+    --rose: 337 86% 68%;
+    --ink: 224 38% 7%;
 
-    --border: 224 16% 20%;
-    --input: 224 16% 20%;
-    --ring: 16 42% 60%;
+    --border: 224 20% 22%;
+    --input: 224 20% 22%;
+    --ring: 181 92% 50%;
 
-    --brand-start: 38 50% 64%;
-    --brand-mid: 16 42% 60%;
-    --brand-end: 168 24% 54%;
-    --brand-deep: 225 35% 38%;
+    --brand-start: 181 92% 52%;
+    --brand-mid: 14 94% 66%;
+    --brand-end: 76 90% 62%;
+    --brand-deep: 255 62% 52%;
   }
 
   * {
     @apply border-border;
   }
-  html, body, #root {
+
+  html,
+  body,
+  #root {
     height: 100%;
   }
+
   body {
     @apply bg-background text-foreground antialiased;
+    background:
+      linear-gradient(135deg, hsl(var(--brand-deep) / .13), transparent 34%),
+      linear-gradient(315deg, hsl(var(--accent) / .10), transparent 32%),
+      hsl(var(--background));
     font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
     font-feature-settings: "cv11", "ss01";
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / .28);
+    color: hsl(var(--foreground));
   }
 }
 
@@ -142,15 +155,26 @@
   }
 
   .glass {
-    @apply bg-card/70 backdrop-blur-xl border border-border/60;
+    @apply bg-card/75 backdrop-blur-xl border border-border/70;
   }
 
   .glow-ring {
-    /* soft elevation, not neon glow */
     box-shadow:
-      0 0 0 1px hsl(var(--primary) / .15),
-      0 12px 32px -16px hsl(var(--brand-deep) / .35),
-      0 2px 6px -2px hsl(var(--primary) / .12);
+      0 0 0 1px hsl(var(--primary) / .18),
+      0 18px 44px -28px hsl(var(--primary) / .55),
+      0 10px 28px -24px hsl(var(--accent) / .45);
+  }
+
+  .studio-surface {
+    @apply border border-border/70 bg-card/80 backdrop-blur-xl shadow-[0_18px_60px_-44px_hsl(var(--foreground)/.45)];
+  }
+
+  .studio-hover {
+    @apply transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-[0_18px_46px_-34px_hsl(var(--primary)/.65)];
+  }
+
+  .eyebrow {
+    @apply font-mono text-[10px] font-semibold uppercase tracking-[0.24em] text-primary;
   }
 
   .editorial-divider {
@@ -164,35 +188,48 @@
     height: 1px;
   }
 
-  .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
-  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
   .scrollbar-thin::-webkit-scrollbar-thumb {
     background: hsl(var(--border));
     border-radius: 9999px;
   }
-  .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / .4); }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / .4);
+  }
 }
 
-/* Editorial mesh background — soft, low-saturation washes */
+/* Studio background: subtle grid + diagonal light, no layout noise */
 .mesh-bg {
   background-image:
-    radial-gradient(at 0% 0%, hsl(var(--brand-start) / .10) 0, transparent 55%),
-    radial-gradient(at 100% 0%, hsl(var(--brand-mid) / .08) 0, transparent 55%),
-    radial-gradient(at 100% 100%, hsl(var(--brand-end) / .09) 0, transparent 55%),
-    radial-gradient(at 0% 100%, hsl(var(--brand-deep) / .06) 0, transparent 55%);
+    linear-gradient(135deg, hsl(var(--primary) / .08), transparent 28%),
+    linear-gradient(315deg, hsl(var(--accent) / .07), transparent 30%),
+    linear-gradient(hsl(var(--foreground) / .045) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--foreground) / .035) 1px, transparent 1px);
+  background-position: center, center, -1px -1px, -1px -1px;
+  background-size: auto, auto, 42px 42px, 42px 42px;
 }
 
-/* Subtle paper-grain overlay for editorial feel */
+/* Subtle grain overlay for texture */
 .grain {
   position: relative;
 }
+
 .grain::after {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
-  opacity: 0.035;
-  mix-blend-mode: multiply;
+  opacity: 0.03;
+  mix-blend-mode: overlay;
   background-image:
     radial-gradient(hsl(var(--foreground)) 1px, transparent 1px);
   background-size: 3px 3px;

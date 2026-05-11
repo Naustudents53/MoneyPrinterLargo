@@ -56,3 +56,14 @@ export function truncate(s: string | undefined, n: number) {
   if (!s) return "";
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
+
+/** Compact integer formatter for engagement counters: 1234 → "1.2K", 1500000 → "1.5M".
+ * Treats `undefined`, `null`, and the sentinel `-1` (used by sync to signal "no data")
+ * as a dash. */
+export function formatCount(n?: number) {
+  if (n === undefined || n === null || n < 0) return "—";
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}K`;
+  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0)}M`;
+  return `${(n / 1_000_000_000).toFixed(1)}B`;
+}

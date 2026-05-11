@@ -1,3 +1,6 @@
+import json as _json
+import os as _os
+import time as _time
 import requests
 from contextlib import contextmanager
 
@@ -9,6 +12,59 @@ from config import (
     get_gemini_models,
     get_ollama_models,
 )
+
+# ---------------------------------------------------------------------------
+# Cost logging (writes to <ROOT>/.mp/cost_log.jsonl). Best-effort — the LLM
+# call must NEVER fail because we couldn't write a log line.
+# ---------------------------------------------------------------------------
+
+_GEMINI_PRICING = {
+    "gemini-2.5-flash":      {"in": 0.30, "out": 2.50},
+    "gemini-2.5-flash-lite": {"in": 0.075, "out": 0.30},
+    "gemini-2.5-pro":        {"in": 1.25, "out": 10.00},
+    "gemini-1.5-flash":      {"in": 0.075, "out": 0.30},
+    "gemini-1.5-pro":        {"in": 1.25, "out": 5.00},
+    "gemini-2.0-flash":      {"in": 0.10, "out": 0.40},
+}
+
+
+def _estimate_gemini_cost(model: str, in_tokens: int, out_tokens: int) -> float:
+    p = _GEMINI_PRICING.get(model)
+    if not p:
+        for k, v in _GEMINI_PRICING.items():
+            if model.startswith(k):
+                p = v
+                break
+    if not p:
+        return 0.0005
+    return (in_tokens / 1_000_000) * p["in"] + (out_tokens / 1_000_000) * p["out"]
+
+
+def _log_cost(provider: str, model: str, in_tokens: int, out_tokens: int,
+              cost_usd: float | None = None) -> None:
+    try:
+        from config import ROOT_DIR
+    except Exception:
+        return
+    if cost_usd is None and provider == "gemini":
+        cost_usd = _estimate_gemini_cost(model, in_tokens, out_tokens)
+    entry = {
+        "ts": _time.time(),
+        "provider": provider,
+        "model": model,
+        "kind": "text",
+        "in_tokens": int(in_tokens),
+        "out_tokens": int(out_tokens),
+        "cost_usd": round(float(cost_usd or 0.0), 6),
+    }
+    try:
+        mp = _os.path.join(str(ROOT_DIR), ".mp")
+        _os.makedirs(mp, exist_ok=True)
+        with open(_os.path.join(mp, "cost_log.jsonl"), "a", encoding="utf-8") as f:
+            f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
 
 # `_selected_model` may be either a single model name (str) or an ordered
 # list of model names that the Ollama provider will try in sequence.
@@ -257,8 +313,21 @@ def generate_text(prompt: str, model_name: str = None) -> str:
             return result
         except Exception as e:
             print(f"  [!] LLM provider '{name}' failed: {e}")
-            _disabled_providers.add(name)
-            print(f"  [!] Disabling '{name}' for the rest of this session.")
+            # Only disable a provider for the session when the error indicates
+            # something that won't fix itself: missing API key, or all of its
+            # models exhausted by per-model disabling. A single 503/timeout
+            # from one model must NOT poison the whole provider — try the next
+            # provider this call, but keep this one available next call so a
+            # transient outage doesn't break the rest of the session.
+            msg = str(e).lower()
+            permanent = (
+                "no gemini api key" in msg
+                or "all gemini models" in msg
+                or "all ollama fallback models" in msg
+            )
+            if permanent:
+                _disabled_providers.add(name)
+                print(f"  [!] Disabling '{name}' for the rest of this session.")
             last_error = e
 
     raise RuntimeError(f"All LLM providers failed. Last error: {last_error}")
@@ -321,7 +390,6 @@ def _ollama_chat_once(client, model: str, messages: list[dict]) -> str:
             content = (response["message"]["content"] or "").strip()
         except TypeError:
             pass
-
     return content
 
 
@@ -404,6 +472,14 @@ def _generate_text_gemini(prompt: str) -> str:
 
             text = parts[0].get("text", "").strip()
             if text:
+                # Best-effort cost tracking — usageMetadata is included in v1beta
+                # responses but the field is not guaranteed.
+                usage = data.get("usageMetadata") or {}
+                _log_cost(
+                    "gemini", model,
+                    int(usage.get("promptTokenCount") or 0),
+                    int(usage.get("candidatesTokenCount") or 0),
+                )
                 print(f"  [Gemini] Using model: {model}")
                 return text
             raise RuntimeError("Gemini returned empty text")

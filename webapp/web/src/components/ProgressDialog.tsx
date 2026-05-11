@@ -35,6 +35,10 @@ interface ProgressDialogProps {
   channelId?: string;
   /** Kind of content being generated — required so upload-last picks the right YouTube flow. */
   kind?: "short" | "long";
+  /** When true, auto-opens the preview modal as soon as the render finishes. */
+  previewOnFinish?: boolean;
+  /** When true (and previewOnFinish), starts the upload-last job once the user closes the preview. */
+  uploadAfterPreview?: boolean;
   onDone?: () => void;
 }
 
@@ -54,6 +58,8 @@ export function ProgressDialog({
   sseUrl,
   channelId,
   kind = "short",
+  previewOnFinish = false,
+  uploadAfterPreview = false,
   onDone,
 }: ProgressDialogProps) {
   const [logs, setLogs] = useState<string[]>([]);
@@ -73,6 +79,11 @@ export function ProgressDialog({
   useEffect(() => {
     onDoneRef.current = onDone;
   }, [onDone]);
+  // Auto-open the preview modal exactly once per render-completion. Resets
+  // whenever a new job starts. A separate flag tracks whether closing the
+  // preview should chain into upload-last.
+  const previewAutoOpenedRef = useRef(false);
+  const uploadOnPreviewCloseRef = useRef(false);
 
   // (Re)connect when sseUrl changes (initial open OR upload-last triggered).
   useEffect(() => {
@@ -81,7 +92,11 @@ export function ProgressDialog({
     setElapsed(0);
     setStatus("running");
     setJobId(null);
-    if (phase === "generate") setGeneratedFile(null);
+    if (phase === "generate") {
+      setGeneratedFile(null);
+      previewAutoOpenedRef.current = false;
+      uploadOnPreviewCloseRef.current = false;
+    }
 
     const es = new EventSource(activeUrl);
     esRef.current = es;
@@ -157,8 +172,27 @@ export function ProgressDialog({
       setActiveUrl(null);
       setGeneratedFile(null);
       setJobId(null);
+      previewAutoOpenedRef.current = false;
+      uploadOnPreviewCloseRef.current = false;
     }
   }, [open, sseUrl]);
+
+  // When the render finishes and the user asked for a preview at the end,
+  // auto-open the preview modal once. Remember whether closing it should
+  // chain into upload-last so we can fire it from onOpenChange.
+  useEffect(() => {
+    if (
+      previewOnFinish &&
+      status === "done" &&
+      phase === "generate" &&
+      generatedFile &&
+      !previewAutoOpenedRef.current
+    ) {
+      previewAutoOpenedRef.current = true;
+      uploadOnPreviewCloseRef.current = uploadAfterPreview && !!channelId;
+      setPreviewOpen(true);
+    }
+  }, [previewOnFinish, status, phase, generatedFile, uploadAfterPreview, channelId]);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -201,8 +235,20 @@ export function ProgressDialog({
     setActiveUrl(api.uploadLastUrl(channelId, kind));
   };
 
+  const handlePreviewOpenChange = (next: boolean) => {
+    setPreviewOpen(next);
+    if (!next && uploadOnPreviewCloseRef.current) {
+      uploadOnPreviewCloseRef.current = false;
+      triggerUpload();
+    }
+  };
+
   const canPreview = !!generatedFile && status === "done" && phase === "generate";
-  const canUpload = !!channelId && status === "done" && phase === "generate";
+  // Show the upload button when generation finished AND when an upload itself
+  // failed — the second case lets the user retry without leaving the dialog.
+  const canUpload =
+    !!channelId &&
+    ((status === "done" && phase === "generate") || (status === "error" && phase === "upload"));
 
   return (
     <>
@@ -264,7 +310,8 @@ export function ProgressDialog({
             )}
             {canUpload && (
               <Button variant="brand" size="sm" onClick={triggerUpload} className="gap-2">
-                <UploadCloud className="h-3.5 w-3.5" /> Subir a YouTube
+                <UploadCloud className="h-3.5 w-3.5" />
+                {status === "error" && phase === "upload" ? "Reintentar subida" : "Subir a YouTube"}
               </Button>
             )}
 
@@ -286,12 +333,14 @@ export function ProgressDialog({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+      <Dialog open={previewOpen} onOpenChange={handlePreviewOpenChange}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Vista previa: {generatedFile}</DialogTitle>
             <DialogDescription>
-              Revisa el render antes de subirlo a YouTube.
+              {uploadOnPreviewCloseRef.current
+                ? "Al cerrar, se inicia la subida a YouTube."
+                : "Revisa el render antes de subirlo a YouTube."}
             </DialogDescription>
           </DialogHeader>
           {generatedFile && (
@@ -303,8 +352,8 @@ export function ProgressDialog({
             />
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPreviewOpen(false)}>
-              Cerrar
+            <Button variant="outline" onClick={() => handlePreviewOpenChange(false)}>
+              {uploadOnPreviewCloseRef.current ? "Cerrar y subir" : "Cerrar"}
             </Button>
           </DialogFooter>
         </DialogContent>

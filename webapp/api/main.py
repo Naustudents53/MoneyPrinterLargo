@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -62,6 +63,17 @@ from cache import (  # noqa: E402
     remove_account,
 )
 
+# Operations / observability router (disk, cost, errors, logs, webhooks, backup).
+# Try the package-relative import first (uvicorn invokes us as webapp.api.main);
+# fall back to a sibling import if someone runs main.py directly.
+try:
+    from . import ops  # noqa: E402
+except ImportError:
+    if str(API_DIR) not in sys.path:
+        sys.path.insert(0, str(API_DIR))
+    import ops  # type: ignore  # noqa: E402
+ops.init(ROOT_DIR, MP_DIR, CONFIG_PATH)
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
@@ -79,6 +91,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(ops.router)
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +371,10 @@ def list_channel_videos(channel_id: str):
                     "url": v.get("url", ""),
                     "date": v.get("date", ""),
                     "is_short": _infer_is_short(v),
+                    "view_count": v.get("view_count", -1),
+                    "like_count": v.get("like_count", -1),
+                    "comment_count": v.get("comment_count", -1),
+                    "dislike_count": v.get("dislike_count", -1),
                 }
                 for i, v in enumerate(sorted_videos)
             ]
@@ -685,11 +703,42 @@ class JobState:
             self.rc = rc
             self.status = "done" if rc == 0 else "error"
             self.finished_at = time.time()
+        # Persist a summary + full log to disk and fire webhooks. Done outside
+        # the lock so a slow webhook can't block log readers.
+        try:
+            _persist_finished_job(self)
+        except Exception as exc:
+            print(f"[ops] WARN: failed to persist job {self.id}: {exc}")
 
     def snapshot(self, since: int):
         with self.lock:
             new_lines = self.lines[since:]
             return new_lines, len(self.lines), self.status, self.rc
+
+
+def _persist_finished_job(job: "JobState") -> None:
+    """Write a one-line summary to .mp/job_log.jsonl, dump the full log to
+    .mp/job_logs/<id>.log, and fire the configured webhook. Idempotent — safe
+    to call once per job."""
+    summary = _job_summary(job)
+    # Persist full log so the History page can display it after the in-memory
+    # buffer ages out (TTL 10 min).
+    log_dir = MP_DIR / "job_logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with open(log_dir / f"{job.id}.log", "w", encoding="utf-8") as f:
+            f.write("\n".join(job.lines))
+    except OSError as exc:
+        print(f"[ops] WARN: could not write job log file: {exc}")
+
+    record = {
+        **summary,
+        "ended_ts": job.finished_at,
+        "log_path": f"job_logs/{job.id}.log",
+    }
+    ops.append_job_record(record)
+    # Webhooks are best-effort — failures are swallowed inside fire_webhook.
+    ops.maybe_notify_job_finished(record)
 
 
 _JOBS: dict[str, JobState] = {}
@@ -950,24 +999,132 @@ async def post_tweet(account_id: str):
 # .mp file management
 # ---------------------------------------------------------------------------
 
+def _normalize_title_for_match(t: str) -> str:
+    """Lowercase + strip accents/punct + collapse whitespace. Used to reconcile
+    a generated video's sidecar title against the youtube.json history."""
+    if not t:
+        return ""
+    import unicodedata as _ud
+    s = _ud.normalize("NFD", t)
+    s = "".join(c for c in s if _ud.category(c) != "Mn")
+    s = s.lower()
+    s = re.sub(r"[^\w\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _published_titles_index() -> dict:
+    """Return {normalized_title: youtube_url} across every channel's videos[]
+    that has a real YouTube URL. Used to verify that a manifest still flagged
+    `uploaded:false` actually made it onto YouTube under that title."""
+    raw = _read_youtube_raw()
+    idx: dict = {}
+    for acc in raw.get("accounts", []) or []:
+        for v in acc.get("videos", []) or []:
+            url = v.get("url", "") or ""
+            if not url.startswith("http"):
+                continue
+            tnorm = _normalize_title_for_match(v.get("title", ""))
+            if tnorm and tnorm not in idx:
+                idx[tnorm] = url
+    return idx
+
+
 @app.get("/api/storage/mp4")
 def list_mp4():
     if not MP_DIR.exists():
         return []
     out = []
+    pub_idx: Optional[dict] = None  # built lazily, only if we hit a pending file
     for p in MP_DIR.iterdir():
         if p.suffix.lower() == ".mp4":
             try:
                 stat = p.stat()
+                # Read upload state from the per-video manifest sidecar written
+                # by `record_generation()`/`mark_uploaded()` in upload_tracker.
+                manifest_path = MP_DIR / f"{p.stem}.manifest.json"
+                uploaded = False
+                uploaded_url: Optional[str] = None
+                subject: Optional[str] = None
+                if manifest_path.exists():
+                    try:
+                        with manifest_path.open("r", encoding="utf-8") as fh:
+                            mdata = json.load(fh) or {}
+                        uploaded = bool(mdata.get("uploaded"))
+                        uploaded_url = mdata.get("uploaded_url") or None
+                        subject = mdata.get("subject") or None
+                    except Exception:
+                        mdata = None
+
+                # Reconciliation pass: a manifest can stay `uploaded:false`
+                # forever if Selenium loses sync with Firefox during the
+                # upload — the file ends up on YouTube but mark_uploaded()
+                # never runs. Compare the upload-sidecar title against the
+                # youtube.json history; if it matches a published video,
+                # persist the flip so subsequent listings are fast.
+                if not uploaded and manifest_path.exists():
+                    sidecar_path = MP_DIR / f"{p.stem}.meta.json"
+                    if sidecar_path.exists():
+                        try:
+                            with sidecar_path.open("r", encoding="utf-8") as fh:
+                                sdata = json.load(fh) or {}
+                            stitle = (sdata.get("metadata") or {}).get("title", "")
+                            tnorm = _normalize_title_for_match(stitle)
+                            if tnorm:
+                                if pub_idx is None:
+                                    pub_idx = _published_titles_index()
+                                hit = pub_idx.get(tnorm)
+                                if hit:
+                                    try:
+                                        cur = mdata or {}
+                                        cur["uploaded"] = True
+                                        cur["uploaded_url"] = hit
+                                        cur["uploaded_at"] = datetime.utcnow().isoformat() + "Z"
+                                        with manifest_path.open("w", encoding="utf-8") as fh:
+                                            json.dump(cur, fh, indent=2)
+                                        uploaded = True
+                                        uploaded_url = hit
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
                 out.append({
                     "name": p.name,
                     "size_mb": round(stat.st_size / (1024 * 1024), 1),
                     "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "uploaded": uploaded,
+                    "uploaded_url": uploaded_url,
+                    "subject": subject,
                 })
             except OSError:
                 pass
     out.sort(key=lambda x: x["mtime"], reverse=True)
     return out
+
+
+@app.post("/api/storage/mp4/{filename}/mark-uploaded")
+def mark_uploaded_mp4(filename: str, url: Optional[str] = None):
+    """Manual override for the case where the auto-reconciliation in
+    `/api/storage/mp4` can't find a title match (user edited the title on
+    YouTube, video isn't on the right channel's history yet, etc.)."""
+    target = MP_DIR / filename
+    if target.parent != MP_DIR or not target.exists() or target.suffix.lower() != ".mp4":
+        raise HTTPException(404, "File not found")
+    manifest_path = MP_DIR / f"{target.stem}.manifest.json"
+    if not manifest_path.exists():
+        raise HTTPException(404, "Manifest not found for this video")
+    try:
+        with manifest_path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh) or {}
+        data["uploaded"] = True
+        if url:
+            data["uploaded_url"] = url
+        data["uploaded_at"] = datetime.utcnow().isoformat() + "Z"
+        with manifest_path.open("w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to update manifest: {e}")
+    return {"ok": True, "uploaded_url": data.get("uploaded_url")}
 
 
 @app.get("/api/storage/mp4/{filename}/raw")
