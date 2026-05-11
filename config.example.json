@@ -3,15 +3,33 @@
   "firefox_profile": "",
   "headless": false,
   "llm_provider": "gemini",
-  "gemini_models": ["gemini-3-flash-preview", "gemini-2.5-flash"],
-  "ollama_base_url": "http://127.0.0.1:11434",
-  "ollama_model": "",
-  "long_video_llm_model": "deepseek-v4-pro:cloud",
-  "twitter_language": "English",
   "gemini_api_key": "",
+  "gemini_models": [
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash"
+  ],
+  "ollama_base_url": "http://127.0.0.1:11434",
+  "ollama_model": "gemma4:31b-cloud",
+  "ollama_models": [
+    "gemma4-31b:cloud",
+    "deepseek-v4-pro:cloud",
+    "deepseek-v4-flash:cloud",
+    "glm-5.1:cloud"
+  ],
+  "long_video_llm_model": "gemma4:31b-cloud",
+  "long_video_llm_models": [
+    "gemma4:31b-cloud",
+    "deepseek-v4-pro:cloud",
+    "deepseek-v4-flash:cloud",
+    "glm-5.1:cloud"
+  ],
+  "twitter_language": "English",
+  "nanobanana2_api_base_url": "https://generativelanguage.googleapis.com/v1beta",
+  "nanobanana2_api_key": "",
+  "nanobanana2_model": "gemini-3.1-flash-image-preview",
+  "nanobanana2_aspect_ratio": "9:16",
   "pexels_api_key": "",
   "pixabay_api_key": "",
-  "europeana_api_key": "",
   "ideogram_api_key": "",
   "leonardo_api_key": "",
   "hf_api_key": "",
@@ -38,26 +56,7 @@
   "font": "bold_font.ttf",
   "imagemagick_path": "Path to magick.exe or on linux/macOS just /usr/bin/convert",
   "script_sentence_length": 8,
-  "series": [
-    {
-      "id": "un_viaje_por_el_cosmos",
-      "name": "Un viaje por el cosmos",
-      "title_template": "UN VIAJE A {objeto} EN {region} | UN VIAJE POR EL COSMOS",
-      "thumbnail_overlay": "UN VIAJE POR EL COSMOS",
-      "thumbnail_font": "impact.ttf",
-      "script_brief": "Este video es de la serie inmersiva 'Un viaje por el cosmos'. NO es un documental tradicional. El espectador debe SENTIR que viaja a través del universo y EXPERIMENTA el objeto/fenómeno cósmico de cerca, fase a fase. REGLAS NARRATIVAS OBLIGATORIAS: (1) Usa SEGUNDA PERSONA en presente directo: 'te acercas...', 'sientes la radiación...', 'ves cómo la luz se curva...'. NUNCA uses tercera persona abstracta ni hables 'del astrónomo' como ente externo. (2) Estructura ESTRICTAMENTE PROGRESIVA: desde la perspectiva más alejada (escala humana / Tierra) hasta el corazón del fenómeno y de regreso, sin saltos arbitrarios. (3) Lenguaje SENSORIAL Y FÍSICO en cada párrafo: temperatura, radiación, ingravidez, distorsión del tiempo, brillo, oscuridad, presión, vacío, sonidos hipotéticos en plasma o gas, escalas casi inhumanas. (4) Detalles CIENTÍFICOS REALES del objeto cósmico: magnitudes, distancias, masas, composición, instrumentación que lo descubrió, mecanismos físicos. NO inventes datos — usa lo que la astronomía conoce. (5) Ritmo emocional: alterna asombro, vértigo, desconcierto, calma, miedo cósmico, comprensión. (6) NO hagas resúmenes ni meta-comentarios sobre 'el universo es vasto' — el espectador lo descubre VIAJANDO, no escuchando una clase.",
-      "section_themes": [
-        "DESDE LA TIERRA. Estás de noche, en un observatorio o en un campo despejado, mirando hacia el punto exacto del cielo donde se encuentra el objeto. Lo que ves a simple vista o por el telescopio. La sensación física del frío, el silencio, la magnitud del cielo sobre ti.",
-        "EL VIAJE COMIENZA — DEJANDO EL SISTEMA SOLAR. Aceleras hacia velocidades imposibles. Saturno, Júpiter, los planetas exteriores quedan atrás. La luz del Sol se vuelve un punto. El sistema solar como una escala 'pequeña' frente a lo que vendrá. Distancias en unidades astronómicas, primeras sondas que cruzaron este umbral (Voyager, New Horizons).",
-        "ATRAVESANDO EL ESPACIO INTERESTELAR. El medio interestelar: gas, polvo, rayos cósmicos. La oscuridad casi absoluta. Las estrellas se desplazan por paralaje. Lo que sentirías en la piel si tu nave no tuviera blindaje — partículas, radiación. Distancias en años luz comienzan a tener sentido.",
-        "PRIMER VISTAZO AL OBJETIVO. A miles o millones de años luz, el objeto cósmico aparece como un punto, luego como un disco, luego como una estructura reconocible. La primera impresión sensorial: brillo, color, tamaño aparente. Las observaciones reales que tenemos hoy desde Hubble, JWST, ALMA o EHT.",
-        "ESCALA Y CONTEXTO. Comparas el objeto con escalas familiares: cuántas Tierras cabrían adentro, cuántos sistemas solares, cuántas Vías Lácteas. Datos reales de masa, diámetro, luminosidad. La magnitud te abruma. Cómo lo descubrimos: el astrónomo, el año, el instrumento, qué señal lo delató.",
-        "LA FÍSICA DOMINANTE. El mecanismo central que hace al objeto lo que es: gravedad extrema, fusión nuclear, colapso, lente gravitacional, viento estelar, presión de radiación, mareas. Lo experimentas en tu cuerpo simulado: dilatación del tiempo, deformación del espacio, energías inconcebibles.",
-        "EL CORAZÓN DEL FENÓMENO. Te acercas al núcleo: el horizonte de eventos, el centro del cúmulo, la superficie de la estrella, el disco de acreción. Lo más cerca a lo que se puede llegar antes de que la realidad deje de comportarse como conocemos. Momento de máxima intensidad.",
-        "LO QUE NO PODEMOS VER. Aspectos del objeto que la luz no nos deja observar directamente: el interior del horizonte, la materia oscura del halo, las primeras millonésimas de segundo del Big Bang, las regiones detrás de polvo opaco. Cómo los astrónomos infieren lo que hay ahí mediante simulaciones, ondas gravitacionales, lente o espectroscopía.",
-        "EL DESTINO DEL OBJETO Y EL TIEMPO COSMICO. Qué fue antes y qué será después. Escalas de tiempo de millones o miles de millones de años. Cómo encaja en la historia del universo. La estrella morirá, el agujero negro se evaporará, la galaxia se fusionará. Tu propia existencia en escala cósmica.",
-        "EL REGRESO A LA TIERRA. Vuelves desde lo más profundo del cosmos a la perspectiva humana. Lo que has 'aprendido' físicamente del fenómeno te queda en los huesos. La última imagen es de nuevo el cielo nocturno desde la Tierra — pero ya nunca lo verás igual. Ese punto de luz tiene una historia entera detrás."
-      ]
-    }
-  ]
+  "tts_provider": "edge_tts",
+  "tts_language": "es",
+  "tts_speaker_wav": "voices/narrator_reference.wav"
 }

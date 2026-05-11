@@ -1,13 +1,23 @@
 import requests
 from contextlib import contextmanager
 
-from config import get_ollama_base_url, get_llm_provider, get_gemini_api_key, get_gemini_model, get_gemini_models
+from config import (
+    get_ollama_base_url,
+    get_llm_provider,
+    get_gemini_api_key,
+    get_gemini_model,
+    get_gemini_models,
+    get_ollama_models,
+)
 
-_selected_model: str | None = None
+# `_selected_model` may be either a single model name (str) or an ordered
+# list of model names that the Ollama provider will try in sequence.
+_selected_model: "str | list[str] | None" = None
 _llm_provider: str | None = None
 _disabled_providers: set = set()
 _last_used_provider: str | None = None
 _disabled_gemini_models: set = set()
+_disabled_ollama_models: set = set()
 # Ollama "thinking" budget for the current call. Set via `force_provider` —
 # the long-video pipeline pins it to "high" so DeepSeek V4 Pro Cloud reasons
 # at full depth. None means: don't pass the kwarg at all.
@@ -80,7 +90,8 @@ def list_models() -> list[str]:
     return sorted(m.model for m in response.models)
 
 
-def select_model(model: str) -> None:
+def select_model(model) -> None:
+    """Pin the Ollama model (or ordered chain) used by subsequent calls."""
     global _selected_model
     _selected_model = model
 
@@ -178,12 +189,18 @@ def warmup_ollama_model(model: str) -> None:
 
 
 @contextmanager
-def force_provider(provider: str, model: str | None = None, think: str | bool | None = None):
+def force_provider(provider: str, model=None, think: str | bool | None = None):
     """
     Temporarily override the active LLM provider (and optionally model + Ollama
     thinking budget) for a specific block of work. Restores prior values on
     exit, even on error. Used by the long-video pipeline to pin generation to
-    a specific Ollama Cloud model without affecting Shorts or the user's config.
+    a specific Ollama Cloud model — or an ordered chain of fallback models —
+    without affecting Shorts or the user's config.
+
+    ``model`` accepts either a single model name (str) or an ordered list of
+    model names. When a list is provided, ``_generate_text_ollama`` will try
+    each entry in turn before raising and letting the cross-provider fallback
+    fire (e.g. fall through to Gemini).
     """
     global _llm_provider, _selected_model, _ollama_think
     prev_provider, prev_model, prev_think = _llm_provider, _selected_model, _ollama_think
@@ -263,22 +280,28 @@ def _is_garbage_response(text: str) -> bool:
     return any(phrase in start for phrase in garbage_phrases)
 
 
-def _generate_text_ollama(prompt: str, model: str = None) -> str:
-    if not model:
-        from config import get_ollama_model
-        model = get_ollama_model()
-    if not model:
-        raise RuntimeError("No Ollama model configured")
+def _resolve_ollama_model_chain(model) -> list[str]:
+    """
+    Normalize the caller's model argument into an ordered list of model names
+    to try. Falls back to the configured ``ollama_models`` chain when no
+    explicit model is forced.
+    """
+    if isinstance(model, list):
+        chain = [m for m in model if m]
+    elif isinstance(model, str) and model:
+        chain = [model]
+    else:
+        chain = list(get_ollama_models())
+    # Drop models we already burned this session, while preserving order.
+    return [m for m in chain if m not in _disabled_ollama_models]
 
-    messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": prompt},
-    ]
-    client = _ollama_client()
 
-    # Pass `think` only when the long-video pipeline (or another caller) asked
-    # for it. Older ollama-python SDKs reject the kwarg with TypeError — fall
-    # back transparently so the call still succeeds without thinking.
+def _ollama_chat_once(client, model: str, messages: list[dict]) -> str:
+    """
+    Single Ollama chat round-trip with the empty-content retry that reasoning
+    models occasionally need. Raises on transport errors so the caller can
+    cascade to the next model.
+    """
     if _ollama_think is not None:
         try:
             response = client.chat(model=model, messages=messages, think=_ollama_think)
@@ -300,6 +323,43 @@ def _generate_text_ollama(prompt: str, model: str = None) -> str:
             pass
 
     return content
+
+
+def _generate_text_ollama(prompt: str, model=None) -> str:
+    """
+    Run text generation through Ollama with a chained-fallback strategy.
+    ``model`` may be a single name, a list, or None (use config default).
+    Each model in the chain is tried in order; the first one that returns a
+    non-empty, non-garbage response wins. Models that fail the call are added
+    to ``_disabled_ollama_models`` so the rest of the session skips them.
+    Raises only when every model in the chain has been exhausted.
+    """
+    chain = _resolve_ollama_model_chain(model)
+    if not chain:
+        raise RuntimeError("No Ollama model configured")
+
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+    client = _ollama_client()
+
+    last_error: Exception | None = None
+    for candidate in chain:
+        try:
+            content = _ollama_chat_once(client, candidate, messages)
+            if not content:
+                raise RuntimeError(f"Ollama model '{candidate}' returned empty content")
+            if len(chain) > 1:
+                print(f"  [Ollama] Using model: {candidate}")
+            return content
+        except Exception as e:
+            print(f"  [Ollama] Model '{candidate}' failed: {e}")
+            _disabled_ollama_models.add(candidate)
+            print(f"  [Ollama] Disabling '{candidate}' for the rest of this session.")
+            last_error = e
+
+    raise RuntimeError(f"All Ollama models failed. Last error: {last_error}")
 
 
 def _generate_text_gemini(prompt: str) -> str:

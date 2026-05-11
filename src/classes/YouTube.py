@@ -3653,10 +3653,13 @@ Example format:
         Cloud by default, `think=high`), then delegates to the inner pipeline.
         """
         from llm_provider import force_provider, warmup_ollama_model
-        long_model = get_long_video_llm_model()
-        info(f"\n  Short LLM: ollama/{long_model}")
-        warmup_ollama_model(long_model)
-        with force_provider("ollama", long_model):
+        long_models = get_long_video_llm_models()
+        primary = long_models[0] if long_models else get_long_video_llm_model()
+        info(f"\n  Short LLM: ollama/{primary}"
+             + (f"  (fallbacks: {', '.join(long_models[1:])})" if len(long_models) > 1 else ""))
+        if primary:
+            warmup_ollama_model(primary)
+        with force_provider("ollama", long_models or primary):
             return self._generate_video_inner(tts_instance, custom_topic, image_mode)
 
     def _generate_video_inner(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai") -> str:
@@ -5215,10 +5218,13 @@ No markdown. No explanation. Just the JSON array."""
         Shorts and other features keep using the configured default provider.
         """
         from llm_provider import force_provider, warmup_ollama_model
-        long_model = get_long_video_llm_model()
-        info(f"\n  Long-video LLM: ollama/{long_model}")
-        warmup_ollama_model(long_model)
-        with force_provider("ollama", long_model):
+        long_models = get_long_video_llm_models()
+        primary = long_models[0] if long_models else get_long_video_llm_model()
+        info(f"\n  Long-video LLM: ollama/{primary}"
+             + (f"  (fallbacks: {', '.join(long_models[1:])})" if len(long_models) > 1 else ""))
+        if primary:
+            warmup_ollama_model(primary)
+        with force_provider("ollama", long_models or primary):
             return self._generate_long_video_inner(tts_instance, custom_topic)
 
     def _generate_long_video_inner(self, tts_instance: TTS, custom_topic: str = "") -> str:

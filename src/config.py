@@ -81,7 +81,7 @@ def get_ollama_base_url() -> str:
 
 def get_ollama_model() -> str:
     """
-    Gets the Ollama model name from the config file.
+    Gets the primary Ollama model name from the config file.
 
     Returns:
         model (str): The Ollama model name, or empty string if not set.
@@ -89,13 +89,41 @@ def get_ollama_model() -> str:
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         return json.load(file).get("ollama_model", "")
 
+def get_ollama_models() -> list[str]:
+    """
+    Ordered list of Ollama models tried by the default text pipeline.
+    Each model is tried in order; failure cascades to the next. Falls back
+    to ``[get_ollama_model()]`` for backward compatibility with older
+    configs that only define the singular field.
+    """
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        models = json.load(file).get("ollama_models", [])
+    if models:
+        return [m for m in models if m]
+    primary = get_ollama_model()
+    return [primary] if primary else []
+
 def get_long_video_llm_model() -> str:
     """
-    Ollama model used exclusively by the long-video pipeline.
+    Primary Ollama model used by the long-video pipeline.
     Defaults to DeepSeek V4 Pro on Ollama Cloud (`ollama signin` required).
     """
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         return json.load(file).get("long_video_llm_model", "deepseek-v4-pro:cloud")
+
+def get_long_video_llm_models() -> list[str]:
+    """
+    Ordered list of Ollama models tried by the long-video pipeline.
+    Each model is tried in order; failure cascades to the next, and only
+    after all entries fail does the LLM layer fall back to Gemini.
+    Falls back to ``[get_long_video_llm_model()]`` if not set.
+    """
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        models = json.load(file).get("long_video_llm_models", [])
+    if models:
+        return [m for m in models if m]
+    primary = get_long_video_llm_model()
+    return [primary] if primary else []
 
 def get_twitter_language() -> str:
     """
