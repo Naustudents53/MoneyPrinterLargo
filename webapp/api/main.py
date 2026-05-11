@@ -896,6 +896,32 @@ def stop_job(job_id: str):
     return {"ok": True}
 
 
+@app.get("/api/llm/models")
+def list_llm_models():
+    """Return the list of available models per provider so the UI can offer
+    a dropdown override per generation. Failures on a single provider are
+    swallowed so a missing Ollama daemon doesn't break the whole endpoint.
+    """
+    out: dict[str, Any] = {"ollama": [], "gemini": [], "errors": {}}
+
+    try:
+        from llm_provider import list_models as _list_ollama
+        out["ollama"] = _list_ollama()
+    except Exception as e:
+        out["errors"]["ollama"] = str(e)[:200]
+
+    try:
+        from config import get_gemini_models, get_gemini_api_key
+        if get_gemini_api_key():
+            out["gemini"] = list(get_gemini_models() or [])
+        else:
+            out["errors"]["gemini"] = "no gemini_api_key in config.json"
+    except Exception as e:
+        out["errors"]["gemini"] = str(e)[:200]
+
+    return out
+
+
 @app.get("/api/channels/{channel_id}/generate")
 async def generate_video(
     channel_id: str,
@@ -905,6 +931,8 @@ async def generate_video(
     auto_upload: bool = False,
     series_id: str = "",
     duration_seconds: int = 0,
+    llm_provider: str = "",
+    llm_model: str = "",
 ):
     ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
     if not ch:
@@ -922,6 +950,9 @@ async def generate_video(
                 f"duration_seconds must be one of {list(ALLOWED_SHORT_DURATIONS)}",
             )
 
+    if llm_provider and llm_provider not in ("ollama", "gemini"):
+        raise HTTPException(400, "llm_provider must be 'ollama' or 'gemini'")
+
     args = [
         "generate",
         "--channel-id", channel_id,
@@ -936,6 +967,10 @@ async def generate_video(
         args += ["--series-id", series_id]
     if kind == "short" and duration_seconds:
         args += ["--duration", str(duration_seconds)]
+    if llm_provider:
+        args += ["--llm-provider", llm_provider]
+    if llm_model:
+        args += ["--llm-model", llm_model]
 
     label = "Short" if kind == "short" else "Long video"
     title = f"Generando {label} — {ch.get('nickname', channel_id)}"

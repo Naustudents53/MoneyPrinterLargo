@@ -64,11 +64,22 @@ def _setup_paths():
             pass
 
 
-def _select_llm_provider():
+def _select_llm_provider(override_provider: str = "", override_model: str = ""):
     from config import (
         get_llm_provider, get_ollama_model,
     )
-    from llm_provider import select_model, set_llm_provider, list_models
+    from llm_provider import select_model, set_llm_provider, list_models, set_user_override
+
+    if override_provider:
+        provider = override_provider
+        set_llm_provider(provider)
+        set_user_override(True)
+        if override_model:
+            select_model(override_model)
+            print(f"[runner] User override: provider={provider}, model={override_model}", flush=True)
+        else:
+            print(f"[runner] User override: provider={provider} (no model)", flush=True)
+        return
 
     provider = get_llm_provider()
     set_llm_provider(provider)
@@ -368,6 +379,9 @@ def main():
     p_gen.add_argument("--series-id", default="")
     # Target short duration in seconds (60/120/180). 0 = use legacy default.
     p_gen.add_argument("--duration", type=int, default=0)
+    # Per-job LLM override picked from the UI; empty = use config defaults.
+    p_gen.add_argument("--llm-provider", default="")
+    p_gen.add_argument("--llm-model", default="")
 
     p_ul = sub.add_parser("upload-last")
     p_ul.add_argument("--channel-id", required=True)
@@ -393,7 +407,9 @@ def main():
 
     _setup_paths()
     if args.cmd != "thumbnail":
-        _select_llm_provider()
+        ov_provider = getattr(args, "llm_provider", "") or ""
+        ov_model = getattr(args, "llm_model", "") or ""
+        _select_llm_provider(ov_provider, ov_model)
 
     if args.cmd == "generate":
         cmd_generate(args)

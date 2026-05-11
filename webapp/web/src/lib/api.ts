@@ -277,6 +277,11 @@ export const api = {
       { method: "POST" },
     ),
 
+  listLlmModels: () =>
+    request<{ ollama: string[]; gemini: string[]; errors: Record<string, string> }>(
+      "/api/llm/models",
+    ),
+
   // SSE URLs (used by EventSource directly)
   generateUrl(id: string, params: {
     kind: "short" | "long";
@@ -285,6 +290,8 @@ export const api = {
     auto_upload?: boolean;
     series_id?: string;
     duration_seconds?: ShortDurationSeconds;
+    llm_provider?: "ollama" | "gemini" | "";
+    llm_model?: string;
   }): string {
     const qs = new URLSearchParams();
     qs.set("kind", params.kind);
@@ -295,6 +302,8 @@ export const api = {
     if (params.kind === "short" && params.duration_seconds) {
       qs.set("duration_seconds", String(params.duration_seconds));
     }
+    if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
+    if (params.llm_model) qs.set("llm_model", params.llm_model);
     return `${BASE}/api/channels/${id}/generate?${qs.toString()}`;
   },
   uploadLastUrl: (id: string, kind: "short" | "long" = "short") =>

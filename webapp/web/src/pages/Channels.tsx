@@ -1,28 +1,35 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Plus,
   Pencil,
   Trash2,
   Youtube,
-  Sparkles,
-  Mic,
-  ExternalLink,
-  Folder,
+  Search,
+  ChevronRight,
   RefreshCw,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ProgressDialog } from "@/components/ProgressDialog";
-import { api, type Channel } from "@/lib/api";
+import { api, type Channel, type ChannelVideo } from "@/lib/api";
 import { ChannelFormDialog } from "./ChannelFormDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { toast } from "sonner";
+import { cn, relativeTime, truncate } from "@/lib/utils";
+
+// Cycle channel accent through the design's 5 brand stops so each card
+// reads with a distinct colour band even when the API doesn't supply one.
+const ACCENT_VARS = [
+  "var(--primary)",
+  "var(--accent)",
+  "var(--gold)",
+  "var(--lima)",
+  "var(--violeta)",
+] as const;
 
 export function Channels() {
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -31,6 +38,7 @@ export function Channels() {
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Channel | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [filter, setFilter] = useState("");
 
   const load = async () => {
     setLoading(true);
@@ -48,6 +56,16 @@ export function Channels() {
     load();
   }, []);
 
+  const visible = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return channels;
+    return channels.filter((c) =>
+      [c.nickname, c.niche, c.language].some((v) => (v || "").toLowerCase().includes(q)),
+    );
+  }, [channels, filter]);
+
+  const totalVideos = channels.reduce((acc, c) => acc + c.videos_count, 0);
+
   const handleDelete = async () => {
     if (!deleting) return;
     try {
@@ -63,8 +81,9 @@ export function Channels() {
   return (
     <>
       <Header
-        title="Canales de YouTube"
-        description="Administra los perfiles de cada canal: voces, estilo, niche."
+        eyebrow="· canales"
+        title="YouTube"
+        description="Tu rack de canales activos"
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -74,20 +93,56 @@ export function Channels() {
               onClick={() => setSyncing(true)}
               title="Sincroniza el historial local con los videos reales de tus canales en YouTube"
             >
-              <RefreshCw className="h-4 w-4" /> Sincronizar con YouTube
-            </Button>
-            <Button variant="brand" size="sm" className="gap-2" onClick={() => setCreating(true)}>
-              <Plus className="h-4 w-4" /> Nuevo canal
+              <RefreshCw className="h-4 w-4" /> Sincronizar
             </Button>
           </div>
         }
       />
 
       <PageShell>
+        {/* Hero strip — title + telemetry + search + new btn */}
+        <div className="flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <span className="eyebrow block mb-1.5">· canales · youtube</span>
+            <h1 className="font-display text-[36px] font-semibold tracking-[-0.02em] text-foreground leading-tight">
+              Tu rack de canales
+            </h1>
+            <p className="text-[13px] text-muted-foreground mt-1.5">
+              {channels.length} activos · {totalVideos} vídeos en historial
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div
+              className="flex items-center gap-2 h-9 px-3 rounded-lg bg-surface text-muted-foreground"
+              style={{ border: "1px solid hsl(var(--border) / .07)" }}
+            >
+              <Search className="h-3.5 w-3.5" />
+              <input
+                placeholder="Filtrar por canal o nicho…"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                className="bg-transparent border-0 outline-none text-foreground text-[13px] w-60 placeholder:text-muted-foreground"
+              />
+            </div>
+            <Button
+              variant="brand"
+              size="sm"
+              className="gap-2"
+              onClick={() => setCreating(true)}
+            >
+              <Plus className="h-4 w-4" /> Nuevo canal
+            </Button>
+          </div>
+        </div>
+
+        {/* Grid */}
         {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-[220px]" />
+          <div
+            className="grid gap-3.5"
+            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}
+          >
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-[286px]" />
             ))}
           </div>
         ) : channels.length === 0 ? (
@@ -102,15 +157,20 @@ export function Channels() {
             }
           />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {channels.map((c) => (
+          <div
+            className="grid gap-3.5"
+            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}
+          >
+            {visible.map((c, i) => (
               <ChannelCard
                 key={c.id}
                 channel={c}
+                accentVar={ACCENT_VARS[i % ACCENT_VARS.length]}
                 onEdit={() => setEditing(c)}
                 onDelete={() => setDeleting(c)}
               />
             ))}
+            <NewChannelCard onClick={() => setCreating(true)} />
           </div>
         )}
       </PageShell>
@@ -152,100 +212,366 @@ export function Channels() {
         }}
         title="Sincronizando con YouTube"
         description="Actualiza tipo (short/long), descripción y fecha de subida de cada video desde tus canales reales. Tarda ~1 min por canal grande."
-        sseUrl={syncing ? api.syncYouTubeUrl({ prune: true, add_missing: true, refresh_meta: true }) : null}
+        sseUrl={
+          syncing
+            ? api.syncYouTubeUrl({ prune: true, add_missing: true, refresh_meta: true })
+            : null
+        }
       />
     </>
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ChannelCard
+// ─────────────────────────────────────────────────────────────────────────────
 function ChannelCard({
   channel,
+  accentVar,
   onEdit,
   onDelete,
 }: {
   channel: Channel;
+  accentVar: string;
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const [videos, setVideos] = useState<ChannelVideo[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .listVideos(channel.id)
+      .then((vids) => alive && setVideos(vids.slice(0, 3)))
+      .catch(() => alive && setVideos([]));
+    return () => {
+      alive = false;
+    };
+  }, [channel.id]);
+
+  const recent = (videos ?? []).slice(0, 3);
+  const last = videos?.[0];
+  const shortCount = (videos ?? []).filter((v) => v.is_short).length;
+  const longCount = (videos ?? []).length - shortCount;
+  const flag = flagFromLang(channel.language);
+  const voiceShort = compactVoice(channel.short_voice || channel.long_voice || "");
+  const initial = (channel.nickname || "?").slice(0, 1).toUpperCase();
+
   return (
-    <Card className="group overflow-hidden hover:border-primary/40 hover:shadow-md transition-all">
-      <div className="h-2 bg-brand-gradient" />
-      <CardContent className="p-5 space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <div className="rounded-lg bg-primary/15 p-2 text-primary shrink-0">
-                <Youtube className="h-4 w-4" />
-              </div>
-              <h3 className="font-semibold truncate">{channel.nickname}</h3>
-            </div>
-            <p className="mt-2 text-sm text-muted-foreground line-clamp-2">
-              {channel.niche || "(sin niche definido)"}
-            </p>
-          </div>
-          <Badge variant="outline">{channel.videos_count} videos</Badge>
-        </div>
+    <div
+      className="studio-surface studio-hover overflow-hidden flex flex-col group relative"
+      style={{ background: "hsl(var(--card))" }}
+    >
+      {/* Top accent stripe */}
+      <span
+        aria-hidden
+        className="absolute top-0 left-0 right-0"
+        style={{ height: 3, background: `hsl(${accentVar})`, opacity: 0.85 }}
+      />
+      {/* Soft corner glow */}
+      <div
+        aria-hidden
+        className="absolute -top-10 -right-10 w-40 h-40 pointer-events-none"
+        style={{
+          background: `radial-gradient(circle, hsl(${accentVar} / .14), transparent 70%)`,
+        }}
+      />
 
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <Field icon={Sparkles} label="Estilo" value={channel.image_style || "default"} />
-          <Field
-            icon={Mic}
-            label="Voz short"
-            value={channel.short_voice || "default"}
-          />
-          <Field icon={Mic} label="Voz long" value={channel.long_voice || "default"} />
-          <Field icon={Folder} label="Idioma" value={channel.language || "es"} />
-        </div>
-
-        <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/60">
-          <Button asChild variant="ghost" size="sm" className="gap-1.5">
-            <Link to={`/channels/${channel.id}`}>
-              Ver videos <ExternalLink className="h-3 w-3" />
-            </Link>
-          </Button>
-          <div className="flex gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onEdit}
-              aria-label="Editar canal"
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onDelete}
-              className="text-muted-foreground hover:text-destructive"
-              aria-label="Eliminar canal"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function Field({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof Sparkles;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="flex items-center gap-1.5 min-w-0 rounded-md bg-muted/50 px-2 py-1.5">
-      <Icon className="h-3 w-3 text-muted-foreground shrink-0" />
-      <div className="min-w-0">
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-          {label}
-        </div>
-        <div className="text-xs font-medium truncate">{value}</div>
+      {/* Action overlay (edit/delete) — visible on hover, top-right */}
+      <div className="absolute top-3 right-3 z-10 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 bg-card/80 backdrop-blur"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onEdit();
+          }}
+          aria-label="Editar canal"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 bg-card/80 backdrop-blur text-muted-foreground hover:text-destructive"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onDelete();
+          }}
+          aria-label="Eliminar canal"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
       </div>
+
+      <Link to={`/channels/${channel.id}`} className="flex flex-col relative">
+        {/* Identity row */}
+        <div className="px-[18px] pt-[22px] pb-3.5 flex items-start gap-3.5">
+          <div
+            className="w-[54px] h-[54px] rounded-[10px] flex items-center justify-center shrink-0 relative overflow-hidden"
+            style={{
+              background: `linear-gradient(135deg, color-mix(in oklch, hsl(${accentVar}) 35%, hsl(var(--background))), hsl(var(--background)))`,
+              border: `1px solid color-mix(in oklch, hsl(${accentVar}) 30%, hsl(var(--border) / .12))`,
+            }}
+          >
+            <span
+              className="font-display font-bold leading-none"
+              style={{
+                color: `hsl(${accentVar})`,
+                fontSize: 24,
+                letterSpacing: "-0.04em",
+              }}
+            >
+              {initial}
+            </span>
+            <div
+              aria-hidden
+              className="absolute inset-0 opacity-10"
+              style={{
+                color: `hsl(${accentVar})`,
+                backgroundImage:
+                  "repeating-linear-gradient(45deg, currentColor 0, currentColor 1px, transparent 0, transparent 6px)",
+              }}
+            />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className="font-display text-[16px] font-semibold tracking-[-0.02em] text-foreground truncate">
+                {channel.nickname}
+              </span>
+              {flag && (
+                <span className="font-mono text-[11px] text-muted-foreground">{flag}</span>
+              )}
+            </div>
+            <div className="text-[12px] text-muted-foreground truncate">
+              {channel.niche || "(sin niche definido)"}
+            </div>
+          </div>
+        </div>
+
+        {/* Telemetry strip — shorts / longs / último */}
+        <div
+          className="grid grid-cols-3 mx-[18px] rounded-lg"
+          style={{
+            background: "hsl(var(--bg-raised) / .5)",
+            border: "1px solid hsl(var(--border) / .05)",
+          }}
+        >
+          <ChannelStat label="Shorts" value={shortCount} accentVar="var(--primary)" />
+          <ChannelStat
+            label="Largos"
+            value={longCount}
+            accentVar="var(--violeta)"
+            withDivider
+          />
+          <ChannelStat
+            label="Último"
+            value={last ? relativeTime(last.date).replace("hace ", "") : "—"}
+            accentVar="var(--gold)"
+            withDivider
+            small
+          />
+        </div>
+
+        {/* Recent videos list */}
+        <div className="px-[18px] pt-3.5 pb-3.5 flex flex-col">
+          <span className="eyebrow text-muted-foreground mb-2">Recientes</span>
+          {videos === null ? (
+            <div className="flex flex-col gap-1.5">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-[26px]" />
+              ))}
+            </div>
+          ) : recent.length === 0 ? (
+            <div
+              className="text-[11.5px] text-muted-foreground py-2 px-2 rounded-md text-center"
+              style={{ border: "1px dashed hsl(var(--border) / .12)" }}
+            >
+              Sin vídeos aún
+            </div>
+          ) : (
+            <div className="flex flex-col">
+              {recent.map((v, i) => (
+                <RecentVideoRow
+                  key={`${v.url || i}-${i}`}
+                  video={v}
+                  first={i === 0}
+                />
+              ))}
+              {recent.length < 3 &&
+                Array.from({ length: 3 - recent.length }).map((_, i) => (
+                  <div
+                    key={`pad-${i}`}
+                    className="h-[26px]"
+                    style={{ borderTop: "1px solid hsl(var(--border) / .04)" }}
+                  />
+                ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer meta */}
+        <div
+          className="flex items-center gap-2 px-[18px] py-2.5 mt-auto"
+          style={{
+            borderTop: "1px solid hsl(var(--border) / .04)",
+            background: "hsl(var(--bg-raised) / .4)",
+          }}
+        >
+          <span className="font-mono text-[10.5px] text-foreground">
+            {channel.videos_count}{" "}
+            <span className="text-muted-foreground">vids</span>
+          </span>
+          {voiceShort && (
+            <>
+              <span className="text-muted-foreground text-[10.5px]">·</span>
+              <span
+                className="font-mono px-1.5 py-px rounded text-[10px] truncate max-w-[120px]"
+                style={{
+                  border: "1px solid hsl(var(--border) / .12)",
+                  color: "hsl(var(--muted-foreground))",
+                }}
+                title={voiceShort}
+              >
+                {voiceShort}
+              </span>
+            </>
+          )}
+          <span className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground group-hover:text-foreground transition-colors">
+            Ver canal <ChevronRight className="h-3.5 w-3.5" />
+          </span>
+        </div>
+      </Link>
     </div>
   );
 }
+
+function ChannelStat({
+  label,
+  value,
+  accentVar,
+  withDivider,
+  small,
+}: {
+  label: string;
+  value: string | number;
+  accentVar: string;
+  withDivider?: boolean;
+  small?: boolean;
+}) {
+  return (
+    <div
+      className="px-2.5 py-2 flex flex-col gap-0.5"
+      style={{
+        borderLeft: withDivider ? "1px solid hsl(var(--border) / .06)" : undefined,
+      }}
+    >
+      <div className="flex items-center gap-1">
+        <span
+          className="w-1 h-1 rounded-full"
+          style={{ background: `hsl(${accentVar})` }}
+        />
+        <span
+          className="font-mono uppercase text-[9px] font-semibold text-muted-foreground"
+          style={{ letterSpacing: "0.18em" }}
+        >
+          {label}
+        </span>
+      </div>
+      <span
+        className={cn(
+          "font-mono font-semibold tabular-nums text-foreground tracking-tight truncate",
+          small ? "text-[12px]" : "text-[15px]",
+        )}
+        title={`${value}`}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function RecentVideoRow({ video, first }: { video: ChannelVideo; first: boolean }) {
+  const isShort = video.is_short;
+  return (
+    <div
+      className="flex items-center gap-2 py-1.5 min-w-0"
+      style={{
+        borderTop: first ? undefined : "1px solid hsl(var(--border) / .04)",
+      }}
+    >
+      <span
+        className="font-mono uppercase text-[8.5px] font-semibold px-1 py-px rounded shrink-0"
+        style={{
+          letterSpacing: "0.12em",
+          color: isShort ? "hsl(var(--primary))" : "hsl(var(--violeta))",
+          background: isShort
+            ? "hsl(var(--primary) / .10)"
+            : "hsl(var(--violeta) / .10)",
+          border: `1px solid ${
+            isShort ? "hsl(var(--primary) / .25)" : "hsl(var(--violeta) / .25)"
+          }`,
+        }}
+      >
+        {isShort ? "SH" : "LG"}
+      </span>
+      <span className="text-[11.5px] text-foreground truncate flex-1 min-w-0">
+        {video.title || "(sin título)"}
+      </span>
+    </div>
+  );
+}
+
+function NewChannelCard({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "min-h-[286px] rounded-xl bg-transparent text-muted-foreground flex flex-col items-center justify-center gap-2.5 transition-all",
+        "hover:text-primary hover:bg-primary/[0.06]",
+      )}
+      style={{ border: "1px dashed hsl(var(--border) / .12)" }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = "hsl(var(--primary) / .35)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "hsl(var(--border) / .12)";
+      }}
+    >
+      <span
+        className="w-[46px] h-[46px] rounded-full flex items-center justify-center"
+        style={{ border: "1.5px dashed currentColor" }}
+      >
+        <Plus className="h-5 w-5" />
+      </span>
+      <span className="text-[13px] font-medium tracking-tight">Nuevo canal</span>
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+function flagFromLang(lang: string): string {
+  const l = (lang || "").toLowerCase();
+  if (!l) return "";
+  if (l.includes("mx")) return "🇲🇽";
+  if (l.includes("es") || l.includes("español")) return "🇪🇸";
+  if (l.includes("ar")) return "🇦🇷";
+  if (l.includes("co")) return "🇨🇴";
+  if (l.includes("us") || l.includes("en")) return "🇺🇸";
+  return "";
+}
+
+function compactVoice(voice: string): string {
+  if (!voice) return "";
+  return voice
+    .replace(/Neural$/i, "")
+    .replace(/^es-ES-/i, "")
+    .replace(/^es-MX-/i, "")
+    .replace(/^en-US-/i, "");
+}
+

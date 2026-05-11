@@ -65,6 +65,9 @@ _disabled_providers: set = set()
 _last_used_provider: str | None = None
 _disabled_gemini_models: set = set()
 _disabled_ollama_models: set = set()
+# When the user explicitly chose a provider+model from the UI, the long-video
+# pipeline must respect that choice and skip its hardcoded force_provider call.
+_user_override: bool = False
 
 # Ordered fallback chain for Ollama. Tried in order when no explicit model is
 # selected via config (`ollama_model`) or `select_model()`. If every entry
@@ -165,6 +168,19 @@ def get_active_model() -> str | None:
 def get_active_provider() -> str:
     """Return the runtime LLM provider (override or configured)."""
     return _llm_provider or get_llm_provider() or "ollama"
+
+
+def set_user_override(value: bool) -> None:
+    """Mark the current session as having a user-chosen provider+model.
+    When set, the long-video pipeline skips its hardcoded force_provider call
+    so the user's choice (e.g. Gemini Flash) is actually respected.
+    """
+    global _user_override
+    _user_override = bool(value)
+
+
+def is_user_override() -> bool:
+    return _user_override
 
 
 def warmup_ollama_model(model: str) -> None:
@@ -281,8 +297,18 @@ _SYSTEM_PROMPT = (
 def generate_text(prompt: str, model_name: str = None) -> str:
     provider = _llm_provider or get_llm_provider()
 
-    # Build ordered list: primary first, then fallbacks
-    if provider == "gemini":
+    # When the user explicitly chose a provider from the UI, do NOT cross-
+    # fallback to the other one. Pick Gemini → only Gemini; pick Ollama → only
+    # Ollama (its internal model cascade still applies). The auto path keeps
+    # the historical cross-provider safety net.
+    if _user_override:
+        if provider == "gemini":
+            providers = [("gemini", lambda: _generate_text_gemini(prompt))]
+        else:
+            providers = [
+                ("ollama", lambda: _generate_text_ollama(prompt, model_name or _selected_model)),
+            ]
+    elif provider == "gemini":
         providers = [
             ("gemini", lambda: _generate_text_gemini(prompt)),
             ("ollama", lambda: _generate_text_ollama(prompt, None)),

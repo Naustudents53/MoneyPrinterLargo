@@ -3294,8 +3294,19 @@ RULES:
         Public entry point for the Shorts pipeline. Pins the LLM to the same
         cloud thinking model used by long videos (DeepSeek V4 Pro on Ollama
         Cloud by default, `think=high`), then delegates to the inner pipeline.
+
+        When the user picked a specific provider+model from the UI
+        (`is_user_override()`), the hardcoded force_provider call is skipped
+        so the user's choice is respected end-to-end.
         """
-        from llm_provider import force_provider, warmup_ollama_model
+        from llm_provider import force_provider, warmup_ollama_model, is_user_override, get_active_provider, get_active_model
+        if is_user_override():
+            active = get_active_provider()
+            active_model = get_active_model() or "(default)"
+            info(f"\n  Short LLM: {active}/{active_model} (user override — no think pin)")
+            if active == "ollama" and active_model and active_model != "(default)":
+                warmup_ollama_model(active_model)
+            return self._generate_video_inner(tts_instance, custom_topic, image_mode)
         long_model = get_long_video_llm_model()
         info(f"\n  Short LLM: ollama/{long_model}")
         warmup_ollama_model(long_model)
@@ -4876,8 +4887,19 @@ No markdown. No explanation. Just the JSON array."""
         long-video model (DeepSeek V4 Pro on Ollama Cloud by default) at max
         thinking depth, then delegates to `_generate_long_video_inner`.
         Shorts and other features keep using the configured default provider.
+
+        When the user picked a specific provider+model from the UI
+        (`is_user_override()`), the hardcoded force_provider call is skipped
+        so the user's choice is respected end-to-end (e.g. Gemini fast-path).
         """
-        from llm_provider import force_provider, warmup_ollama_model
+        from llm_provider import force_provider, warmup_ollama_model, is_user_override, get_active_provider, get_active_model
+        if is_user_override():
+            active = get_active_provider()
+            active_model = get_active_model() or "(default)"
+            info(f"\n  Long-video LLM: {active}/{active_model} (user override — no think pin)")
+            if active == "ollama" and active_model and active_model != "(default)":
+                warmup_ollama_model(active_model)
+            return self._generate_long_video_inner(tts_instance, custom_topic)
         long_model = get_long_video_llm_model()
         info(f"\n  Long-video LLM: ollama/{long_model}")
         warmup_ollama_model(long_model)

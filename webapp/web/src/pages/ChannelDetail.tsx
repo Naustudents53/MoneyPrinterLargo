@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -219,41 +218,67 @@ export function ChannelDetail() {
           </Link>
         </Button>
 
-        {/* Channel summary card */}
+        {/* Channel summary — editorial telemetry strip */}
         {channel && !loading ? (
-          <Card>
-            <CardContent className="p-5 flex flex-wrap items-center gap-x-8 gap-y-3">
-              <SummaryItem label="Videos" value={`${channel.videos_count}`} />
-              <SummaryItem label="Idioma" value={channel.language || "—"} />
+          <div className="studio-surface overflow-hidden">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+              <SummaryItem
+                label="Videos"
+                value={`${channel.videos_count}`}
+                dotVar="var(--primary)"
+              />
+              <SummaryItem
+                label="Idioma"
+                value={channel.language || "—"}
+                dotVar="var(--accent)"
+              />
               <SummaryItem
                 label="Voz short"
                 value={channel.short_voice || "default"}
+                dotVar="var(--gold)"
               />
-              <SummaryItem label="Voz long" value={channel.long_voice || "default"} />
+              <SummaryItem
+                label="Voz long"
+                value={channel.long_voice || "default"}
+                dotVar="var(--lima)"
+              />
               <SummaryItem
                 label="Estilo"
-                value={truncate(channel.image_style, 32) || "default"}
+                value={truncate(channel.image_style, 24) || "default"}
+                dotVar="var(--violeta)"
               />
               <SummaryItem
                 label="Hook profile"
                 value={channel.hook_profile || "default"}
+                dotVar="var(--success)"
+                last
               />
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         ) : (
           <Skeleton className="h-[80px]" />
         )}
 
-        <Card>
-          <CardHeader className="flex-row items-center justify-between space-y-0 gap-4 flex-wrap">
+        <div className="studio-surface overflow-hidden">
+          {/* Header / toolbar */}
+          <div className="px-5 pt-[18px] pb-4 flex items-end justify-between gap-4 flex-wrap">
             <div>
-              <CardTitle>Historial de videos</CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">
+              <span className="eyebrow text-muted-foreground">· historial</span>
+              <h2 className="font-display text-[20px] font-semibold tracking-tight text-foreground mt-1">
+                Historial de videos
+              </h2>
+              <p className="text-[12px] text-muted-foreground mt-0.5">
                 Lista de videos generados y registrados en el caché.
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <div className="inline-flex rounded-lg border border-border/60 p-0.5 bg-muted/30">
+              <div
+                className="inline-flex rounded-lg p-0.5"
+                style={{
+                  background: "hsl(var(--bg-raised) / .6)",
+                  border: "1px solid hsl(var(--border) / .07)",
+                }}
+              >
                 <KindTab
                   active={kindFilter === "all"}
                   onClick={() => setKindFilter("all")}
@@ -316,16 +341,16 @@ export function ChannelDetail() {
                 <Eraser className="h-4 w-4" /> Limpiar todo
               </Button>
             </div>
-          </CardHeader>
+          </div>
 
-          <CardContent>
-            {loading ? (
-              <div className="space-y-2">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <Skeleton key={i} className="h-16" />
-                ))}
-              </div>
-            ) : filtered.length === 0 ? (
+          {loading ? (
+            <div className="px-5 pb-5 space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-16" />
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="px-5 pb-5">
               <EmptyState
                 icon={Film}
                 title={search ? "Sin coincidencias" : "Sin videos en el historial"}
@@ -342,122 +367,62 @@ export function ChannelDetail() {
                   ) : undefined
                 }
               />
-            ) : (
-              <div className="overflow-hidden rounded-lg border border-border/60">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50 text-xs uppercase tracking-wider text-muted-foreground">
-                    <tr>
-                      <th className="text-left px-3 py-2 font-medium w-20">Tipo</th>
-                      <th className="text-left px-4 py-2 font-medium">Título</th>
-                      <th className="text-left px-4 py-2 font-medium hidden md:table-cell">Subject</th>
-                      <th className="text-left px-4 py-2 font-medium hidden lg:table-cell">Fecha</th>
-                      <th className="text-left px-4 py-2 font-medium hidden xl:table-cell">Engagement</th>
-                      <th className="text-right px-4 py-2 font-medium">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/60">
-                    {filtered.map((v) => (
-                      <tr key={v.index} className="hover:bg-muted/30 transition-colors">
-                        <td className="px-3 py-3">
-                          {v.is_short ? (
-                            <Badge variant="outline" className="gap-1 text-emerald-300 border-emerald-300/40 bg-emerald-300/5">
-                              <Sparkles className="h-3 w-3" /> Short
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="gap-1 text-violet-300 border-violet-300/40 bg-violet-300/5">
-                              <Clapperboard className="h-3 w-3" /> Long
-                            </Badge>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 max-w-[400px]">
-                          <div className="font-medium text-foreground line-clamp-1">
-                            {v.title || "(sin título)"}
-                          </div>
-                          <div className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
-                            {truncate(v.description, 120)}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 max-w-[280px] hidden md:table-cell">
-                          <div className="text-xs text-muted-foreground line-clamp-2">
-                            {v.subject || "—"}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 hidden lg:table-cell">
-                          <div className="flex items-center gap-1.5 text-xs">
-                            <Calendar className="h-3 w-3 text-muted-foreground" />
-                            <span>{formatDate(v.date)}</span>
-                          </div>
-                          <div className="text-[11px] text-muted-foreground mt-0.5">
-                            {relativeTime(v.date)}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 hidden xl:table-cell whitespace-nowrap">
-                          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                            <span className="inline-flex items-center gap-1" title="Visualizaciones">
-                              <Eye className="h-3 w-3" />
-                              {formatCount(v.view_count)}
-                            </span>
-                            <span className="inline-flex items-center gap-1" title="Me gusta">
-                              <ThumbsUp className="h-3 w-3" />
-                              {formatCount(v.like_count)}
-                            </span>
-                            <span className="inline-flex items-center gap-1" title="No me gusta (estimado por Return YouTube Dislike)">
-                              <ThumbsDown className="h-3 w-3" />
-                              {formatCount(v.dislike_count)}
-                            </span>
-                            <span className="inline-flex items-center gap-1" title="Comentarios">
-                              <MessageSquare className="h-3 w-3" />
-                              {formatCount(v.comment_count)}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center justify-end gap-1">
-                            {v.url && v.url.startsWith("http") && (
-                              <a href={v.url} target="_blank" rel="noreferrer">
-                                <Button variant="ghost" size="icon" aria-label="Abrir">
-                                  <ExternalLink className="h-4 w-4" />
-                                </Button>
-                              </a>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => openEditVideo(v)}
-                              aria-label="Editar"
-                              title="Editar título y subject"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => setDeletingVideo(v)}
-                              className="text-muted-foreground hover:text-destructive"
-                              aria-label="Eliminar"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="px-4 py-2 text-xs text-muted-foreground border-t border-border/60 bg-muted/30">
-                  Mostrando {filtered.length} de {videos.length} videos
-                  {videos.some((v) => !v.url || !v.url.startsWith("http")) && (
-                    <span className="ml-2">
-                      <Badge variant="warning" className="ml-1">
-                        algunos sin URL final
-                      </Badge>
-                    </span>
-                  )}
-                </div>
+            </div>
+          ) : (
+            <>
+              {/* Column headers — eyebrow style */}
+              <div
+                className="hidden lg:grid items-center gap-4 px-5 py-2 text-[10px] font-mono uppercase font-semibold text-muted-foreground"
+                style={{
+                  letterSpacing: "0.18em",
+                  gridTemplateColumns: "72px minmax(0,2.2fr) minmax(0,1.4fr) 130px minmax(0,1fr) 100px",
+                  borderTop: "1px solid hsl(var(--border) / .04)",
+                  background: "hsl(var(--bg-raised) / .4)",
+                }}
+              >
+                <span>Tipo</span>
+                <span>Título</span>
+                <span className="hidden xl:block">Subject</span>
+                <span>Fecha</span>
+                <span className="hidden xl:block">Engagement</span>
+                <span className="text-right">Acciones</span>
               </div>
-            )}
-          </CardContent>
-        </Card>
+
+              {/* Rows */}
+              <div>
+                {filtered.map((v) => (
+                  <VideoRow
+                    key={v.index}
+                    video={v}
+                    onOpen={() => openEditVideo(v)}
+                    onDelete={() => setDeletingVideo(v)}
+                  />
+                ))}
+              </div>
+
+              <div
+                className="px-5 py-2.5 text-[11px] font-mono text-muted-foreground flex items-center gap-2 flex-wrap"
+                style={{
+                  borderTop: "1px solid hsl(var(--border) / .07)",
+                  background: "hsl(var(--bg-raised) / .4)",
+                }}
+              >
+                <span>
+                  Mostrando{" "}
+                  <span className="text-foreground tabular-nums">{filtered.length}</span>{" "}
+                  de{" "}
+                  <span className="text-foreground tabular-nums">{videos.length}</span>{" "}
+                  videos
+                </span>
+                {videos.some((v) => !v.url || !v.url.startsWith("http")) && (
+                  <Badge variant="warning" className="ml-1">
+                    algunos sin URL final
+                  </Badge>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </PageShell>
 
       <ChannelFormDialog
@@ -611,13 +576,208 @@ function KindTab({
   );
 }
 
-function SummaryItem({ label, value }: { label: string; value: string }) {
+function VideoRow({
+  video,
+  onOpen,
+  onDelete,
+}: {
+  video: ChannelVideo;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const isShort = video.is_short;
+  const accentVar = isShort ? "var(--primary)" : "var(--violeta)";
+  const hasViews = (video.view_count ?? -1) >= 0;
+  const hasLikes = (video.like_count ?? -1) >= 0;
+  const hasDislikes = (video.dislike_count ?? -1) >= 0;
+  const hasComments = (video.comment_count ?? -1) >= 0;
+  const hasAnyEngagement = hasViews || hasLikes || hasDislikes || hasComments;
+
   return (
-    <div>
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-        {label}
+    <div
+      className="group relative grid items-center gap-4 px-5 py-3 transition-colors hover:bg-[hsl(var(--bg-raised)/.5)]"
+      style={{
+        gridTemplateColumns: "72px minmax(0,2.2fr) minmax(0,1.4fr) 130px minmax(0,1fr) 100px",
+        borderTop: "1px solid hsl(var(--border) / .04)",
+      }}
+    >
+      {/* Accent stripe on the left — brightens on hover */}
+      <span
+        aria-hidden
+        className="absolute left-0 top-0 bottom-0 w-[3px] opacity-0 group-hover:opacity-100 transition-opacity"
+        style={{ background: `hsl(${accentVar})` }}
+      />
+
+      {/* Tipo */}
+      <div>
+        <span
+          className="font-mono uppercase text-[9.5px] font-semibold px-1.5 py-0.5 rounded inline-flex items-center gap-1"
+          style={{
+            letterSpacing: "0.14em",
+            color: `hsl(${accentVar})`,
+            background: `hsl(${accentVar} / .10)`,
+            border: `1px solid hsl(${accentVar} / .25)`,
+          }}
+        >
+          {isShort ? (
+            <Sparkles className="h-2.5 w-2.5" strokeWidth={2} />
+          ) : (
+            <Clapperboard className="h-2.5 w-2.5" strokeWidth={2} />
+          )}
+          {isShort ? "Short" : "Long"}
+        </span>
       </div>
-      <div className="text-sm font-medium mt-0.5">{value}</div>
+
+      {/* Título + descripción */}
+      <div className="min-w-0">
+        <div className="font-medium text-[13.5px] text-foreground line-clamp-1 tracking-tight">
+          {video.title || "(sin título)"}
+        </div>
+        {video.description && (
+          <div className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
+            {truncate(video.description, 120)}
+          </div>
+        )}
+      </div>
+
+      {/* Subject (xl+) */}
+      <div className="min-w-0 hidden xl:block">
+        <div className="text-[11.5px] text-muted-foreground line-clamp-2 leading-snug">
+          {video.subject || "—"}
+        </div>
+      </div>
+
+      {/* Fecha */}
+      <div className="hidden lg:block">
+        <div className="font-mono text-[11px] text-foreground tabular-nums flex items-center gap-1.5">
+          <Calendar className="h-3 w-3 text-muted-foreground" strokeWidth={1.5} />
+          {formatDate(video.date)}
+        </div>
+        <div className="text-[10.5px] text-muted-foreground mt-0.5 ml-[18px]">
+          {relativeTime(video.date)}
+        </div>
+      </div>
+
+      {/* Engagement */}
+      <div className="hidden xl:flex items-center gap-3 text-[11px] font-mono text-muted-foreground whitespace-nowrap">
+        {hasAnyEngagement ? (
+          <>
+            {hasViews && (
+              <span className="inline-flex items-center gap-1" title="Visualizaciones">
+                <Eye className="h-3 w-3" strokeWidth={1.5} />
+                <span className="tabular-nums text-foreground">
+                  {formatCount(video.view_count)}
+                </span>
+              </span>
+            )}
+            {hasLikes && (
+              <span className="inline-flex items-center gap-1" title="Me gusta">
+                <ThumbsUp className="h-3 w-3" strokeWidth={1.5} />
+                <span className="tabular-nums text-foreground">
+                  {formatCount(video.like_count)}
+                </span>
+              </span>
+            )}
+            {hasDislikes && (
+              <span
+                className="inline-flex items-center gap-1"
+                title="No me gusta (estimado por Return YouTube Dislike)"
+              >
+                <ThumbsDown className="h-3 w-3" strokeWidth={1.5} />
+                <span className="tabular-nums text-foreground">
+                  {formatCount(video.dislike_count)}
+                </span>
+              </span>
+            )}
+            {hasComments && (
+              <span className="inline-flex items-center gap-1" title="Comentarios">
+                <MessageSquare className="h-3 w-3" strokeWidth={1.5} />
+                <span className="tabular-nums text-foreground">
+                  {formatCount(video.comment_count)}
+                </span>
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="text-muted-foreground/60 italic">sin datos</span>
+        )}
+      </div>
+
+      {/* Acciones */}
+      <div className="flex items-center justify-end gap-0.5">
+        {video.url && video.url.startsWith("http") && (
+          <a href={video.url} target="_blank" rel="noreferrer">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 opacity-70 hover:opacity-100"
+              aria-label="Abrir en YouTube"
+              title="Abrir en YouTube"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Button>
+          </a>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 opacity-70 hover:opacity-100"
+          onClick={onOpen}
+          aria-label="Editar"
+          title="Editar título y subject"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-destructive opacity-70 hover:opacity-100"
+          onClick={onDelete}
+          aria-label="Eliminar"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function SummaryItem({
+  label,
+  value,
+  dotVar,
+  last,
+}: {
+  label: string;
+  value: string;
+  dotVar: string;
+  last?: boolean;
+}) {
+  return (
+    <div
+      className="px-[18px] py-3.5 flex flex-col gap-1 min-w-0"
+      style={{
+        borderRight: last ? undefined : "1px solid hsl(var(--border) / .04)",
+      }}
+    >
+      <div className="flex items-center gap-1.5">
+        <span
+          className="w-1.5 h-1.5 rounded-full shrink-0"
+          style={{ background: `hsl(${dotVar})` }}
+        />
+        <span
+          className="font-mono uppercase text-[10px] font-semibold text-muted-foreground"
+          style={{ letterSpacing: "0.18em" }}
+        >
+          {label}
+        </span>
+      </div>
+      <span
+        className="font-mono text-[15px] font-semibold tracking-tight text-foreground tabular-nums truncate"
+        title={value}
+      >
+        {value}
+      </span>
     </div>
   );
 }
