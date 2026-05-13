@@ -1,141 +1,216 @@
-# MoneyPrinter Pro
+# MoneyPrinter Largo
 
-**Plataforma completa para automatizar la creación, publicación y monitoreo de contenido en YouTube, Twitter/X, marketing de afiliados y outreach local.**
+Plataforma local para crear, renderizar, publicar y monitorear contenido automatizado en YouTube, Twitter/X, marketing de afiliados y outreach.
 
-Pensado para correr en local desde una PC: el motor de generación se ejecuta como subprocesos Python aislados y todo se administra desde una webapp moderna construida con FastAPI + React. Ya no necesitas una terminal — abres el navegador, eliges canal, das click y el video se genera, se sube y aparece en tu historial con métricas reales.
+Este proyecto fue desarrollado y mantenido por **Daniel Lopez**. Esta versión, su integración local, la webapp y los flujos actuales corresponden a Daniel Lopez.
+
+---
+
+## Qué hace
+
+MoneyPrinter Largo combina un motor Python con una webapp moderna para manejar el flujo completo de creación de contenido desde una sola máquina:
+
+- Generación de shorts y videos largos para YouTube.
+- Creación de guiones, metadata, imágenes, voz, subtítulos y render final.
+- Upload automatizado usando perfiles locales de Firefox.
+- Dashboard web para canales, historial, archivos, métricas y jobs en vivo.
+- Publicación en Twitter/X con cuentas separadas.
+- Flujos de marketing de afiliados.
+- Outreach a negocios locales con scraping, extracción de emails y envío SMTP.
+- Sincronización de métricas de YouTube usando `yt-dlp`.
+
+La idea es simple: configurar tus proveedores, abrir la app, elegir el canal o flujo y dejar que el sistema ejecute el pipeline.
 
 ---
 
 ## Características principales
 
-### 🎬 YouTube — Shorts y videos largos
-- **Pipeline completo automático**: tema → guión → metadata → imágenes (AI o stock) → TTS → subtítulos → composición con MoviePy → upload con Selenium.
-- **Multi-canal en paralelo**: lanza varios renders al mismo tiempo desde distintos canales, cada uno con su propio perfil de Firefox aislado.
-- **Selector de modelo LLM por job**: Gemini 2.5/3 Flash, Gemma 4, Gemini Pro, Ollama (local + cloud: Kimi K2.6, GLM 5.1, Qwen 3.5/3.6, Nemotron, Llama 3.3, DeepSeek), Pollinations.
-- **Selector de duración del short** (30s/45s/60s/90s/2min) que mapea a la longitud de guión.
-- **Estilos de gancho intercambiables**: 22 hooks curados agrupados en perfiles (educational, storytelling) — random por defecto o fijo para A/B testing.
-- **Sugerencias de tema con IA** que lee los últimos 30 temas del canal y propone 5 nuevos sin repetir.
-- **Vista previa del script**: genera primero solo el guión (~5s, sin gastar imágenes ni TTS) — lo revisas, lo editas, lo apruebas, y recién ahí corre el render completo.
-- **Generación en lote**: cola N shorts de varios canales con un solo click.
-- **Sync automático con YouTube** (yt-dlp): tres niveles independientes (subscriber count cada 60 min, stats de videos recientes cada 30 min, sync completo bajo demanda). Catch-up automático al reabrir la app si pasó tiempo offline.
+### YouTube
 
-### 🐦 Twitter / X
-- Cuentas múltiples con perfil Firefox por cuenta.
-- Generación automática de tweets según el topic configurado.
-- Posteo con Selenium contra x.com.
-- Historial completo.
+- Pipeline completo: tema, guion, metadata, imágenes, TTS, subtítulos, composición con MoviePy y subida con Selenium.
+- Soporte para shorts y videos largos.
+- Vista previa de guion antes de renderizar.
+- Generación por lotes.
+- Manejo de canales con configuración propia.
+- Multi-provider para LLMs e imágenes.
+- Historial local de videos, archivos y métricas.
+- Auto-sync de suscriptores, views, likes y comentarios.
 
-### 💰 Affiliate Marketing
-- Scraping de productos de Amazon con descripción/precio.
-- Generación de pitch promocional con LLM.
-- Publicación cruzada en Twitter con link de afiliado.
+### Webapp
 
-### 📧 Outreach a negocios locales
-- Scraping de Google Maps (binario en Go) con filtros por nicho + ubicación.
+- Backend con FastAPI.
+- Frontend con React, TypeScript, Vite y TailwindCSS.
+- Progreso en vivo de jobs largos mediante SSE.
+- Paneles para Dashboard, Generar, Canales, Series, Twitter/X, Affiliate, Outreach, Storage, Thumbnails, Operations y Settings.
+- Configuración visual de `config.json`.
+
+### Twitter/X
+
+- Múltiples cuentas.
+- Generación automática de tweets.
+- Publicación con Selenium.
+- Historial local por cuenta.
+
+### Affiliate Marketing
+
+- Scraping de productos.
+- Generación de copy promocional con LLM.
+- Publicación cruzada en Twitter/X.
+
+### Outreach
+
+- Scraping de negocios locales.
 - Extracción de emails.
-- Envío de outreach por SMTP con template HTML.
-
-### ⚙️ Infraestructura
-- **Webapp moderna**: dashboard, generación, canales, historial con views/likes/comments, archivos, thumbnails, configuración, panel de jobs en background con progreso en vivo (SSE).
-- **Concurrencia segura**: locks de archivo en escrituras al cache JSON, refs por canal para uploads paralelos, cleanup quirúrgico de scratch space.
-- **Subprocesos aislados**: cada job de generación corre en su propio proceso Python con su propio perfil Firefox temporal — un crash no tumba a los demás.
-- **Backoff exponencial** en el auto-sync cuando YouTube empieza a fallar.
+- Envío de correos por SMTP usando plantillas.
 
 ---
 
 ## Stack técnico
 
-| Capa | Tecnologías |
+| Área | Tecnologías |
 |---|---|
-| **CLI / motor de pipelines** | Python 3.12, Selenium, MoviePy, ffmpeg, ImageMagick |
-| **Backend API** | FastAPI, SSE (Server-Sent Events), asyncio |
-| **Frontend** | Vite, React 18, TypeScript, TailwindCSS, Radix UI, lucide-react, sonner |
-| **LLMs** | Gemini API, Ollama (local + cloud), Pollinations |
-| **Imágenes** | Nano Banana 2 (Gemini), Leonardo AI, Pexels, Pixabay, Wikimedia, Europeana, Library of Congress |
-| **TTS** | Edge-TTS, KittenTTS |
-| **STT** | local Whisper, AssemblyAI |
-| **Scraping** | yt-dlp (YouTube), Go binary (Google Maps) |
+| Motor principal | Python 3.12 |
+| Automatización | Selenium, Firefox profiles |
+| Video | MoviePy, ffmpeg, ImageMagick |
+| Backend | FastAPI, asyncio, SSE |
+| Frontend | React 18, TypeScript, Vite, TailwindCSS, Radix UI, lucide-react |
+| LLMs | Gemini, Ollama, Pollinations |
+| TTS | Edge-TTS, KittenTTS |
+| STT | Whisper local, AssemblyAI |
+| Scraping / sync | yt-dlp, scripts locales, binario Go para Google Maps |
 
 ---
 
 ## Requisitos
 
-- **Python 3.12**
-- **Node.js 18+** y **npm**
-- **ffmpeg** en el PATH
-- **ImageMagick** (necesario para subtítulos con MoviePy)
-- **Firefox** con perfil pre-logueado a las plataformas que vas a automatizar
-- **Go** (solo si usas el módulo de Outreach con Google Maps)
+- Python 3.12
+- Node.js 18+ y npm
+- Firefox
+- ffmpeg disponible en el PATH
+- ImageMagick
+- Git Bash, WSL o terminal compatible para ejecutar scripts `.sh` en Windows
+- Go solo si vas a usar el flujo completo de Outreach con Google Maps
+
+También necesitas las API keys o servicios locales que vayas a usar, por ejemplo Gemini, Ollama, Pexels, Pixabay, Leonardo, AssemblyAI, SMTP, etc.
 
 ---
 
-## Instalación
+## Instalación rápida
+
+Desde la raíz del proyecto:
 
 ```bash
-git clone https://github.com/andrepichardo/MoneyPrinterPro.git
-cd MoneyPrinterPro
+bash scripts/setup_local.sh
+```
 
-# Configuración
-cp config.example.json config.json
-# → edita config.json con tus API keys y rutas
+Ese script:
 
-# Entorno virtual + dependencias del motor CLI
-python -m venv venv
+- Crea `config.json` desde `config.example.json` si todavía no existe.
+- Crea el entorno virtual `venv`.
+- Instala dependencias Python.
+- Ajusta algunos defaults locales.
+- Ejecuta el preflight local.
 
-# Windows
-.\venv\Scripts\activate
+Luego instala la webapp:
 
-# macOS/Linux
+```bash
 source venv/bin/activate
-
-pip install -r requirements.txt
-
-# Dependencias de la webapp (backend FastAPI + frontend React)
 cd webapp
 npm run install:all
 ```
 
-El comando `npm run install:all` corre `npm install` para el orquestador, `npm --prefix web install` para el frontend, y `pip install -r api/requirements.txt` para el backend.
+En Windows PowerShell, activa el entorno con:
+
+```powershell
+.\venv\Scripts\Activate.ps1
+```
 
 ---
 
-## Uso
+## Configuración
 
-### Opción A — Webapp (recomendado)
+El archivo principal de configuración es:
 
-Desde `webapp/`, con el venv del repo activo:
+```text
+config.json
+```
+
+Empieza desde:
+
+```text
+config.example.json
+```
+
+Configura, como mínimo:
+
+- `firefox_profile`: perfil de Firefox ya logueado en YouTube/X.
+- `imagemagick_path`: ruta de ImageMagick si no está en el PATH.
+- `llm_provider`: proveedor de texto.
+- API keys necesarias según el proveedor elegido.
+- Proveedor de imágenes.
+- Proveedor de TTS/STT.
+- Canales, voces, estilos y series si vas a generar videos largos.
+
+Más detalles en [`docs/Configuration.md`](docs/Configuration.md).
+
+Importante: `config.json` es local y puede contener secretos. No subas API keys ni rutas privadas.
+
+---
+
+## Ejecutar la webapp
+
+Desde `webapp/`, con el entorno virtual activo:
 
 ```bash
 npm run dev
 ```
 
-Esto arranca **backend + frontend en la misma terminal**:
-- `[api]` FastAPI con `--reload` en `http://127.0.0.1:8000`
-- `[web]` Vite con HMR en `http://127.0.0.1:5173`
+Esto levanta dos servicios en la misma terminal:
 
-Abre `http://127.0.0.1:5173` y todo el flujo está ahí.
+- API FastAPI: `http://127.0.0.1:8000`
+- Frontend Vite: `http://127.0.0.1:5173`
 
-### Opción B — CLI clásico
+Abre:
+
+```text
+http://127.0.0.1:5173
+```
+
+También puedes ejecutarlo desde la raíz:
+
+```bash
+npm --prefix webapp run dev
+```
+
+---
+
+## Ejecutar por CLI
+
+Para usar el modo clásico por terminal:
 
 ```bash
 python src/main.py
 ```
 
-Menú interactivo en consola — el modo original, útil para debugging y para flujos que aún no están en la webapp (Outreach completo).
-
-### Opción C — Job aislado por línea de comando
+Para validar configuración local:
 
 ```bash
-# Genera y sube un short al canal X
+python scripts/preflight_local.py
+```
+
+Para ejecutar jobs específicos:
+
+```bash
+# Generar y subir un short
 python webapp/api/run_job.py generate --channel-id <uuid> --kind short --upload
 
-# Genera un video largo de una serie
-python webapp/api/run_job.py generate --channel-id <uuid> --kind long --series-id un_dia_en_la_historia
+# Generar un video largo
+python webapp/api/run_job.py generate --channel-id <uuid> --kind long --series-id <series_id>
 
-# Sube el último .mp4 generado de un canal
+# Subir el último video generado de un canal
 python webapp/api/run_job.py upload-last --channel-id <uuid>
 
-# Tweet
+# Publicar tweet
 python webapp/api/run_job.py tweet --account-id <uuid>
 ```
 
@@ -143,105 +218,82 @@ python webapp/api/run_job.py tweet --account-id <uuid>
 
 ## Estructura del proyecto
 
-```
-MoneyPrinterPro/
-├── src/                          Motor de pipelines (Python)
-│   ├── main.py                   CLI interactivo
-│   ├── cron.py                   Runner headless (legacy)
-│   ├── config.py                 Lectura de config.json
-│   ├── cache.py                  Persistencia .mp/*.json + file locks
-│   ├── llm_provider.py           Gemini / Ollama / Pollinations dispatch
-│   ├── classes/
-│   │   ├── YouTube.py            Pipeline completo shorts + longs
-│   │   ├── Twitter.py            Selenium x.com
-│   │   ├── AFM.py                Affiliate Marketing
-│   │   ├── Outreach.py           Google Maps + SMTP
-│   │   └── Tts.py                Edge-TTS / KittenTTS
-│   └── ...
+```text
+MoneyPrinterLargo-public/
+├── src/                       Motor principal en Python
+│   ├── main.py                CLI interactivo
+│   ├── config.py              Lectura de config.json
+│   ├── cache.py               Persistencia local en .mp/
+│   ├── llm_provider.py        Dispatch Gemini / Ollama / Pollinations
+│   └── classes/
+│       ├── YouTube.py         Pipeline de videos
+│       ├── Twitter.py         Automatización de X/Twitter
+│       ├── AFM.py             Affiliate Marketing
+│       ├── Outreach.py        Outreach local
+│       └── Tts.py             Voces y TTS
 ├── webapp/
-│   ├── api/
-│   │   ├── main.py               FastAPI + lifespan auto-sync
-│   │   ├── run_job.py            Driver de subprocesos
-│   │   ├── auto_sync.py          Scheduler de 3 tiers
-│   │   └── requirements.txt
-│   ├── web/                      Vite + React + TS
-│   │   └── src/
-│   │       ├── pages/            Dashboard, Generate, Channels, ChannelDetail, ...
-│   │       ├── components/       UI primitives + dialogs + paneles
-│   │       └── lib/api.ts        Cliente API
-│   └── README.md                 Doc de la webapp
-├── scripts/
-│   ├── sync_youtube_cache.py     Sync con YouTube (yt-dlp)
-│   ├── make_thumbnail.py         Generador de thumbnails
-│   └── ...
-├── docs/                         Documentación adicional por módulo
-├── .mp/                          Scratch space + cache JSON (gitignored)
-├── config.example.json
-├── config.json                   (gitignored)
-└── requirements.txt
+│   ├── api/                   Backend FastAPI
+│   │   ├── main.py            Endpoints REST + SSE
+│   │   ├── run_job.py         Runner de jobs aislados
+│   │   └── auto_sync.py       Scheduler de métricas
+│   └── web/                   Frontend React + Vite
+│       └── src/
+│           ├── pages/         Pantallas de la app
+│           ├── components/    Componentes UI
+│           └── lib/api.ts     Cliente API
+├── scripts/                   Setup, preflight, sync y helpers
+├── docs/                      Documentación técnica
+├── assets/                    Recursos estáticos
+├── fonts/                     Fuentes usadas en renders
+├── .mp/                       Cache local y scratch space
+├── config.example.json        Plantilla de configuración
+├── requirements.txt           Dependencias del motor Python
+└── run_webapp.py              Helper para lanzar la app
 ```
 
 ---
 
-## Configuración
+## Flujo recomendado
 
-Toda la configuración vive en `config.json` en la raíz. Las claves principales:
-
-| Sección | Claves |
-|---|---|
-| **Core** | `verbose`, `headless`, `firefox_profile`, `imagemagick_path`, `threads` |
-| **Render** | `short_render_profile`, `short_render_fps`, `short_ken_burns`, `short_karaoke_subtitles`, `short_crossfade_seconds`, `render_codec`, `render_preset` |
-| **LLM** | `llm_provider`, `gemini_models`, `gemini_api_key`, `ollama_base_url`, `ollama_model`, `pollinations_text_model` |
-| **TTS / STT** | `tts_provider`, `tts_voice`, `stt_provider`, `whisper_model`, `assembly_ai_api_key` |
-| **Imágenes** | `leonardo_api_key`, `pexels_api_key`, `pixabay_api_key`, `europeana_api_key`, `hf_api_key` |
-| **Series (largos)** | `series` con `id`, `title_template`, `script_brief`, `section_themes`, `thumbnail_overlay` |
-| **Auto-sync** | `auto_sync.enabled`, `*_interval_minutes`, `*_enabled`, `recent_video_count` |
-
-El editor de configuración en la webapp (Settings) cubre todas las claves no-secretas con UI agrupada. Las API keys también se pueden editar ahí con toggle "mostrar/ocultar secrets".
-
-Ver [`config.example.json`](config.example.json) para un template completo, y [`docs/Configuration.md`](docs/Configuration.md) para detalles por clave.
-
----
-
-## Auto-sync de estadísticas
-
-La webapp corre un scheduler en background que actualiza views/likes/suscriptores sin que tengas que darle a "Sync YT" manual:
-
-| Tier | Intervalo default | Qué hace |
-|---|---|---|
-| **Light** | 60 min | Subscriber count por canal (1 request por canal, ~5s total) |
-| **Recent** | 30 min | Stats de los N (default 10) videos más recientes por canal |
-| **Full** | 12 h *(off)* | Sync completo equivalente al botón manual |
-
-Todo configurable desde Settings → Auto-sync, con toggles, intervalos editables, ejecución forzada, logs por tier y backoff automático si YouTube empieza a fallar.
-
-Cuando cierras la app y la vuelves a abrir, cada tier hace **catch-up** inteligente: si pasó más tiempo que el intervalo, corre casi de inmediato; si pasó menos, espera solo el tiempo restante del ciclo original.
+1. Ejecuta `bash scripts/setup_local.sh`.
+2. Edita `config.json`.
+3. Activa el entorno virtual.
+4. Instala la webapp con `cd webapp && npm run install:all`.
+5. Corre `python scripts/preflight_local.py`.
+6. Inicia la webapp con `npm run dev`.
+7. Abre `http://127.0.0.1:5173`.
+8. Crea o revisa tus canales.
+9. Genera un guion de prueba.
+10. Renderiza y sube cuando todo esté correcto.
 
 ---
 
 ## Notas de seguridad
 
-- El proyecto **no maneja autenticación** — está pensado para uso local en tu propia máquina.
-- Los uploads usan **Selenium contra YouTube Studio** (no la API oficial). Necesitas un perfil de Firefox pre-logueado.
-- El sync con YouTube usa **yt-dlp** que scrapea la página pública — no requiere API key pero está sujeto a rate limits invisibles.
-- Las API keys viven en `config.json` (gitignored). Nunca commitearlo.
-
----
-
-## Disclaimer
-
-Este proyecto es para uso personal y educativo. Yo, como autor, no me hago responsable de ningún uso indebido. Cumple los términos de servicio de las plataformas (YouTube, X/Twitter, Amazon, etc.) que estés automatizando — la automatización agresiva puede resultar en suspensión de tu cuenta.
+- Este proyecto está pensado para uso local.
+- No incluye autenticación de usuarios en la webapp.
+- Los uploads usan Selenium contra YouTube Studio, no la API oficial de YouTube.
+- El sync con YouTube usa `yt-dlp` sobre páginas públicas.
+- Las plataformas pueden aplicar rate limits o restricciones.
+- Automatizar contenido o publicaciones puede incumplir términos de servicio si se usa de forma agresiva.
+- No publiques `config.json`, perfiles de navegador, tokens, cookies ni API keys.
 
 ---
 
 ## Autor
 
-**André Pichardo** — [@andrepichardo](https://github.com/andrepichardo)
+**Daniel Lopez**
 
-Proyecto personal, mantenido por mí.
+Desarrollo, integración y mantenimiento de esta versión de MoneyPrinter Largo.
 
 ---
 
 ## Créditos
 
-Este proyecto está basado originalmente en [MoneyPrinterV2](https://github.com/FujiwaraChoki/MoneyPrinterV2) de [FujiwaraChoki](https://github.com/FujiwaraChoki), bajo licencia AGPL v3. La versión actual ha sido reescrita y extendida significativamente: nueva webapp completa (FastAPI + React), pipeline rediseñado para correr varios canales en paralelo de forma segura, sistema de auto-sync, multi-provider de LLMs (Gemini + Ollama cloud/local + Pollinations), vista previa de script, generación en lote, y muchas otras features que no estaban en el original. Gracias al autor original por la base.
+Este proyecto toma inspiración y parte de la idea original de proyectos tipo MoneyPrinter, incluyendo MoneyPrinterV2 de FujiwaraChoki. Esta versión fue adaptada, extendida y reestructurada por **Daniel Lopez** con webapp, integración local, flujos de generación, automatización y herramientas adicionales.
+
+---
+
+## Disclaimer
+
+Este software se entrega para fines personales, educativos y de automatización local. El autor no se hace responsable por usos indebidos, spam, incumplimiento de términos de servicio, suspensión de cuentas o problemas derivados del uso de automatización en plataformas externas.
