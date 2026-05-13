@@ -33,6 +33,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const SHORT_DURATION_OPTIONS = [60, 120, 180] as const;
 export type ShortDurationSeconds = (typeof SHORT_DURATION_OPTIONS)[number];
 
+// Mirror of HOOK_PROFILES keys in src/classes/YouTube.py. Keep these in sync —
+// the backend rejects anything else with HTTP 400.
+export const HOOK_PROFILE_OPTIONS = ["educational", "storytelling"] as const;
+export type HookProfile = (typeof HOOK_PROFILE_OPTIONS)[number];
+
 export interface Channel {
   id: string;
   nickname: string;
@@ -292,6 +297,7 @@ export const api = {
     duration_seconds?: ShortDurationSeconds;
     llm_provider?: "ollama" | "gemini" | "";
     llm_model?: string;
+    hook_profile?: HookProfile | "";
   }): string {
     const qs = new URLSearchParams();
     qs.set("kind", params.kind);
@@ -304,6 +310,7 @@ export const api = {
     }
     if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
     if (params.llm_model) qs.set("llm_model", params.llm_model);
+    if (params.hook_profile) qs.set("hook_profile", params.hook_profile);
     return `${BASE}/api/channels/${id}/generate?${qs.toString()}`;
   },
   uploadLastUrl: (id: string, kind: "short" | "long" = "short") =>

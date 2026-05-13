@@ -15,7 +15,9 @@ import { ProgressDialog } from "@/components/ProgressDialog";
 import {
   api,
   SHORT_DURATION_OPTIONS,
+  HOOK_PROFILE_OPTIONS,
   type Channel,
+  type HookProfile,
   type SeriesEntry,
   type ShortDurationSeconds,
   type SystemInfo,
@@ -35,6 +37,9 @@ export function Generate() {
   const [topic, setTopic] = useState("");
   const [imageMode, setImageMode] = useState<"ai" | "photos">("ai");
   const [seriesId, setSeriesId] = useState("");
+  // Per-job hook profile override. Empty string = use the channel's configured
+  // default (selectedChannel.hook_profile); otherwise overrides for THIS run.
+  const [hookProfile, setHookProfile] = useState<HookProfile | "">("");
   const [autoUpload, setAutoUpload] = useState(false);
   const [previewAtEnd, setPreviewAtEnd] = useState(false);
   const [shortDuration, setShortDuration] = useState<ShortDurationSeconds>(60);
@@ -112,6 +117,7 @@ export function Generate() {
       duration_seconds: kind === "short" ? shortDuration : undefined,
       llm_provider: llmProvider || undefined,
       llm_model: llmProvider && llmModel ? llmModel : undefined,
+      hook_profile: hookProfile || undefined,
     });
     setSseUrl(url);
     setProgressOpen(true);
@@ -245,6 +251,28 @@ export function Generate() {
                     options={[
                       { value: "ai", label: "AI · Nano Banana" },
                       { value: "photos", label: "Stock fotos" },
+                    ]}
+                  />
+                </Field>
+
+                <Field
+                  label="Hook profile"
+                  hint={
+                    hookProfile
+                      ? "override"
+                      : `canal · ${selectedChannel?.hook_profile || "educational"}`
+                  }
+                >
+                  <Segmented
+                    value={hookProfile}
+                    onChange={(v) => setHookProfile(v as HookProfile | "")}
+                    accentVar="var(--accent)"
+                    options={[
+                      { value: "", label: "Canal" },
+                      ...HOOK_PROFILE_OPTIONS.map((p) => ({
+                        value: p,
+                        label: p,
+                      })),
                     ]}
                   />
                 </Field>

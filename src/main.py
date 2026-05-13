@@ -45,11 +45,11 @@ from constants import *
 from classes.Tts import TTS
 from termcolor import colored
 from classes.Twitter import Twitter
-from classes.YouTube import YouTube
+from classes.YouTube import YouTube, HOOK_PROFILES
 from prettytable import PrettyTable
 from classes.Outreach import Outreach
 from classes.AFM import AffiliateMarketing
-from llm_provider import list_models, select_model, get_active_model, set_llm_provider
+from llm_provider import list_models, select_model, get_active_model, set_llm_provider, RECOMMENDED_OLLAMA_MODELS
 
 
 def _trunc(s, n: int) -> str:
@@ -129,6 +129,41 @@ def main():
             "short_voice": short_voice,
             "long_voice": long_voice,
         }
+
+    def _prompt_hook_profile_choice(current: str) -> str:
+        """
+        Ask the user which hook profile to use for THIS video run.
+        Shows the available profiles (keys of HOOK_PROFILES) with the channel
+        default marked. Pressing Enter keeps the default. Returns the chosen
+        profile name; falls back to the resolved default on invalid input.
+        """
+        profiles = list(HOOK_PROFILES.keys())
+        resolved_default = (current or "").strip().lower()
+        if resolved_default not in HOOK_PROFILES:
+            resolved_default = "educational"
+
+        info("\n   Hook profile (estilo de gancho para abrir la historia):")
+        for idx, name in enumerate(profiles, 1):
+            marker = "  [default]" if name == resolved_default else ""
+            print(colored(f"     {idx}. {name}{marker}", "cyan"))
+        info("   Press Enter to keep the default.")
+
+        raw = question("Hook profile (number or name): ").strip()
+        if not raw:
+            return resolved_default
+
+        if raw.isdigit():
+            i = int(raw) - 1
+            if 0 <= i < len(profiles):
+                return profiles[i]
+            warning(f"   Invalid selection — using '{resolved_default}'.")
+            return resolved_default
+
+        name = raw.lower()
+        if name in HOOK_PROFILES:
+            return name
+        warning(f"   Unknown profile '{raw}' — using '{resolved_default}'.")
+        return resolved_default
 
     # Get user input
     # user_input = int(question("Select an option: "))
@@ -314,6 +349,13 @@ def main():
                             f" => Target: {d}s | {s} sentences | ~{w} words | {n} images"
                         )
 
+                        # Per-run hook profile override. Picks the opening style
+                        # used by generate_script (HOOK_PROFILES). Defaults to
+                        # the channel's configured profile.
+                        chosen_hook = _prompt_hook_profile_choice(youtube._hook_profile)
+                        youtube._hook_profile = chosen_hook
+                        info(f" => Hook profile: {chosen_hook}")
+
                         video_path = youtube.generate_video(
                             tts,
                             custom_topic=custom_topic,
@@ -351,6 +393,11 @@ def main():
                                     chosen = series_list[idx]
                                     custom_topic = f"[{chosen['id']}] {custom_topic}"
                                     info(f" => Using series: {chosen.get('name') or chosen['id']}")
+
+                        # Per-run hook profile override for the long-video cold open.
+                        chosen_hook = _prompt_hook_profile_choice(youtube._hook_profile)
+                        youtube._hook_profile = chosen_hook
+                        info(f" => Hook profile: {chosen_hook}")
 
                         info("Starting Long Video Generation (15-20 min)...")
                         long_path = youtube.generate_long_video(tts, custom_topic=custom_topic)
@@ -766,18 +813,32 @@ if __name__ == "__main__":
             success(f"Using Ollama model: {configured_model}")
         else:
             try:
-                models = list_models()
+                installed_models = list_models()
             except Exception as e:
                 error(f"Could not connect to Ollama: {e}")
                 sys.exit(1)
 
-            if not models:
-                error("No models found on Ollama. Pull a model first (e.g. 'ollama pull llama3.2:3b').")
+            # Merge the curated catalog with whatever is installed locally.
+            # Recommended entries appear first; locally-installed models that
+            # aren't in the curated list are appended afterwards. Models
+            # already present on disk get a "[installed]" marker.
+            installed_set = set(installed_models)
+            menu: list[tuple[str, str]] = []
+            for model_id, label in RECOMMENDED_OLLAMA_MODELS:
+                tag = "[installed]" if model_id in installed_set else "[pull on first use]"
+                menu.append((model_id, f"{label}  {tag}"))
+            curated_set = {m for m, _ in RECOMMENDED_OLLAMA_MODELS}
+            for model_id in installed_models:
+                if model_id not in curated_set:
+                    menu.append((model_id, "[installed]"))
+
+            if not menu:
+                error("No models available. Pull a model first (e.g. 'ollama pull llama3.2:3b').")
                 sys.exit(1)
 
             info("\n========== OLLAMA MODELS =========", False)
-            for idx, model_name in enumerate(models):
-                print(colored(f" {idx + 1}. {model_name}", "cyan"))
+            for idx, (model_id, label) in enumerate(menu):
+                print(colored(f" {idx + 1:2d}. {model_id:<28} {label}", "cyan"))
             info("==================================\n", False)
 
             model_choice = None
@@ -785,8 +846,8 @@ if __name__ == "__main__":
                 raw = input(colored("Select a model: ", "magenta")).strip()
                 try:
                     choice_idx = int(raw) - 1
-                    if 0 <= choice_idx < len(models):
-                        model_choice = models[choice_idx]
+                    if 0 <= choice_idx < len(menu):
+                        model_choice = menu[choice_idx][0]
                     else:
                         warning("Invalid selection. Try again.")
                 except ValueError:

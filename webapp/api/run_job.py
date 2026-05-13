@@ -156,6 +156,11 @@ def cmd_generate(args):
                 flush=True,
             )
 
+    # Per-job hook_profile override (picks the opening style from HOOK_PROFILES
+    # in src/classes/YouTube.py). Empty string means "use the channel default".
+    hook_override = (getattr(args, "hook_profile", "") or "").strip().lower()
+    effective_hook = hook_override or acc.get("hook_profile", "")
+
     print(f"[runner] Initializing channel '{acc.get('nickname')}'", flush=True)
     youtube = YouTube(
         acc["id"],
@@ -166,10 +171,12 @@ def cmd_generate(args):
         image_style=acc.get("image_style", ""),
         short_voice=acc.get("short_voice", ""),
         long_voice=acc.get("long_voice", ""),
-        hook_profile=acc.get("hook_profile", ""),
+        hook_profile=effective_hook,
         voice_drama=acc.get("voice_drama", False),
         target_duration_seconds=target_duration,
     )
+    if hook_override:
+        print(f"[runner] Hook profile override: {hook_override}", flush=True)
     tts = TTS()
 
     topic = args.topic or ""
@@ -258,15 +265,37 @@ def cmd_upload_last(args):
         except Exception as e:
             print(f"[runner] WARN: could not load sidecar {sidecar_path}: {e}", flush=True)
     else:
-        print(f"[runner] WARN: no sidecar at {sidecar_path} — upload may fail if subject is required", flush=True)
+        print(f"[runner] WARN: no sidecar at {sidecar_path} — will recover metadata from audio via Whisper", flush=True)
 
     # Sidecar's is_long takes precedence over the user-passed --kind because
     # the sidecar reflects what was actually generated.
     is_long = is_long_from_sidecar if is_long_from_sidecar is not None else (args.kind == "long")
     youtube._is_long_video = is_long
-    print(f"[runner] Uploading {'LONG' if is_long else 'SHORT'}: {youtube.video_path}", flush=True)
 
-    ok = youtube.upload_video()
+    # When the sidecar is missing or didn't yield a subject + metadata pair,
+    # mirror the CLI "Re-upload last video" flow: delegate to reupload_video,
+    # which transcribes the audio with Whisper and asks the LLM for a title +
+    # description from the actual spoken script. The result is persisted to a
+    # fresh sidecar so the next retry skips this work.
+    has_metadata = bool(
+        (getattr(youtube, "subject", "") or "").strip()
+        and (getattr(youtube, "metadata", None) or {}).get("title")
+        and (getattr(youtube, "metadata", None) or {}).get("description")
+    )
+    if not has_metadata:
+        print(
+            f"[runner] No subject/metadata found — recovering from audio with Whisper "
+            f"(uploading {'LONG' if is_long else 'SHORT'}: {youtube.video_path})",
+            flush=True,
+        )
+        try:
+            ok = youtube.reupload_video(youtube.video_path, subject=None)
+        except Exception as e:
+            print(f"[runner] ERROR: Whisper-based recovery failed: {type(e).__name__}: {e}", flush=True)
+            sys.exit(4)
+    else:
+        print(f"[runner] Uploading {'LONG' if is_long else 'SHORT'}: {youtube.video_path}", flush=True)
+        ok = youtube.upload_video()
     print(f"[runner] Upload result: {ok}", flush=True)
     if not ok:
         sys.exit(4)
@@ -382,6 +411,8 @@ def main():
     # Per-job LLM override picked from the UI; empty = use config defaults.
     p_gen.add_argument("--llm-provider", default="")
     p_gen.add_argument("--llm-model", default="")
+    # Per-job hook profile override (educational / storytelling / ...). Empty = use channel default.
+    p_gen.add_argument("--hook-profile", default="")
 
     p_ul = sub.add_parser("upload-last")
     p_ul.add_argument("--channel-id", required=True)

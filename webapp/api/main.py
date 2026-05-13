@@ -901,19 +901,43 @@ def list_llm_models():
     """Return the list of available models per provider so the UI can offer
     a dropdown override per generation. Failures on a single provider are
     swallowed so a missing Ollama daemon doesn't break the whole endpoint.
+
+    The Ollama list is the curated `RECOMMENDED_OLLAMA_MODELS` catalog
+    (frontier cloud + top local picks) merged with whatever is installed
+    locally. Curated entries come first so the user sees the strongest
+    options at the top of the dropdown; locally-installed-but-not-curated
+    entries follow.
     """
     out: dict[str, Any] = {"ollama": [], "gemini": [], "errors": {}}
 
     try:
-        from llm_provider import list_models as _list_ollama
-        out["ollama"] = _list_ollama()
+        from llm_provider import (
+            list_models as _list_ollama,
+            RECOMMENDED_OLLAMA_MODELS,
+        )
+        curated = [mid for mid, _ in RECOMMENDED_OLLAMA_MODELS]
+        installed: list[str] = []
+        try:
+            installed = _list_ollama()
+        except Exception as e:
+            # Daemon down or unreachable — still surface the curated catalog
+            # so the user can pick a model; Ollama will auto-pull on use.
+            out["errors"]["ollama"] = str(e)[:200]
+        curated_set = set(curated)
+        out["ollama"] = curated + [m for m in installed if m not in curated_set]
     except Exception as e:
         out["errors"]["ollama"] = str(e)[:200]
 
     try:
         from config import get_gemini_models, get_gemini_api_key
+        from llm_provider import RECOMMENDED_GEMINI_MODELS
         if get_gemini_api_key():
-            out["gemini"] = list(get_gemini_models() or [])
+            curated_g = [mid for mid, _ in RECOMMENDED_GEMINI_MODELS]
+            configured = list(get_gemini_models() or [])
+            curated_g_set = set(curated_g)
+            # Curated first (best per benchmark), then any custom IDs the
+            # user has in config.json that aren't already in the curated list.
+            out["gemini"] = curated_g + [m for m in configured if m not in curated_g_set]
         else:
             out["errors"]["gemini"] = "no gemini_api_key in config.json"
     except Exception as e:
@@ -933,6 +957,7 @@ async def generate_video(
     duration_seconds: int = 0,
     llm_provider: str = "",
     llm_model: str = "",
+    hook_profile: str = "",
 ):
     ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
     if not ch:
@@ -953,6 +978,18 @@ async def generate_video(
     if llm_provider and llm_provider not in ("ollama", "gemini"):
         raise HTTPException(400, "llm_provider must be 'ollama' or 'gemini'")
 
+    # Validate hook_profile against the canonical list in YouTube.py so a typo
+    # from the UI fails fast instead of silently falling back to "educational"
+    # inside the runner.
+    hook_profile_norm = (hook_profile or "").strip().lower()
+    if hook_profile_norm:
+        from classes.YouTube import HOOK_PROFILES
+        if hook_profile_norm not in HOOK_PROFILES:
+            raise HTTPException(
+                400,
+                f"hook_profile must be one of {list(HOOK_PROFILES.keys())}",
+            )
+
     args = [
         "generate",
         "--channel-id", channel_id,
@@ -971,6 +1008,8 @@ async def generate_video(
         args += ["--llm-provider", llm_provider]
     if llm_model:
         args += ["--llm-model", llm_model]
+    if hook_profile_norm:
+        args += ["--hook-profile", hook_profile_norm]
 
     label = "Short" if kind == "short" else "Long video"
     title = f"Generando {label} — {ch.get('nickname', channel_id)}"

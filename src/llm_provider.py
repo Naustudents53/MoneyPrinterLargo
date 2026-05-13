@@ -79,6 +79,64 @@ _OLLAMA_FALLBACK_CHAIN: list[str] = [
     "kimi-k2.6:cloud",
     "glm-5.1:cloud",
 ]
+
+# Curated catalog shown by the interactive selector even when the model
+# isn't installed locally yet. The user can pick any of these — Ollama
+# auto-pulls on first run (see `warmup_ollama_model`). Cloud entries
+# (suffixed `:cloud`) require an Ollama Cloud account but no disk space.
+# Each entry is (model_id, short_label) — keep the label under ~55 chars
+# so the menu reads cleanly in a normal terminal.
+#
+# Ranking sources (verified May 2026):
+#   - LMArena open-weights leaderboard
+#   - GPQA Diamond, MMLU, IFEval, MATH-500
+#   - SWE-bench Verified, HumanEval, LiveCodeBench
+#   - Official cloud catalog: https://ollama.com/search?c=cloud
+RECOMMENDED_OLLAMA_MODELS: list[tuple[str, str]] = [
+    # --- Cloud — frontier (paid usage, zero disk) ---
+    ("kimi-k2.6:cloud",           "Moonshot Kimi K2.6 — #1 open-weights (GPQA 90.5)"),
+    ("deepseek-v4-pro:cloud",     "DeepSeek V4 Pro — 1M ctx, 3 reasoning modes"),
+    ("glm-4.7:cloud",             "Z.ai GLM 4.7 — 94.2 HumanEval, practical king"),
+    ("glm-5.1:cloud",             "Z.ai GLM 5.1 — newest, top agentic coding"),
+    ("minimax-m2.5:cloud",        "MiniMax M2.5 — SWE-bench leader (80.2)"),
+    ("minimax-m2.7:cloud",        "MiniMax M2.7 — coding + agentic workflows"),
+    ("gemma4:cloud",              "Google Gemma 4 — frontier multilingual"),
+    ("qwen3.5:cloud",             "Qwen 3.5 — multimodal, strong Spanish"),
+    ("deepseek-v4-flash:cloud",   "DeepSeek V4 Flash — fast MoE, 1M ctx"),
+    ("nemotron-3-super:cloud",    "NVIDIA Nemotron 3 Super 120B MoE"),
+    # --- Local — large (48GB+ RAM / 24GB+ VRAM) ---
+    ("qwen3:235b",                "Alibaba Qwen 3 235B MoE — frontier local"),
+    ("gpt-oss:120b",              "OpenAI gpt-oss 120B — top local reasoning"),
+    ("llama3.3:70b",              "Meta Llama 3.3 70B — flagship dense"),
+    ("deepseek-r1:70b",           "DeepSeek R1 70B — local reasoning"),
+    # --- Local — medium (16-24GB RAM) ---
+    ("gemma3:27b",                "Google Gemma 3 27B — multilingual practical"),
+    ("qwen3:32b",                 "Qwen 3 32B — balanced quality / speed"),
+    ("qwen2.5-coder:32b",         "Qwen2.5 Coder 32B — top local code / JSON"),
+    # --- Local — small / fast (4-8GB VRAM or CPU) ---
+    ("phi4:14b",                  "Microsoft Phi-4 14B — reasoning per-param king"),
+]
+
+
+# Curated Gemini text-generation models, ranked by current benchmarks
+# (May 2026). Image / TTS / video / embedding / robotics variants are
+# excluded — only models suitable for the documentary text-gen pipeline.
+#
+# Sources (verified May 2026):
+#   - Official model list: https://ai.google.dev/gemini-api/docs/models
+#   - LMArena (Gemini 3 Pro tops with 1501 Elo)
+#   - ARC-AGI-2 (Gemini 3.1 Pro: 77.1%)
+#   - GPQA Diamond / SWE-bench (Gemini 3 Flash: 90.4% / 78%)
+RECOMMENDED_GEMINI_MODELS: list[tuple[str, str]] = [
+    ("gemini-3.1-pro-preview",       "Gemini 3.1 Pro — flagship (ARC-AGI-2 77.1)"),
+    ("gemini-3-flash-preview",       "Gemini 3 Flash — frontier fast (GPQA 90.4)"),
+    ("gemini-3.1-flash-lite",        "Gemini 3.1 Flash-Lite — efficient frontier"),
+    ("gemini-3.1-flash-lite-preview","Gemini 3.1 Flash-Lite preview"),
+    ("gemini-2.5-pro",               "Gemini 2.5 Pro — older flagship, solid"),
+    ("gemini-2.5-flash",             "Gemini 2.5 Flash — fast, cheap reasoning"),
+    ("gemini-2.5-flash-lite",        "Gemini 2.5 Flash-Lite — fastest budget"),
+    ("gemini-2.0-flash",             "Gemini 2.0 Flash — legacy compatibility"),
+]
 # Ollama "thinking" budget for the current call. Set via `force_provider` —
 # the long-video pipeline pins it to "high" so DeepSeek V4 Pro Cloud reasons
 # at full depth. None means: don't pass the kwarg at all.
@@ -303,7 +361,11 @@ def generate_text(prompt: str, model_name: str = None) -> str:
     # the historical cross-provider safety net.
     if _user_override:
         if provider == "gemini":
-            providers = [("gemini", lambda: _generate_text_gemini(prompt))]
+            # Pin to the model the user explicitly chose; if none, fall back
+            # to the configured cascade (mirrors Ollama's behaviour).
+            providers = [
+                ("gemini", lambda: _generate_text_gemini(prompt, model_name or _selected_model or None)),
+            ]
         else:
             providers = [
                 ("ollama", lambda: _generate_text_ollama(prompt, model_name or _selected_model)),
@@ -370,7 +432,8 @@ def _is_garbage_response(text: str) -> bool:
     return any(phrase in start for phrase in garbage_phrases)
 
 
-def _ollama_chat_once(client, model: str, messages: list) -> str:
+def _ollama_chat_once(client, model: str, messages: list):
+    started = _time.time()
     if _ollama_think is not None:
         try:
             response = client.chat(model=model, messages=messages, think=_ollama_think)
@@ -390,7 +453,18 @@ def _ollama_chat_once(client, model: str, messages: list) -> str:
             content = (response["message"]["content"] or "").strip()
         except TypeError:
             pass
-    return content
+
+    def _stat(key):
+        try:
+            v = response.get(key) if hasattr(response, "get") else getattr(response, key, 0)
+        except Exception:
+            v = 0
+        return int(v or 0)
+
+    prompt_tok = _stat("prompt_eval_count")
+    out_tok = _stat("eval_count")
+    elapsed = _time.time() - started
+    return content, prompt_tok, out_tok, elapsed
 
 
 def _generate_text_ollama(prompt: str, model: str = None) -> str:
@@ -421,13 +495,21 @@ def _generate_text_ollama(prompt: str, model: str = None) -> str:
         raise RuntimeError("All Ollama fallback models have been disabled this session")
 
     last_error = None
-    for candidate in candidates:
+    for idx, candidate in enumerate(candidates):
         try:
-            print(f"  [Ollama] Trying model: {candidate}")
-            content = _ollama_chat_once(client, candidate, messages)
+            # Only announce *fallback* attempts — the first attempt is implied
+            # by the start-of-session model line, so repeating it on every call
+            # is noise. A line only when the model actually changes is useful.
+            if idx > 0:
+                print(f"  [Ollama] Falling back to {candidate}")
+            content, in_tok, out_tok, elapsed = _ollama_chat_once(client, candidate, messages)
             if not content:
                 raise RuntimeError("empty response")
-            print(f"  [Ollama] Using model: {candidate}")
+            chars = len(content)
+            words = len(content.split())
+            tok_part = f"{in_tok}→{out_tok} tok" if (in_tok or out_tok) else f"~{words} words"
+            print(f"  [Ollama] {candidate} · {elapsed:.1f}s · {tok_part} · {chars} chars")
+            _log_cost("ollama", candidate, in_tok, out_tok, 0.0)
             return content
         except Exception as e:
             err_msg = str(e).lower()
@@ -449,13 +531,22 @@ def _generate_text_ollama(prompt: str, model: str = None) -> str:
     raise RuntimeError(f"All Ollama fallback models failed. Last error: {last_error}")
 
 
-def _generate_text_gemini(prompt: str) -> str:
-    """Generate text using Google Gemini API (free tier), cascading through models."""
+def _generate_text_gemini(prompt: str, model: str | None = None) -> str:
+    """Generate text using Google Gemini API, optionally pinned to one model.
+
+    When the user picked a specific Gemini model from the UI (via
+    `select_model()` + `set_user_override(True)`), `model` is passed in
+    explicitly and we call ONLY that model — no fallback cascade through
+    `config.json`. Otherwise, fall back to the configured cascade.
+    """
     api_key = get_gemini_api_key()
     if not api_key:
         raise RuntimeError("No Gemini API key configured")
 
-    models = get_gemini_models()
+    if model:
+        models = [model]
+    else:
+        models = get_gemini_models()
 
     payload = {
         "system_instruction": {
@@ -474,12 +565,16 @@ def _generate_text_gemini(prompt: str) -> str:
         raise RuntimeError("All Gemini models have been rate-limited this session")
 
     last_error = None
-    for model in available_models:
+    for idx, model in enumerate(available_models):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         try:
+            if idx > 0:
+                print(f"  [Gemini] Falling back to {model}")
+            started = _time.time()
             response = requests.post(url, json=payload, timeout=120)
             response.raise_for_status()
             data = response.json()
+            elapsed = _time.time() - started
 
             candidates = data.get("candidates", [])
             if not candidates:
@@ -494,12 +589,12 @@ def _generate_text_gemini(prompt: str) -> str:
                 # Best-effort cost tracking — usageMetadata is included in v1beta
                 # responses but the field is not guaranteed.
                 usage = data.get("usageMetadata") or {}
-                _log_cost(
-                    "gemini", model,
-                    int(usage.get("promptTokenCount") or 0),
-                    int(usage.get("candidatesTokenCount") or 0),
-                )
-                print(f"  [Gemini] Using model: {model}")
+                in_tok = int(usage.get("promptTokenCount") or 0)
+                out_tok = int(usage.get("candidatesTokenCount") or 0)
+                _log_cost("gemini", model, in_tok, out_tok)
+                chars = len(text)
+                tok_part = f"{in_tok}→{out_tok} tok" if (in_tok or out_tok) else f"~{len(text.split())} words"
+                print(f"  [Gemini] {model} · {elapsed:.1f}s · {tok_part} · {chars} chars")
                 return text
             raise RuntimeError("Gemini returned empty text")
         except Exception as e:

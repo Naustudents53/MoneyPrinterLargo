@@ -142,6 +142,46 @@ HOOK_PROFILES: dict = {
 }
 
 
+# Narrative roles for the 10 sections of a long-form documentary. Designed to
+# front-load engagement (sections 1-2 act as the "first 5 min hook engine")
+# and manage open loops across the rest of the video. Series-defined themes
+# (via `series.section_themes` of exactly 10 entries) override these defaults.
+#
+# Index → minute (approx, at 165 wpm and ~300 words/section):
+#   S1  ≈ min 1-3   immersive vignette (closes nothing, opens visual hook)
+#   S2  ≈ min 3-5   mystery pivot (plants the MAIN loop — paid off at S9)
+#   S3  ≈ min 5-7   first partial revelation + LIKE-BREAK at the opening
+#   S4  ≈ min 7-9   backstory / how-we-got-here
+#   S5  ≈ min 9-11  escalation / second hook
+#   S6  ≈ min 11-13 reversal (kills a popular belief)
+#   S7  ≈ min 13-15 human element (anecdote, slower beat)
+#   S8  ≈ min 15-17 unexpected modern connection
+#   S9  ≈ min 17-18 climax — pays off the MAIN loop from S2
+#   S10 ≈ min 18-19 legacy / consequences
+LONG_VIDEO_SECTION_THEMES: list[str] = [
+    # S1
+    "Viñeta inmersiva: una escena SENSORIAL concreta del momento o lugar más cinematográfico del tema. Mete al espectador DENTRO de la escena con detalles concretos (qué se ve, qué se oye, qué se huele, quién está ahí). NO expliques aún el contexto general — la escena habla sola. Termina dejando una imagen visual potente que enganche.",
+    # S2
+    "Pivote misterio — siembra el LOOP PRINCIPAL del video. Introduce UNA contradicción específica, anomalía o pregunta sin respuesta que el espectador no podrá dejar pasar (algo no encaja, alguien hizo algo inexplicable, un detalle que rompe la versión oficial). Plantea la pregunta con claridad, prométele al espectador que la respuesta llega más adelante, y NO la respondas todavía. Puedes sembrar 1 loop secundario adicional más pequeño.",
+    # S3
+    "Primera revelación parcial CON LIKE-BREAK al inicio. ABRE con 1-2 oraciones cálidas y orgánicas pidiendo al espectador que dé 'me gusta' si está disfrutando el video — debe sonar natural, no a publicidad ni a lista de instrucciones, como un narrador que confía y agradece. DESPUÉS, cierra un loop SECUNDARIO pequeño (NUNCA el loop principal sembrado en la sección anterior — ese debe quedar abierto hasta el clímax) y aprovecha la energía para abrir un nuevo loop más profundo.",
+    # S4
+    "Backstory cinemática: cómo se llegó hasta el momento que abrió el video. Una escena concreta del ORIGEN (fecha exacta, lugar específico, personaje real) que explica por qué pasó lo que pasó. Mantén el tono narrativo y sensorial, NO expositivo de libro de texto. Sigue sin tocar el loop principal.",
+    # S5
+    "Escalada — segundo gancho de retención. Las apuestas suben. Aparecen complicaciones, obstáculos, o un giro intermedio inesperado. Este es el punto donde se reactiva al espectador que estaba perdiendo interés: un nuevo elemento sorprendente, una tensión que no veía venir, o el cierre dramático de un loop secundario. Si abres otra pregunta aquí, será respondida pronto, no al final.",
+    # S6
+    "Reversal: destruye una creencia popular que el espectador probablemente trajo al video. 'Durante años todos creyeron X. Estaban equivocados. La realidad era Y.' Una idea fuerte, contraintuitiva, bien sostenida con un hecho concreto, nombre, fecha o cita. El espectador debe sentir que aprendió algo que cambia su mapa mental.",
+    # S7
+    "Elemento humano: baja el ritmo deliberadamente. Una anécdota íntima, un testimonio, un detalle personal de alguien involucrado en la historia. Apela a la emoción — miedo, asombro, dolor, esperanza, vergüenza. Un respiro narrativo antes del clímax, pero cargado de carga emocional. El espectador debe sentir que conoce a alguien.",
+    # S8
+    "Conexión inesperada con el presente: un paralelismo con algo familiar HOY. Por qué esto le importa al espectador en su vida actual. Una resonancia moderna — costumbre que sigue, palabra que usamos, tecnología que heredamos, error que repetimos. Cierra preparando el terreno para el clímax: el lector debe sentir que la respuesta del loop principal está cerca.",
+    # S9
+    "Clímax — PAGO DEL LOOP PRINCIPAL. Por fin la respuesta a la pregunta sembrada en la sección 2. Este es el momento más impactante de toda la narración. Construye tensión en las primeras 2-3 oraciones, revela el dato/giro/verdad concreta en el medio, y deja al espectador procesando en las últimas. Asegúrate de cerrar de forma satisfactoria el loop principal — no dejes la pregunta abierta.",
+    # S10
+    "Legado y consecuencias: qué quedó después, qué cambió, qué seguimos viendo hoy gracias a (o por culpa de) lo que pasó. Conecta el pasado del tema con el presente del espectador. Prepara emocionalmente al espectador para el cierre — esta sección NO debe abrir loops nuevos, debe asentar lo aprendido.",
+]
+
+
 # Visual context anchoring is now niche-agnostic and computed per-video by
 # `_get_context_profile()` — see that method. The LLM is asked once per video
 # to derive a setting + visual anchors + things-to-avoid brief from the
@@ -1663,23 +1703,38 @@ Example format:
         if getattr(self, "_ctx_profile_key", None) == cache_key and cached is not None:
             return cached
 
-        script_excerpt = script[:1200]
+        # Sample beginning + middle + end of the script (≈3000 chars total) so
+        # the visual anchors cover the WHOLE video, not just the intro. For a
+        # 20-min documentary that visits multiple eras / places, sampling
+        # only the first 1200 chars (the previous behaviour) made later
+        # sections inherit visual anchors derived only from the cold open.
+        SAMPLE = 1000
+        if len(script) <= SAMPLE * 3:
+            script_excerpt = script
+        else:
+            mid_start = (len(script) // 2) - (SAMPLE // 2)
+            script_excerpt = (
+                f"{script[:SAMPLE]}\n[... middle of script ...]\n"
+                f"{script[mid_start:mid_start + SAMPLE]}\n[... end of script ...]\n"
+                f"{script[-SAMPLE:]}"
+            )
         prompt = f"""You are a visual research assistant. Read the channel niche, the video topic and the script excerpt, and produce a JSON brief that will anchor image generation for this single video.
 
 CHANNEL NICHE: {niche or "(not specified)"}
 VIDEO TOPIC: {subject or "(not specified)"}
-SCRIPT EXCERPT:
+SCRIPT EXCERPT (sampled across the full video — beginning, middle and end):
 \"\"\"
 {script_excerpt}
 \"\"\"
 
 Return ONLY a JSON object with EXACTLY these three string fields:
 - "setting": a short descriptor of WHERE and WHEN the story happens — pick the most specific real-world setting that fits the topic and script (e.g. "Ancient Rome, late Republic", "Modern Wall Street trading floor", "Pro NFL stadium, game day", "Tokyo high-end omakase kitchen", "Silicon Valley startup office, 2020s", "Rural American farmhouse, present day", "Open ocean, modern container ship"). Do NOT default to "ancient civilization" unless the topic clearly requires it.
-- "visual_anchors": a comma-separated list of CONCRETE props, clothing, architecture, vehicles, tools, environmental details that should appear naturally in scenes from this setting. 8 to 14 items. Be specific (materials, eras, styles).
+- "visual_anchors": a comma-separated list of CONCRETE props, clothing, architecture, vehicles, tools, environmental details that should appear naturally in scenes from this setting. 10 to 16 items. Be specific (materials, eras, styles). If the script visits multiple eras/places (e.g. ancient origin + modern legacy), include anchors from EACH so later sections of the video stay grounded.
 - "must_avoid": a comma-separated list of visual elements that would be anachronistic, off-topic or break immersion for this setting. 4 to 8 items.
 
 RULES:
 - Match the SETTING to the actual subject. A topic about a modern athlete must NOT get a "Greek Olympics" setting just because the channel niche mentions sports history.
+- If the script clearly visits multiple settings (origin + present-day, or different countries/eras), state the PRIMARY setting in "setting" but include anchors for ALL of them in "visual_anchors". Otherwise pick the one most viewers would picture.
 - If the topic is abstract or the script is generic, pick the setting that most viewers would picture when reading the topic.
 - Output ONLY the JSON object — no markdown, no preamble, no explanation. No code fences.
 """
@@ -3409,8 +3464,26 @@ RULES:
             Falls back to per-section if the single call returns too short.
           - Ollama / others → ONE LLM CALL PER SECTION (12 calls)
             because free / small models cap output around 400-700 words per call.
+
+        Both paths share the same narrative structure (cold-open hook from
+        HOOK_PROFILES, sections shaped by LONG_VIDEO_SECTION_THEMES) so the
+        video opening hooks the viewer regardless of provider.
         """
+        import random
+
         lang = self.language
+
+        # Pick ONE hook style per video so the cold open isn't generic. The
+        # picked (style, example) is forwarded into both single-call and
+        # sectional paths — keeps the opening varied across runs.
+        profile_name = (self._hook_profile or "").strip().lower() or "educational"
+        hook_styles = HOOK_PROFILES.get(profile_name) or HOOK_PROFILES["educational"]
+        if profile_name not in HOOK_PROFILES and self._hook_profile:
+            warning(f"Unknown hook_profile '{self._hook_profile}', falling back to 'educational'.")
+            profile_name = "educational"
+        hook_style, hook_example = random.choice(hook_styles)
+        if get_verbose():
+            info(f" => Long-video hook profile: {profile_name} | style: {hook_style}")
 
         # ---- FAST PATH: Gemini can produce the whole script in a single call ----
         try:
@@ -3425,7 +3498,7 @@ RULES:
             best_short = ""  # remember the longest under-2000-word draft in case all attempts come up short
             for attempt in range(1, SINGLE_CALL_ATTEMPTS + 1):
                 try:
-                    full = self._generate_long_script_single_call(lang)
+                    full = self._generate_long_script_single_call(lang, hook_style, hook_example)
                     word_count = len(full.split())
                     if word_count >= 2000:
                         full = self._postprocess_long_script(full)
@@ -3441,7 +3514,7 @@ RULES:
             warning("   All single-call attempts came up short or failed; falling back to per-section.")
 
         # ---- DEFAULT PATH: per-section for capped providers ----
-        full = self._generate_long_script_sectional(lang)
+        full = self._generate_long_script_sectional(lang, hook_style, hook_example)
         full = self._postprocess_long_script(full)
         self.script = full
         self._persist_long_script(full)
@@ -3532,7 +3605,7 @@ RULES:
         except Exception as e:
             warning(f"   Could not persist script: {e}")
 
-    def _generate_long_script_single_call(self, lang: str) -> str:
+    def _generate_long_script_single_call(self, lang: str, hook_style: str, hook_example: str) -> str:
         """
         Ask the LLM for the entire 15-20 min script in one call.
         Designed for high-output-window providers (Gemini Flash 2.5/3).
@@ -3547,60 +3620,41 @@ RULES:
         if script_brief:
             info(f" => Using series narrative brief: {series.get('id', '')}")
 
-        if isinstance(series_themes, list) and len(series_themes) == 10:
-            # Build the SECTION block from the series-defined chronological themes.
-            sections_block = "\n\n".join(
-                f"[SECTION {i+1}: <título corto>]\n{theme} (10-14 oraciones, 250-350 palabras)."
-                for i, theme in enumerate(series_themes)
-            )
-        else:
-            # Default documentary structure.
-            sections_block = """[SECTION 1: <título corto>]
-Aspecto fundacional o más fascinante del tema (10-14 oraciones, 250-350 palabras).
-
-[SECTION 2: <título corto>]
-Ángulo distinto o construcción sobre la sección anterior, con anécdotas concretas (10-14 oraciones, 250-350 palabras).
-
-[SECTION 3: <título corto>]
-Conexiones sorprendentes o hechos poco conocidos (10-14 oraciones, 250-350 palabras).
-
-[SECTION 4: <título corto>]
-Profundización con datos concretos, fechas, lugares o personas reales (10-14 oraciones, 250-350 palabras).
-
-[SECTION 5: <título corto>]
-Clímax intermedio — momento más impactante hasta aquí (10-14 oraciones, 250-350 palabras).
-
-[SECTION 6: <título corto>]
-Nuevo ángulo o consecuencia que surge de lo anterior (10-14 oraciones, 250-350 palabras).
-
-[SECTION 7: <título corto>]
-Detalles narrativos profundos, anécdotas o testimonios (10-14 oraciones, 250-350 palabras).
-
-[SECTION 8: <título corto>]
-Conexión inesperada o paralelismo con otro ámbito (10-14 oraciones, 250-350 palabras).
-
-[SECTION 9: <título corto>]
-Clímax final — la revelación o giro más fuerte (10-14 oraciones, 250-350 palabras).
-
-[SECTION 10: <título corto>]
-Consecuencias, legado o impacto del tema en la actualidad (10-14 oraciones, 250-350 palabras)."""
+        themes = (
+            list(series_themes)
+            if isinstance(series_themes, list) and len(series_themes) == 10
+            else list(LONG_VIDEO_SECTION_THEMES)
+        )
+        sections_block = "\n\n".join(
+            f"[SECTION {i+1}: <título corto descriptivo>]\n{theme}\n(10-14 oraciones, 250-350 palabras.)"
+            for i, theme in enumerate(themes)
+        )
 
         brief_block = (
             f"\nDIRECTIVA NARRATIVA DE LA SERIE — OBLIGATORIA EN CADA PALABRA DE TU RESPUESTA:\n{script_brief}\n"
             if script_brief else ""
         )
 
-        prompt = f"""Eres un narrador experto de documentales y guionista profesional.
+        prompt = f"""Eres un narrador experto de documentales y guionista profesional especializado en RETENCIÓN: tu trabajo es que el espectador NO se vaya en los primeros 5 minutos y aguante hasta el final.
 Escribe un GUION COMPLETO de narración cautivador de 15 a 20 minutos sobre el siguiente tema.
 
 Tema: {self.subject}
 {brief_block}
+ARQUITECTURA DE RETENCIÓN — LEE ESTO ANTES DE EMPEZAR:
+- Los primeros 5 minutos (INTRO + SECTION 1 + SECTION 2) son un MOTOR DE GANCHO: cold open cinematográfico → viñeta inmersiva → siembra del MISTERIO PRINCIPAL del video.
+- ESTÁ PROHIBIDO mencionar "me gusta" o "like" en el INTRO, en la SECTION 1 o en la SECTION 2. La invitación al like aparece SOLO al INICIO de la SECTION 3, cuando el espectador ya está enganchado.
+- El loop principal sembrado en la SECTION 2 NO se responde hasta la SECTION 9 (clímax). Las secciones intermedias pueden abrir y cerrar loops secundarios más pequeños, pero el principal queda intacto.
+- Cada sección debe ENGANCHAR a la siguiente: termina con una imagen, pregunta o tensión que obligue a seguir.
+
 ESTRUCTURA OBLIGATORIA (usa estos marcadores EXACTOS):
 [INTRO]
-Gancho inicial poderoso seguido de una breve invitación al like (6-8 oraciones, 140-200 palabras). Estructura:
-1. Empieza con un dato impactante, pregunta provocadora o afirmación audaz que enganche al espectador.
-2. Desarrolla brevemente la promesa del video (qué van a descubrir).
-3. Antes de arrancar el tema, incluye 1-2 oraciones naturales y cálidas invitando al espectador a dar "me gusta" si disfruta este tipo de contenido, para apoyar a seguir creando videos así. Redáctalo de forma orgánica y humana, NO suene a publicidad ni a lista de instrucciones.
+Cold open de impacto (5-7 oraciones, 130-180 palabras). NO incluyas invitación al like aquí. Estructura interna:
+1. PRIMERA ORACIÓN — gancho cinematográfico siguiendo EXACTAMENTE este estilo: {hook_style}.
+   Ejemplo del estilo (adapta a {lang} y al tema, no copies literal): {hook_example}
+   No defaultees a "Sabías que..." ni a "Imagina que...". El estilo de arriba es obligatorio.
+2. ORACIONES 2-3 — promesa del video: qué descubrirá el espectador, expresada como apuesta narrativa, NO como índice de contenidos.
+3. ORACIONES 4-6 — siembra 2-3 LOOPS ABIERTOS: preguntas, anomalías o contradicciones específicas que NO respondes aquí. Promete que las respuestas llegan más adelante. Ejemplos del tipo de frase a usar: "Pero hay un detalle que no encaja…", "Y aquí es donde la historia se vuelve imposible…", "Lo que vinieron a descubrir nadie estaba preparado para contarlo."
+4. ÚLTIMA ORACIÓN — corta y poderosa, que invite a quedarse. NO menciones suscripción, NO menciones like.
 
 {sections_block}
 
@@ -3644,7 +3698,7 @@ REGLAS DE ESTILO:
         completion = self._clean_llm_script(self.generate_response(prompt))
         return completion
 
-    def _generate_long_script_sectional(self, lang: str) -> str:
+    def _generate_long_script_sectional(self, lang: str, hook_style: str, hook_example: str) -> str:
         """Per-section generation (12 calls) for providers with low output caps."""
 
         # Series-aware: when a series brief / themes are configured, use them so
@@ -3661,18 +3715,7 @@ REGLAS DE ESTILO:
         if isinstance(series_themes, list) and len(series_themes) == 10:
             section_themes = list(series_themes)
         else:
-            section_themes = [
-                "Aspecto fundacional o más fascinante del tema. Establece el contexto y captura la atención.",
-                "Ángulo distinto o construcción sobre la sección anterior, con anécdotas concretas o ejemplos.",
-                "Conexiones sorprendentes o hechos poco conocidos relacionados al tema.",
-                "Profundización con datos concretos, fechas, lugares o personas reales.",
-                "Clímax intermedio — el momento más impactante hasta este punto.",
-                "Consecuencia o nuevo ángulo que surge a partir de lo anterior.",
-                "Detalles narrativos profundos, anécdotas o testimonios.",
-                "Conexión inesperada o paralelismo con otro ámbito.",
-                "Clímax final — la revelación o giro más fuerte del tema.",
-                "Consecuencias, legado o impacto del tema en la actualidad.",
-            ]
+            section_themes = list(LONG_VIDEO_SECTION_THEMES)
 
         # Block of narrative directives prepended to every per-call prompt when
         # a series brief is active. Empty string in non-series mode (no-op).
@@ -3708,21 +3751,26 @@ REGLAS DE ESTILO:
         parts: List[str] = []
         info(f" [Script] Building 15-20 min script section by section...")
 
-        # ---- INTRO ----
-        intro_prompt = f"""Eres un narrador experto de documentales. Escribe SOLO la INTRODUCCIÓN de un guion documental sobre: {self.subject}
+        # ---- INTRO — cold open + open loops (NO like-ask here) ----
+        intro_prompt = f"""Eres un narrador experto de documentales especializado en RETENCIÓN. Escribe SOLO la INTRODUCCIÓN de un guion documental sobre: {self.subject}
 {brief_block}
-REGLAS:
-- 6-8 oraciones (140-200 palabras).
-- Estructura de la intro:
-  1. Empieza con un gancho poderoso: dato impactante, pregunta provocadora o afirmación audaz.
-  2. Desarrolla brevemente la promesa del video (qué va a descubrir el espectador).
-  3. Antes de arrancar el tema, incluye 1-2 oraciones naturales y cálidas invitando al espectador a dar "me gusta" si disfruta este tipo de contenido, para apoyar a seguir creando videos así. Redáctalo de forma orgánica y humana, NO suene a publicidad ni a lista de instrucciones.
+OBJETIVO DE LA INTRO: enganchar al espectador en los primeros 30 segundos para que aguante los 20 minutos. NO menciones "me gusta" ni "like" — esa invitación va en otra sección posterior, NUNCA aquí.
+
+ESTRUCTURA OBLIGATORIA (5-7 oraciones, 130-180 palabras):
+1. PRIMERA ORACIÓN — gancho cinematográfico que siga EXACTAMENTE este estilo: {hook_style}.
+   Ejemplo del estilo (adapta al tema y a {lang}, NO copies literal): {hook_example}
+   No defaultees a "Sabías que..." ni a "Imagina que...". El estilo descrito es OBLIGATORIO.
+2. ORACIONES 2-3 — promesa del video: qué descubrirá el espectador. NO como índice de contenidos, sino como apuesta narrativa con tono de "no te vas a creer lo que viene".
+3. ORACIONES 4-6 — SIEMBRA 2-3 LOOPS ABIERTOS: preguntas, anomalías o contradicciones específicas que NO respondes aquí. Que el espectador NO PUEDA irse sin saber la respuesta. Frases tipo: "Pero hay un detalle que no encaja…", "Y aquí es donde la historia se vuelve imposible…", "Lo que descubrieron nadie esperaba contarlo." Promete que las respuestas llegan más adelante.
+4. ÚLTIMA ORACIÓN — corta, poderosa, que invite a quedarse. NO menciones suscripción, NO menciones like, NO digas "vamos a empezar".
+
+REGLAS DE ESTILO:
 - Lenguaje vívido y sensorial. Oraciones CORTAS (máximo 20 palabras).
 - ESCRIBE TODO EN {lang}. NO uses inglés.
 - NO uses markdown, viñetas, listas, URLs, ni meta-texto.
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
 - NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
-- AÑO vs DURACIÓN — distínguelos siempre. Un AÑO es una FECHA del calendario; una DURACIÓN es el tiempo transcurrido. Son cosas distintas. Para citar un año, di "el año <año>". La fórmula "hace <N> años" expresa SOLO duración: <N> es la diferencia entre el año actual y el año del evento, NO es el año mismo. Ante la duda, nombra el año ("el año X") y NO uses la fórmula "hace X años".
+- AÑO vs DURACIÓN — distínguelos siempre. Un AÑO es una FECHA del calendario; una DURACIÓN es el tiempo transcurrido. Para citar un año, di "el año <año>". "Hace <N> años" expresa SOLO duración. Ante la duda, nombra el año.
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [INTRO]
 """
         intro = _ensure_marker(_ask_section(intro_prompt, min_words=80), "[INTRO]")
@@ -3730,19 +3778,55 @@ REGLAS:
         info(f"   [Script] INTRO: {len(intro.split())} words")
 
         # ---- SECTIONS 1-10 ----
+        # `opening_context` snapshots the INTRO + S1 + S2 (the "first 5 min hook engine")
+        # so that sections 3-9 can see which loops were planted and respect them
+        # (the main mystery stays open until S9; the like-ask happens only at the
+        # opening of S3). Captured once S1 and S2 have been written.
+        opening_context = ""
         for i, theme in enumerate(section_themes, start=1):
             prior = "\n\n".join(parts)
             tail = " ".join(prior.split()[-250:]) if prior else ""
 
-            section_prompt = f"""Eres un narrador experto de documentales. Estás escribiendo la SECCIÓN {i} de 10 de un guion sobre: {self.subject}
-{brief_block}
+            # Snapshot the hook engine after S2 is in `parts` (i.e. when we're
+            # about to write S3 and onward). `parts` currently holds
+            # [INTRO, S1, ..., S(i-1)] — for i=3 that is exactly INTRO+S1+S2.
+            if i == 3:
+                opening_context = "\n\n".join(parts)
+
+            # Build the "open loops" reminder block prepended to S3+ prompts.
+            # - S1/S2: empty (these sections ARE the loop engine).
+            # - S3-S8: "main loop stays open, you may close small loops".
+            # - S9: "this is the climax — you MUST close the main loop now".
+            # - S10: post-climax, focus on legacy, do NOT reopen the loop.
+            if i >= 3 and opening_context:
+                if i == 9:
+                    loops_block = (
+                        "\n\nPRIMEROS 5 MINUTOS DEL VIDEO (los loops que sembraste — ahora hay que cerrar el principal):\n"
+                        f'"""\n{opening_context}\n"""\n'
+                        "ESTA SECCIÓN ES EL CLÍMAX. Debes responder de forma satisfactoria al MISTERIO PRINCIPAL sembrado en la sección 2. NO dejes esa pregunta abierta.\n"
+                    )
+                elif i == 10:
+                    loops_block = (
+                        "\n\nNOTA NARRATIVA: el MISTERIO PRINCIPAL ya fue revelado en la sección anterior (clímax). Esta sección es el cierre: no abras loops nuevos, asienta lo aprendido y prepara emocionalmente al espectador para la despedida.\n"
+                    )
+                else:
+                    loops_block = (
+                        "\n\nPRIMEROS 5 MINUTOS DEL VIDEO (referencia — respeta los loops abiertos aquí):\n"
+                        f'"""\n{opening_context}\n"""\n'
+                        "REGLA DE LOOPS: el MISTERIO PRINCIPAL sembrado en la sección 2 NO se responde todavía — se reserva para la sección 9 (clímax). Puedes cerrar loops secundarios pequeños y abrir nuevos según el rol de esta sección.\n"
+                    )
+            else:
+                loops_block = ""
+
+            section_prompt = f"""Eres un narrador experto de documentales especializado en retención. Estás escribiendo la SECCIÓN {i} de 10 de un guion sobre: {self.subject}
+{brief_block}{loops_block}
 Esto es lo último que ya se narró (NO lo repitas, continúa el flujo natural):
 \"\"\"
 {tail}
 \"\"\"
 
 Escribe SOLO la SECCIÓN {i}:
-- Foco temático de esta sección: {theme}
+- ROL NARRATIVO de esta sección: {theme}
 - 10-14 oraciones (250-350 palabras).
 - Lenguaje vívido y sensorial. Oraciones CORTAS (máximo 20 palabras).
 - Aporta material NUEVO, no repitas ideas ya dichas.
@@ -4294,16 +4378,89 @@ Return ONLY the JSON. No markdown, no explanation."""
         success(f" Thumbnail: {out_path}")
         return out_path
 
+    # Per-prompt diversity controls for `generate_long_prompts`. Indexed
+    # modulo the array length and offset so that consecutive prompts never
+    # share shot type AND lighting at the same time — image generators
+    # otherwise default to "wide dramatic vista in golden hour" for every
+    # frame, which is what made long videos look generic.
+    _LONG_SHOT_TYPES: list[str] = [
+        "tight close-up of a single face — visible emotion (eyes, jaw, brow), shallow background",
+        "medium shot of subject mid-action — hands and gesture clearly visible, environment partly framed",
+        "wide establishing shot — subject placed within the full setting, scale of the world visible",
+        "low-angle hero shot — subject filling the frame from below, sky or ceiling behind",
+        "over-the-shoulder POV — viewer sees what the subject is looking at, back of subject's head/shoulder in foreground",
+        "profile silhouette — subject lit from behind against a bright background, edge light defining the body",
+        "two-shot — two characters interacting tightly, eye contact or shared object between them",
+        "overhead / top-down — subject(s) seen from directly above, environment as a flat backdrop",
+    ]
+    _LONG_LIGHTING: list[str] = [
+        "golden hour — warm orange light, long shadows raking across the scene",
+        "stormy overcast — cold gray diffuse light, rain or fog visible, drained colors",
+        "candlelight or firelight — small warm pool of light, deep shadows, flicker",
+        "harsh midday sun — sharp high-contrast shadows, bleached highlights",
+        "single interior lamp or lantern — warm pool of light, surrounding darkness",
+        "dawn fog — cold blue-gray atmosphere, low visibility, silhouettes",
+        "twilight blue hour — deep blue sky, subjects lit by a secondary warm source",
+        "flat soft overcast — even illumination, no shadows, muted palette",
+    ]
+
+    @staticmethod
+    def _narrative_beat_for(index: int, total: int) -> tuple[str, str]:
+        """
+        Map a 0-indexed prompt position to a narrative beat + mood hint.
+        Drives emotional variation across the video: cold-open energy at the
+        front, climax peak ~85% in, contemplative legacy at the end.
+        """
+        pos = index / max(1, total)
+        if pos < 0.10:
+            return ("cold-open hook", "cinematic awe, dramatic lighting, faces locked in intense focus, EPIC scale, the moment that opens the video")
+        if pos < 0.20:
+            return ("immersive vignette", "sensorial — viewer is INSIDE the scene, vivid textures, dust/breath/sweat visible, intimate framing")
+        if pos < 0.30:
+            return ("mystery pivot", "ominous — something is off, faces showing doubt or unease, off-kilter framing, cold or dim light")
+        if pos < 0.42:
+            return ("first revelation + backstory", "discovery energy, hands uncovering or inspecting, warm light revealing a detail, character close-ups")
+        if pos < 0.55:
+            return ("escalation", "rising tension, motion blur, conflict, sweat / breath / urgency, faces showing strain")
+        if pos < 0.68:
+            return ("reversal", "shock or realization on faces, hard contrast, the moment the truth lands")
+        if pos < 0.78:
+            return ("human element", "intimate emotion — grief, joy, fear, awe — tight on a single face, vulnerable framing")
+        if pos < 0.90:
+            return ("climax — peak intensity", "MOST DRAMATIC of the video, peak intensity, the revelation moment, faces frozen in awe or horror, strongest composition")
+        return ("legacy / contemplation", "contemplative, quiet, soft warm lighting, a single subject, reflective stillness")
+
     def generate_long_prompts(self) -> List[str]:
         """
-        Generates ~30 image prompts for a long video, anchored to the script:
-        the script is split into N sections and each prompt MUST illustrate its
-        section literally, naming the people / places / objects from the topic.
+        Generates 30 image prompts for a long video, anchored to the script:
+        the script is split into N chunks and each prompt MUST illustrate its
+        chunk literally, naming the people / places / objects from the topic.
+
+        Anti-generic mechanisms (in order of impact):
+          1. Anchor noun rule — every prompt must contain ≥1 proper noun
+             from the chunk or the topic title.
+          2. Forbidden generic phrases — explicit blacklist of clichés
+             ("a figure", "ancient ruins", "dramatic landscape" …).
+          3. Per-prompt shot type + lighting hints (rotated so consecutive
+             frames never share both axes).
+          4. Per-prompt narrative beat hint (cold-open / mystery / climax / …)
+             so emotional energy tracks the script position.
+          5. 800-char chunk window (was 400) so the LLM has enough source
+             material to lift specific details instead of inventing them.
         """
         n_prompts = 30
 
-        # Split the script into N sections so each prompt maps 1:1 to a chunk
-        # of narration — this is what keeps the images on-topic.
+        # Extract proper-noun anchors from the topic title — these are the
+        # fallback names when a script chunk has no named entity of its own.
+        # Lowercased connectors filtered so we keep only meaningful tokens.
+        _topic_anchors = [
+            tok for tok in re.findall(r"[A-Za-zÀ-ÿ0-9'\-]+", self.subject or "")
+            if len(tok) > 2 and tok.lower() not in _PHOTO_STOPWORDS
+        ]
+        topic_anchor_str = ", ".join(_topic_anchors[:6]) or (self.subject or "the topic")
+
+        # Split the script into N chunks. 800-char window (up from 400) gives
+        # the LLM enough material to extract specific details, not just gist.
         sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', self.script) if s.strip()]
         sections = []
         if sentences:
@@ -4311,15 +4468,28 @@ Return ONLY the JSON. No markdown, no explanation."""
             for i in range(n_prompts):
                 start = i * per_section
                 end = start + per_section if i < n_prompts - 1 else len(sentences)
-                section_text = ' '.join(sentences[start:end])[:400]
+                section_text = ' '.join(sentences[start:end])[:800]
                 if section_text:
                     sections.append(section_text)
         while len(sections) < n_prompts:
             sections.append(self.subject)
 
-        sections_text = "".join(
-            f'\nSECTION {i+1}: "{sec}"\n' for i, sec in enumerate(sections)
-        )
+        # Per-prompt diversity assignments. Shot rotates 1-step, lighting
+        # rotates 3-step → never sync, never repeat consecutively.
+        shot_idx = lambda i: i % len(self._LONG_SHOT_TYPES)
+        light_idx = lambda i: (i * 3) % len(self._LONG_LIGHTING)
+
+        sections_text = ""
+        for i, sec in enumerate(sections):
+            beat_name, beat_mood = self._narrative_beat_for(i, n_prompts)
+            sections_text += (
+                f'\nSECTION {i+1}\n'
+                f'  Narrative beat: {beat_name}\n'
+                f'  Mood/emotion to convey: {beat_mood}\n'
+                f'  Shot type for this image: {self._LONG_SHOT_TYPES[shot_idx(i)]}\n'
+                f'  Lighting for this image: {self._LONG_LIGHTING[light_idx(i)]}\n'
+                f'  Script chunk to illustrate: "{sec}"\n'
+            )
 
         # Setting anchor — names the world/era of THIS video inside the prompt
         # so the LLM doesn't drift into off-setting visuals on abstract script
@@ -4340,8 +4510,6 @@ Return ONLY the JSON. No markdown, no explanation."""
                 f"=========================================="
             )
 
-        # Inline guidance string for the PERIOD ACCURACY rule below — kept
-        # short to avoid bloating the prompt.
         period_inline = (
             f"Setting is **{ctx['setting']}**. Every prompt with a person MUST name at least 2 specific clothing/prop items that belong to this setting, and AVOID: {ctx.get('must_avoid', '')}. "
             if (ctx and ctx.get("setting")) else ""
@@ -4349,32 +4517,54 @@ Return ONLY the JSON. No markdown, no explanation."""
 
         prompt = f"""Task: write {n_prompts} image prompts for a long-form video about "{self.subject}".{era_clause}
 
-You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section talks about "the team debating in the boardroom at noon", the image is exactly that.
+You receive {n_prompts} script chunks below, each tagged with a narrative beat, shot type and lighting. Each prompt MUST illustrate the LITERAL content of its chunk — the people, the action, the place, the moment that chunk describes. The shot type and lighting tags are NON-OPTIONAL: bake them into the prompt so the {n_prompts} images don't look identical.
 
 ABSOLUTE RULES (every prompt):
 1. ENGLISH ONLY — NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns naturally. NO Spanish words anywhere in the output.
-2. SCENE FIDELITY. Open with a concrete action (subject + verb) drawn from the section text. Whatever the section is talking about, that is what the image shows.
-3. NAMED CHARACTER IDENTITY. When the script names a real person, do NOT just write their name — describe them physically (age, hair, beard, build, clothing) so the image generator can render the correct person. The physical description MUST appear every time they're shown.
-4. SETTING ACCURACY — STRICT. {period_inline}If a person appears, describe their clothing exactly as it would look in the setting of this video (fabric, cut, color, footwear, headwear). Same for architecture, tools, vehicles and 2-3 supporting objects. If the section names a real person, place or event, use that proper noun.
-5. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing — but never the level of realism.
-6. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later — your job is content only.
-7. LENGTH. 40-70 English words per prompt. No camera or lens jargon.
+
+2. ANCHOR NOUN — STRICT. Every prompt MUST contain at least ONE specific proper noun: a real person's name, a specific place name, a specific object/artifact, a specific event, or a specific date drawn from the chunk text. If the chunk has none, lift one from the topic title: **{topic_anchor_str}**. NEVER write a prompt with only generic subjects.
+
+3. NO GENERIC SUBJECTS. The following phrasings are FORBIDDEN and will cause the prompt to be discarded:
+   - "a person", "a figure", "someone", "a man", "a woman", "an individual" — alone, with no name AND no 3+ physical traits
+   - "a warrior", "a scientist", "a soldier", "a king", "a priest" — alone, without name AND specific period clothing
+   - "a person standing", "a figure looking", "a figure in the distance", "a silhouette"
+   - "ancient temple", "ancient ruins", "ancient city", "ancient civilization" — without naming WHICH
+   - "dramatic landscape", "epic scene", "mysterious place", "ancient times", "a historical moment"
+   - "a moment in history", "a turning point", "a key event", "a fateful day"
+   - "symbolic", "metaphorical", "conceptual" visuals — only describe LITERAL scenes.
+
+4. SCENE FIDELITY. Open with a concrete action (subject + verb) drawn from the chunk text. If the chunk says "Galileo demonstrates his telescope to the cardinals at night", the image is exactly that — not "an astronomer in a robe".
+
+5. NAMED CHARACTER IDENTITY. When the script names a real person, do NOT just write their name — describe them physically (age, hair, beard, build, clothing) so the image generator can render the correct person. The physical description MUST appear every time they're shown.
+
+6. SETTING ACCURACY — STRICT. {period_inline}If a person appears, describe their clothing exactly as it would look in the setting (fabric, cut, color, footwear, headwear). Same for architecture, tools, vehicles and 2-3 supporting objects.
+
+7. SHOT + LIGHTING — USE THE TAGS. Each chunk below has a "Shot type" and "Lighting" tag. The prompt must clearly reflect that shot type and that lighting. If chunk 5 says "tight close-up of a single face" with "candlelight", chunk 6 must NOT also be a close-up under candlelight.
+
+8. NARRATIVE BEAT — USE THE MOOD TAG. Each chunk has a "Mood/emotion to convey" tag tied to its position in the video. A prompt for the "cold-open hook" beat must read cinematic and high-impact; a prompt for the "human element" beat must read intimate and emotional; a prompt for the "climax" beat must be the MOST DRAMATIC of all.
+
+9. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing — but never the level of realism.
+
+10. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later — your job is content only.
+
+11. LENGTH. 55-90 English words per prompt. No camera or lens jargon ("close-up" as written text is fine; "85mm f/1.4" is not).
 
 Examples of GOOD scene-only prompts (the PATTERN matters — names and props will differ for your topic):
-- (Historical setting) "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces."
-- (Modern setting) "A young trader leans over three glowing monitors on the floor of the New York Stock Exchange, mouth open mid-shout, paper tickets crumpled on his keyboard, the index ticker spiking red overhead, colleagues running behind him."
-- (Sports setting) "A quarterback in a navy and red jersey throws a tight spiral over the defensive line under stadium floodlights, mud streaking his white pants, breath visible in cold air, tens of thousands of blurred fans behind the end zone."
-- (Domestic / present-day setting) "A father in a flannel shirt kneels beside an open dishwasher in a small kitchen at night, holding a flashlight, water pooling at his knees, his daughter watching from the hallway in pyjamas, single warm bulb above the sink."
+- (Historical setting) "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces, low-angle hero composition, golden hour."
+- (Modern setting) "A young trader leans over three glowing monitors on the floor of the New York Stock Exchange, mouth open mid-shout, paper tickets crumpled on his keyboard, the index ticker spiking red overhead, colleagues running behind him, tight medium shot, harsh fluorescent overhead light."
+- (Sports setting) "A quarterback in a navy and red jersey throws a tight spiral over the defensive line under stadium floodlights, mud streaking his white pants, breath visible in cold air, tens of thousands of blurred fans behind the end zone, low-angle hero shot, sodium floodlight."
+- (Science / probe) "The Voyager 1 probe, gold-foiled and antenna-extended, drifts past the dark crescent of Saturn's rings, faint sunlight glancing off its main dish, the rings casting a black band across the planet, profile silhouette composition, harsh sunlight from the right."
 
-Examples of BAD prompts (DO NOT WRITE THESE):
-- "An ancient scene." (too vague, no action, no setting)
-- "Stylized cartoon of [subject] doing [action]." (forbidden art-style word)
-- "A historical illustration of [subject]." (forbidden art-style word, no action)
+Examples of BAD prompts (DO NOT WRITE THESE — they will be rejected):
+- "An ancient scene at sunset." (vague, no name, no action)
+- "A historical illustration of [subject]." (forbidden art-style word, generic)
 - "Symbolic image of [subject]'s power." (no concrete moment)
+- "A warrior standing in ancient ruins." (forbidden generics: 'a warrior' + 'ancient ruins')
+- "A figure looking at the horizon at golden hour." (forbidden generic 'a figure')
 
 {sections_text}
-Forbidden words (art-style / camera jargon): cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, sketch.
-Forbidden words (multi-image triggers — these make image generators output collages instead of one image): series, sequence, scenes (plural), panels, panel, storyboard, comic strip, montage, collage, grid, split screen, frames, multiple, diptych, triptych, before-and-after, side by side.
+Forbidden art-style words: cinematic, photograph, camera, shot, lens, close-up jargon, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, sketch.
+Forbidden multi-image triggers: series, sequence, scenes (plural), panels, panel, storyboard, comic strip, montage, collage, grid, split screen, frames, multiple, diptych, triptych, before-and-after, side by side.
 Also forbidden unless the topic itself demands it: medieval/ancient-civilization imagery, fantasy creatures, magic/sorcery effects, cartoon stylization.
 
 Return ONLY a JSON array of {n_prompts} strings (one prompt per section, in order). Example format:
@@ -4416,29 +4606,34 @@ No markdown. No explanation. Just the JSON array."""
                 except Exception:
                     pass
 
-        # Fallback: build a topic-anchored prompt per section so images stay on-topic
-        # even when the LLM fails to produce a parseable JSON array.
+        # Fallback: build a specific, anchored prompt per chunk so images stay
+        # both on-topic AND varied even when the LLM fails to return JSON.
+        # Uses the same shot/lighting/beat rotation as the LLM path so the
+        # video still feels visually intentional, not random.
         if not image_prompts or len(image_prompts) < 4:
             if get_verbose():
-                warning("Failed to parse long video prompts, using section-anchored fallback")
-            fallback_styles = [
-                "wide vista with key subjects centered, dramatic atmosphere",
-                "detail of the central object or person, period-accurate textures",
-                "low-angle hero composition, epic scale",
-                "atmospheric scene with depth and moody shadows",
-                "intimate framing of figures interacting in period-accurate context",
-                "establishing view of the era's setting, painterly mood",
-                "overcast atmosphere, period-accurate detail",
-                "warm interior scene, period-accurate furnishings and dress",
-            ]
-            image_prompts = [
-                (
-                    f"Scene from \"{sections[i] if i < len(sections) else self.subject}\" "
-                    f"in the context of {self.subject}, {fallback_styles[i % len(fallback_styles)]}, "
-                    f"period-accurate, 16:9 landscape"
+                warning("Failed to parse long video prompts, using anchored fallback")
+            setting_str = (ctx or {}).get("setting", "") or self.subject
+            avoid_str = (ctx or {}).get("must_avoid", "")
+            image_prompts = []
+            for i in range(n_prompts):
+                chunk = sections[i] if i < len(sections) else self.subject
+                # Pick a named entity from the chunk if any, else fall back to topic anchors
+                chunk_nouns = [
+                    tok for tok in re.findall(r"[A-Z][A-Za-zÀ-ÿ0-9'\-]{2,}", chunk)
+                    if tok.lower() not in _PHOTO_STOPWORDS
+                ]
+                anchor = chunk_nouns[0] if chunk_nouns else (_topic_anchors[0] if _topic_anchors else self.subject)
+                beat_name, beat_mood = self._narrative_beat_for(i, n_prompts)
+                shot = self._LONG_SHOT_TYPES[shot_idx(i)]
+                light = self._LONG_LIGHTING[light_idx(i)]
+                image_prompts.append(
+                    f"{anchor} in a concrete scene from {setting_str}: {chunk[:220]}. "
+                    f"Shot: {shot}. Lighting: {light}. Mood: {beat_mood}. "
+                    f"Period-accurate clothing, props and architecture. "
+                    f"Avoid: {avoid_str or 'generic landscape, symbolic imagery, cartoon stylization'}. "
+                    f"16:9 landscape."
                 )
-                for i in range(n_prompts)
-            ]
 
         image_prompts = image_prompts[:n_prompts]
         self.image_prompts = image_prompts
