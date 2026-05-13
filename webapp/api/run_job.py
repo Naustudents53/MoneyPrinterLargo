@@ -64,7 +64,35 @@ def _setup_paths():
             pass
 
 
-def _select_llm_provider(override_provider: str = "", override_model: str = ""):
+def _classify_model(model_id: str) -> str:
+    """Best-effort provider inference from a model id string.
+
+    Gemini ids start with 'gemini-' or 'gemma-'; OpenAI ids start with 'gpt-'
+    / 'o' / 'chatgpt-'; Ollama tags contain a colon (e.g. 'llama3:8b',
+    'gemma4:31b-cloud'). Everything else falls back to Pollinations since its
+    catalog uses short alphanumeric ids."""
+    m = (model_id or "").strip().lower()
+    if not m:
+        return ""
+    if m.startswith("gemini-") or m.startswith("gemma-"):
+        return "gemini"
+    if m.startswith("gpt-") or m.startswith("chatgpt-") or m.startswith(("o1", "o3", "o4")):
+        return "openai"
+    if ":" in m:
+        return "ollama"
+    return "pollinations"
+
+
+def _select_llm_provider(override_provider: str = "", override_model: str = "", model_override: str = ""):
+    """Pick the LLM provider + model.
+
+    Three layered overrides, in order of precedence:
+      1. (override_provider, override_model) — explicit pair from the new UI
+         model picker. Wins absolutely; flips set_user_override(True) so the
+         pipeline respects the choice instead of cross-falling back.
+      2. model_override — single opaque model id; provider is inferred via
+         `_classify_model` (legacy single-arg path used by batch jobs).
+      3. Config defaults from config.json (no override at all)."""
     from config import (
         get_llm_provider, get_ollama_model,
     )
@@ -81,11 +109,42 @@ def _select_llm_provider(override_provider: str = "", override_model: str = ""):
             print(f"[runner] User override: provider={provider} (no model)", flush=True)
         return
 
+    if model_override:
+        inferred = _classify_model(model_override)
+        if inferred == "gemini":
+            set_llm_provider("gemini")
+            # Tell the gemini code path to start with this model. We do it by
+            # prepending it to the in-process gemini_models list via env var.
+            os.environ["MP_GEMINI_MODEL_OVERRIDE"] = model_override
+            print(f"[runner] Override: Gemini model {model_override}", flush=True)
+            return
+        if inferred == "openai":
+            set_llm_provider("openai")
+            select_model(model_override)
+            print(f"[runner] Override: OpenAI model {model_override}", flush=True)
+            return
+        if inferred == "ollama":
+            set_llm_provider("ollama")
+            select_model(model_override)
+            print(f"[runner] Override: Ollama model {model_override}", flush=True)
+            return
+        if inferred == "pollinations":
+            set_llm_provider("pollinations")
+            select_model(model_override)
+            print(f"[runner] Override: Pollinations model {model_override}", flush=True)
+            return
+
     provider = get_llm_provider()
     set_llm_provider(provider)
 
     if provider == "gemini":
         print("[runner] Using Gemini provider", flush=True)
+        return
+    if provider == "openai":
+        print("[runner] Using OpenAI provider", flush=True)
+        return
+    if provider == "pollinations":
+        print("[runner] Using Pollinations provider", flush=True)
         return
 
     # ollama
@@ -104,28 +163,110 @@ def _select_llm_provider(override_provider: str = "", override_model: str = ""):
         print("[runner] WARNING: no Ollama model selected", flush=True)
 
 
-def _cleanup_after_upload(is_long: bool):
-    """Remove scratch files in .mp/. Preserves long-video .mp4s so they can be
-    re-uploaded or kept locally; shorts get fully wiped. Always removes the
-    .meta.json sidecars since they no longer have a matching mp4 to point to
-    (or the upload already consumed them)."""
+def _apply_short_render_profile(profile: str) -> None:
+    """Apply a complete per-job Short render profile via env vars.
+
+    The lower-level config getters support individual overrides, so set the
+    whole bundle here. That keeps the UI selector authoritative even when
+    config.json contains custom defaults from a previous run.
+    """
+    profile = (profile or "").strip().lower()
+    if not profile:
+        return
+
+    profiles = {
+        "quality": {
+            "MP_SHORT_RENDER_PROFILE": "quality",
+            "MP_SHORT_RENDER_FPS": "30",
+            "MP_SHORT_KEN_BURNS": "true",
+            "MP_SHORT_KARAOKE_SUBTITLES": "true",
+            "MP_SHORT_CROSSFADE_SECONDS": "0.4",
+        },
+        "fast": {
+            "MP_SHORT_RENDER_PROFILE": "fast",
+            "MP_SHORT_RENDER_FPS": "24",
+            "MP_SHORT_KEN_BURNS": "false",
+            "MP_SHORT_KARAOKE_SUBTITLES": "true",
+            "MP_SHORT_CROSSFADE_SECONDS": "0",
+        },
+        "turbo": {
+            "MP_SHORT_RENDER_PROFILE": "turbo",
+            "MP_SHORT_RENDER_FPS": "24",
+            "MP_SHORT_KEN_BURNS": "false",
+            "MP_SHORT_KARAOKE_SUBTITLES": "false",
+            "MP_SHORT_CROSSFADE_SECONDS": "0",
+        },
+    }
+    selected = profiles.get(profile)
+    if not selected:
+        print(f"[runner] WARN: unknown render profile {profile!r}; using config defaults", flush=True)
+        return
+
+    os.environ.update(selected)
+    print(f"[runner] Override: short_render_profile={profile}", flush=True)
+
+
+_CHANNEL_REF_SUFFIX = ".last_video"
+
+
+def _write_channel_ref(channel_id: str, video_path: str) -> None:
+    """Record the path of the just-generated video so upload-last can find it
+    without scanning the whole .mp/ directory. One file per channel so
+    parallel jobs for different channels never interfere."""
+    mp_dir = os.path.join(str(ROOT_DIR), ".mp")
+    ref = os.path.join(mp_dir, f"{channel_id}{_CHANNEL_REF_SUFFIX}")
     try:
-        from utils import rem_temp_files
-        rem_temp_files()
-        mp_dir = os.path.join(str(ROOT_DIR), ".mp")
-        if os.path.isdir(mp_dir):
-            for name in os.listdir(mp_dir):
-                lower = name.lower()
-                if lower.endswith(".meta.json"):
-                    try:
-                        os.remove(os.path.join(mp_dir, name))
-                    except Exception:
-                        pass
-                elif lower.endswith(".mp4") and not is_long:
-                    try:
-                        os.remove(os.path.join(mp_dir, name))
-                    except Exception:
-                        pass
+        with open(ref, "w", encoding="utf-8") as f:
+            f.write(video_path)
+    except Exception as e:
+        print(f"[runner] WARN: could not write channel ref: {e}", flush=True)
+
+
+def _read_channel_ref(channel_id: str) -> str:
+    """Return the video path recorded by the last generate run, or ''."""
+    mp_dir = os.path.join(str(ROOT_DIR), ".mp")
+    ref = os.path.join(mp_dir, f"{channel_id}{_CHANNEL_REF_SUFFIX}")
+    try:
+        with open(ref, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def _cleanup_after_upload(video_path: str, is_long: bool, channel_id: str = "") -> None:
+    """Remove only the files that belong to the just-uploaded video.
+
+    Safe to call while other parallel jobs are still running because it
+    targets the specific UUID-named .mp4 / .meta.json rather than wiping
+    the whole .mp/ directory. rem_temp_files() is still called to discard
+    intermediate WAV/PNG/SRT scratch files (which are no longer needed once
+    the video is rendered and uploaded)."""
+    try:
+        # Delete only this video's .mp4 (shorts; longs are kept for local use).
+        if not is_long and video_path and os.path.isfile(video_path):
+            try:
+                os.remove(video_path)
+            except Exception:
+                pass
+
+        # Delete this video's sidecar regardless of kind.
+        sidecar = os.path.splitext(video_path)[0] + ".meta.json"
+        if os.path.isfile(sidecar):
+            try:
+                os.remove(sidecar)
+            except Exception:
+                pass
+
+        # Remove the per-channel ref pointer (upload consumed it).
+        if channel_id:
+            mp_dir = os.path.join(str(ROOT_DIR), ".mp")
+            ref = os.path.join(mp_dir, f"{channel_id}{_CHANNEL_REF_SUFFIX}")
+            if os.path.isfile(ref):
+                try:
+                    os.remove(ref)
+                except Exception:
+                    pass
+
         if not is_long:
             print("[runner] .mp cleaned after upload", flush=True)
         else:
@@ -158,8 +299,24 @@ def cmd_generate(args):
 
     # Per-job hook_profile override (picks the opening style from HOOK_PROFILES
     # in src/classes/YouTube.py). Empty string means "use the channel default".
-    hook_override = (getattr(args, "hook_profile", "") or "").strip().lower()
-    effective_hook = hook_override or acc.get("hook_profile", "")
+    hook_profile_override = (getattr(args, "hook_profile", "") or "").strip().lower()
+    effective_hook = hook_profile_override or acc.get("hook_profile", "")
+
+    # Per-job sentence length override — exposed as an env var so the existing
+    # `get_script_sentence_length()` getter picks it up without us having to
+    # plumb a parameter through every script-generation entry point.
+    sl = getattr(args, "sentence_length", 0)
+    if sl and sl > 0:
+        os.environ["MP_SENTENCE_LENGTH_OVERRIDE"] = str(sl)
+        print(f"[runner] Override: script_sentence_length={sl}", flush=True)
+
+    hook_override = getattr(args, "hook_style", "") or ""
+    if hook_override:
+        os.environ["MP_HOOK_STYLE_OVERRIDE"] = hook_override
+        print(f"[runner] Override: hook_style={hook_override}", flush=True)
+
+    if args.kind == "short":
+        _apply_short_render_profile(getattr(args, "render_profile", ""))
 
     print(f"[runner] Initializing channel '{acc.get('nickname')}'", flush=True)
     youtube = YouTube(
@@ -175,9 +332,31 @@ def cmd_generate(args):
         voice_drama=acc.get("voice_drama", False),
         target_duration_seconds=target_duration,
     )
-    if hook_override:
-        print(f"[runner] Hook profile override: {hook_override}", flush=True)
+    if hook_profile_override:
+        print(f"[runner] Hook profile override: {hook_profile_override}", flush=True)
     tts = TTS()
+
+    # Pre-approved script from the "Vista previa" flow. File format: first
+    # line = subject, then a blank line, then the script body. When present
+    # we set those attributes directly so generate_video skips the LLM steps.
+    preset_subject = ""
+    preset_script = ""
+    script_file = getattr(args, "script_file", "") or ""
+    if script_file:
+        try:
+            with open(script_file, "r", encoding="utf-8") as f:
+                raw = f.read()
+            head, _, body = raw.partition("\n\n")
+            preset_subject = (head or "").strip()
+            preset_script = (body or "").strip()
+            if preset_subject and preset_script:
+                print(f"[runner] Using pre-approved script (subject={preset_subject[:60]!r}, "
+                      f"len={len(preset_script)})", flush=True)
+            else:
+                print(f"[runner] WARN: script file malformed at {script_file}", flush=True)
+                preset_subject = preset_script = ""
+        except Exception as e:
+            print(f"[runner] WARN: could not load script file {script_file}: {e}", flush=True)
 
     topic = args.topic or ""
     if args.kind == "long":
@@ -187,13 +366,22 @@ def cmd_generate(args):
         path = youtube.generate_long_video(tts, custom_topic=topic)
     else:
         print(f"[runner] Generating SHORT. Topic: {topic or '(auto)'}, image_mode={args.image_mode}", flush=True)
-        path = youtube.generate_video(tts, custom_topic=topic, image_mode=args.image_mode)
+        if preset_subject and preset_script:
+            youtube.subject = preset_subject
+            youtube.script = preset_script
+            path = youtube.generate_video(
+                tts, custom_topic=preset_subject, image_mode=args.image_mode,
+                preset_script=preset_script,
+            )
+        else:
+            path = youtube.generate_video(tts, custom_topic=topic, image_mode=args.image_mode)
 
     if not path:
         print("[runner] ERROR: generation aborted (no video produced)", flush=True)
         sys.exit(3)
 
     print(f"[runner] Generated: {path}", flush=True)
+    _write_channel_ref(args.channel_id, path)
 
     if args.upload:
         print("[runner] Starting YouTube upload...", flush=True)
@@ -201,9 +389,82 @@ def cmd_generate(args):
         print(f"[runner] Upload result: {ok}", flush=True)
         if not ok:
             sys.exit(4)
-        _cleanup_after_upload(is_long=(args.kind == "long"))
+        _cleanup_after_upload(path, is_long=(args.kind == "long"), channel_id=args.channel_id)
 
     print("[runner] DONE", flush=True)
+
+
+def cmd_preview_script(args):
+    """Generate ONLY the subject + script (no images, no TTS, no render). Writes
+    the result to .mp/.preview-<uuid>.txt and prints the uuid so the SSE
+    consumer can fetch the content via GET /api/preview/<uuid>.
+
+    This is the backend side of the "Vista previa" flow: the user reviews
+    (and optionally edits) the script before the full render pipeline runs."""
+    import uuid as _uuid
+
+    from cache import get_accounts
+    from classes.YouTube import YouTube
+
+    acc = next((a for a in get_accounts("youtube") if a.get("id") == args.channel_id), None)
+    if not acc:
+        print(f"[runner] ERROR: channel {args.channel_id} not found", flush=True)
+        sys.exit(2)
+
+    sl = getattr(args, "sentence_length", 0)
+    if sl and sl > 0:
+        os.environ["MP_SENTENCE_LENGTH_OVERRIDE"] = str(sl)
+        print(f"[runner] Override: script_sentence_length={sl}", flush=True)
+
+    hook_override = getattr(args, "hook_style", "") or ""
+    if hook_override:
+        os.environ["MP_HOOK_STYLE_OVERRIDE"] = hook_override
+        print(f"[runner] Override: hook_style={hook_override}", flush=True)
+
+    print(f"[runner] Preview for channel '{acc.get('nickname')}'", flush=True)
+    youtube = YouTube(
+        acc["id"], acc["nickname"], acc.get("firefox_profile", ""),
+        acc.get("niche", ""), acc.get("language", "español"),
+        image_style=acc.get("image_style", ""),
+        short_voice=acc.get("short_voice", ""),
+        long_voice=acc.get("long_voice", ""),
+        hook_profile=acc.get("hook_profile", ""),
+        voice_drama=acc.get("voice_drama", False),
+    )
+
+    # Subject — custom or auto. We DON'T enforce dedupe here so the user can
+    # iterate cheaply on the same topic until satisfied; the dedupe guard
+    # runs again at full-generate time anyway.
+    topic = (args.topic or "").strip()
+    if topic:
+        youtube.subject = topic
+        print(f"[runner] Using custom topic: {topic}", flush=True)
+    else:
+        print("[runner] Generating topic...", flush=True)
+        youtube.generate_topic()
+        if not youtube.subject:
+            print("[runner] ERROR: could not generate a unique topic", flush=True)
+            sys.exit(3)
+
+    print(f"[runner] Subject: {youtube.subject}", flush=True)
+    print("[runner] Generating script...", flush=True)
+    script = youtube.generate_script()
+    if not script or not script.strip():
+        print("[runner] ERROR: empty script returned by LLM", flush=True)
+        sys.exit(3)
+
+    preview_id = _uuid.uuid4().hex[:12]
+    out_path = os.path.join(str(ROOT_DIR), ".mp", f".preview-{preview_id}.txt")
+    try:
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(f"{youtube.subject}\n\n{script}\n")
+    except Exception as e:
+        print(f"[runner] ERROR: could not write preview file: {e}", flush=True)
+        sys.exit(4)
+
+    # The SSE consumer parses this line to know the preview is ready.
+    print(f"[runner] PREVIEW_ID={preview_id}", flush=True)
+    print(f"[runner] DONE — {len(script)} chars in script", flush=True)
 
 
 def cmd_upload_last(args):
@@ -224,22 +485,36 @@ def cmd_upload_last(args):
         voice_drama=acc.get("voice_drama", False),
     )
 
-    # Recover the most recent .mp4 from .mp/ (cmd_generate left it there).
+    # Resolve which .mp4 to upload:
+    # 1. Per-channel ref file written by cmd_generate — exact path, safe with
+    #    parallel jobs because each channel has its own pointer file.
+    # 2. Fallback: scan .mp/ by mtime (prefer files that have a sidecar).
     mp_dir = os.path.join(str(ROOT_DIR), ".mp")
-    candidates = []
-    if os.path.isdir(mp_dir):
-        for name in os.listdir(mp_dir):
-            if name.lower().endswith(".mp4"):
-                p = os.path.join(mp_dir, name)
-                try:
-                    candidates.append((os.path.getmtime(p), p))
-                except OSError:
-                    pass
-    if not candidates:
-        print("[runner] ERROR: no .mp4 found in .mp/ to upload", flush=True)
-        sys.exit(5)
-    candidates.sort(reverse=True)
-    youtube.video_path = candidates[0][1]
+    ref_path = _read_channel_ref(args.channel_id)
+    if ref_path and os.path.isfile(ref_path):
+        youtube.video_path = ref_path
+        print(f"[runner] Resolved via channel ref: {ref_path}", flush=True)
+    else:
+        candidates = []
+        if os.path.isdir(mp_dir):
+            for name in os.listdir(mp_dir):
+                if name.lower().endswith(".mp4"):
+                    p = os.path.join(mp_dir, name)
+                    try:
+                        candidates.append((os.path.getmtime(p), p))
+                    except OSError:
+                        pass
+        if not candidates:
+            print("[runner] ERROR: no .mp4 found in .mp/ to upload", flush=True)
+            sys.exit(5)
+        candidates.sort(reverse=True)
+        chosen = next(
+            (p for _, p in candidates
+             if os.path.isfile(os.path.splitext(p)[0] + ".meta.json")),
+            candidates[0][1],
+        )
+        youtube.video_path = chosen
+        print(f"[runner] Resolved via mtime scan (no ref file): {chosen}", flush=True)
 
     # Load the sidecar (`<basename>.meta.json`) that the generation step wrote
     # so we recover subject + title + description. Without this, upload_video
@@ -300,7 +575,7 @@ def cmd_upload_last(args):
     if not ok:
         sys.exit(4)
 
-    _cleanup_after_upload(is_long=(args.kind == "long"))
+    _cleanup_after_upload(youtube.video_path, is_long=is_long, channel_id=args.channel_id)
 
 
 def cmd_thumbnail(args):
@@ -408,11 +683,34 @@ def main():
     p_gen.add_argument("--series-id", default="")
     # Target short duration in seconds (60/120/180). 0 = use legacy default.
     p_gen.add_argument("--duration", type=int, default=0)
-    # Per-job LLM override picked from the UI; empty = use config defaults.
+    # Per-job LLM override picked from the new (Channel page) UI picker —
+    # explicit (provider, model) pair. Empty = use config defaults.
     p_gen.add_argument("--llm-provider", default="")
     p_gen.add_argument("--llm-model", default="")
     # Per-job hook profile override (educational / storytelling / ...). Empty = use channel default.
     p_gen.add_argument("--hook-profile", default="")
+    # Per-job overrides — let the UI pick a specific model and an estimated
+    # short duration (mapped to script_sentence_length) without mutating the
+    # global config.json. The single-arg --model path infers provider via
+    # `_classify_model` and is used by the batch generator + preview flow.
+    p_gen.add_argument("--model", default="",
+                       help="Override LLM model for this job only (e.g. gemini-2.5-flash, llama3:8b).")
+    p_gen.add_argument("--sentence-length", type=int, default=0,
+                       help="Override script_sentence_length (number of sentences in the short).")
+    p_gen.add_argument("--hook-style", default="",
+                       help="Override the per-run hook style. Format: '<profile>::<style_name>'.")
+    p_gen.add_argument("--render-profile", choices=["quality", "fast", "turbo"], default="",
+                       help="Override Short render profile for this job only.")
+    p_gen.add_argument("--script-file", default="",
+                       help="Path to a pre-approved script file. When set, generation skips "
+                            "subject + script steps and reuses what's in the file.")
+
+    p_pv = sub.add_parser("preview-script")
+    p_pv.add_argument("--channel-id", required=True)
+    p_pv.add_argument("--topic", default="")
+    p_pv.add_argument("--model", default="")
+    p_pv.add_argument("--sentence-length", type=int, default=0)
+    p_pv.add_argument("--hook-style", default="")
 
     p_ul = sub.add_parser("upload-last")
     p_ul.add_argument("--channel-id", required=True)
@@ -438,12 +736,22 @@ def main():
 
     _setup_paths()
     if args.cmd != "thumbnail":
+        # The explicit (--llm-provider, --llm-model) pair from the Channel UI
+        # wins over --model (single-arg, used by batch + preview). Both feed
+        # the same _select_llm_provider entry point so the runner stays simple.
         ov_provider = getattr(args, "llm_provider", "") or ""
         ov_model = getattr(args, "llm_model", "") or ""
-        _select_llm_provider(ov_provider, ov_model)
+        legacy_override = getattr(args, "model", "") if args.cmd in ("generate", "preview-script") else ""
+        _select_llm_provider(
+            override_provider=ov_provider,
+            override_model=ov_model,
+            model_override=legacy_override,
+        )
 
     if args.cmd == "generate":
         cmd_generate(args)
+    elif args.cmd == "preview-script":
+        cmd_preview_script(args)
     elif args.cmd == "upload-last":
         cmd_upload_last(args)
     elif args.cmd == "tweet":

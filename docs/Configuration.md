@@ -15,6 +15,14 @@ All your configurations will be in a file in the root directory, called `config.
 - `nanobanana2_model`: `string` - Nano Banana 2 model name (default: `gemini-3.1-flash-image-preview`).
 - `nanobanana2_aspect_ratio`: `string` - Aspect ratio for generated images (default: `9:16`).
 - `threads`: `number` - The amount of threads that will be used to execute operations, e.g. writing to a file using MoviePy.
+- `short_render_profile`: `string` - Short render tradeoff: `quality` keeps Ken Burns + karaoke subtitles, `fast` uses static images + karaoke subtitles, and `turbo` uses static images without burned-in karaoke for maximum render speed.
+- `short_render_fps`: `number` - FPS for Shorts rendering. Lower values reduce MoviePy per-frame work; `24` is a good speed/quality default.
+- `short_ken_burns`: `boolean` - If `true`, Shorts animate image zooms. This is visually richer but much slower because MoviePy resizes every frame in Python.
+- `short_karaoke_subtitles`: `boolean` - If `true`, Shorts burn word-level karaoke subtitles into the video. Disable for the fastest render.
+- `short_crossfade_seconds`: `number` - Crossfade overlap between Short images. Use `0` for the fastest concatenation path.
+- `render_codec`: `string` - ffmpeg codec used by MoviePy. Use `libx264` for reliable CPU encoding or `auto` to try hardware H.264 encoders before falling back.
+- `render_preset`: `string` - Optional ffmpeg preset override. Empty uses `ultrafast` for `libx264` and the encoder default for hardware codecs.
+- `render_bitrate`: `string` - Optional video bitrate override, e.g. `8000k`.
 - `is_for_kids`: `boolean` - If `true`, the application will upload the video to YouTube Shorts as a video for kids.
 - `google_maps_scraper`: `string` - The URL to the Google Maps scraper. This will be used to scrape Google Maps for local businesses. It is recommended to use the default value.
 - `zip_url`: `string` - The URL to the ZIP file that contains the to be used Songs for the YouTube Shorts Automater.
@@ -54,6 +62,14 @@ All your configurations will be in a file in the root directory, called `config.
   "nanobanana2_model": "gemini-3.1-flash-image-preview",
   "nanobanana2_aspect_ratio": "9:16",
   "threads": 2,
+  "short_render_profile": "quality",
+  "short_render_fps": 30,
+  "short_ken_burns": true,
+  "short_karaoke_subtitles": true,
+  "short_crossfade_seconds": 0.4,
+  "render_codec": "libx264",
+  "render_preset": "ultrafast",
+  "render_bitrate": "",
   "zip_url": "",
   "is_for_kids": false,
   "google_maps_scraper": "https://github.com/gosom/google-maps-scraper/archive/refs/tags/v0.9.7.zip",

@@ -3,6 +3,7 @@ import base64
 import json
 import time
 import os
+import subprocess
 import requests
 import assemblyai as aai
 
@@ -344,6 +345,10 @@ class YouTube:
 
         self.options.add_argument("-profile")
         self.options.add_argument(temp_profile)
+        # Allow multiple Firefox instances simultaneously (each job uses its
+        # own temp profile, so --no-remote lets geckodriver launch a fresh
+        # process without attaching to an already-running Firefox window).
+        self.options.add_argument("--no-remote")
 
         # Browser is initialized lazily just before upload (see _ensure_browser)
         self.browser: webdriver.Firefox = None
@@ -368,7 +373,7 @@ class YouTube:
         """
         return self._language
 
-    def generate_response(self, prompt: str, model_name: str = None) -> str:
+    def generate_response(self, prompt: str, model_name: str = None, temperature: float = 0.7) -> str:
         """
         Generates an LLM Response based on a prompt and the user-provided model.
 
@@ -378,7 +383,7 @@ class YouTube:
         Returns:
             response (str): The generated AI Repsonse.
         """
-        return generate_text(prompt, model_name=model_name)
+        return generate_text(prompt, model_name=model_name, temperature=temperature)
 
     def generate_topic(self) -> str:
         """
@@ -510,7 +515,7 @@ class YouTube:
         # ---- 4. Build forbidden block (recent topics as avoidance hint for the LLM) ----
         forbidden_block = ""
         if past_topics:
-            shown = past_clean[-25:]
+            shown = past_clean[-40:]
             forbidden_block = (
                 "\n\nALREADY COVERED in this niche (pick a DIFFERENT angle, but stay WITHIN the niche):\n"
                 + "\n".join(f"- {t}" for t in shown)
@@ -608,7 +613,8 @@ OUTPUT FORMAT (strict):
 - NO surrounding quotes.
 - WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.{forbidden_block}{extra_reject}
 
-(Creativity seed: {creativity_seed} — use this to inspire a fresh angle WITHIN the niche. "Fresh" means a different specific subject from the same niche, NOT a different field.)"""
+(Creativity seed: {creativity_seed} — use this to inspire a fresh angle WITHIN the niche. "Fresh" means a different specific subject from the same niche, NOT a different field.)""",
+                temperature=0.95,
             )
 
             candidate = _strip_markdown(raw_candidate or "")
@@ -697,6 +703,25 @@ OUTPUT FORMAT (strict):
             warning(f"Unknown hook_profile '{self._hook_profile}', falling back to 'educational'.")
             profile_name = "educational"
         hook_style, hook_example = random.choice(hook_styles)
+
+        # Per-job override (set by the webapp's "hook style" selector). Format:
+        # MP_HOOK_STYLE_OVERRIDE = "<profile>::<style_name>" — both pieces must
+        # match a key in HOOK_PROFILES. Falls back silently to the random pick
+        # above if the override doesn't resolve, so a stale env var never
+        # crashes the pipeline.
+        override = os.environ.get("MP_HOOK_STYLE_OVERRIDE", "").strip()
+        if override and "::" in override:
+            ov_profile, ov_style = override.split("::", 1)
+            ov_profile = ov_profile.strip().lower()
+            ov_style = ov_style.strip()
+            candidates = HOOK_PROFILES.get(ov_profile) or []
+            for s_name, s_example in candidates:
+                if s_name == ov_style:
+                    profile_name = ov_profile
+                    hook_style, hook_example = s_name, s_example
+                    if get_verbose():
+                        info(f" => Hook style override: {ov_profile} / {ov_style}")
+                    break
 
         if get_verbose():
             info(f" => Hook profile: {profile_name} | style: {hook_style}")
@@ -1390,7 +1415,13 @@ Example format:
         text = " ".join(s.text.strip() for s in segments if s.text and s.text.strip())
         return text.strip()
 
-    def reupload_video(self, video_path: str, subject: str | None = None) -> bool:
+    def reupload_video(
+        self,
+        video_path: str,
+        subject: str | None = None,
+        generate_thumbnail: bool = False,
+        is_long: bool | None = None,
+    ) -> bool:
         """Re-upload an already-rendered .mp4 by reusing the standard
         ``upload_video`` Selenium flow.
 
@@ -1400,6 +1431,9 @@ Example format:
         2. *subject* argument — generate title + description from the topic.
         3. Whisper transcript — recover from the audio when there is no
            sidecar and the user does not remember the topic.
+
+        If ``generate_thumbnail`` is true, generate a custom thumbnail when
+        one is not already restored from the sidecar.
 
         Returns whatever ``upload_video`` returns.
         """
@@ -1411,6 +1445,10 @@ Example format:
 
         # 1) Sidecar
         sidecar = self.load_metadata_sidecar(video_path)
+        sidecar_is_long = bool(sidecar.get("is_long")) if sidecar else False
+        effective_is_long = sidecar_is_long if sidecar else bool(is_long)
+        self._is_long_video = effective_is_long
+
         if sidecar and sidecar.get("title") and sidecar.get("description"):
             self.subject = sidecar.get("subject", "")
             self.metadata = {
@@ -1421,6 +1459,14 @@ Example format:
             if saved_thumb and os.path.isfile(saved_thumb):
                 self.thumbnail_path = saved_thumb
                 info(f" => Restored thumbnail from sidecar: {saved_thumb}")
+            elif generate_thumbnail:
+                try:
+                    info(" => Generating thumbnail before upload...")
+                    self.generate_thumbnail()
+                except Exception as e:
+                    warning(f"Thumbnail generation failed: {str(e)[:200]} (upload will continue without custom thumbnail)")
+                    self.thumbnail_path = ""
+            self._persist_metadata_sidecar(is_long=effective_is_long)
             info(" => Loaded saved metadata from sidecar.")
             success(f" => Title: {self.metadata['title']}")
             return self.upload_video()
@@ -1476,10 +1522,17 @@ Example format:
         success(f" => Title: {title}")
         info(f" => Description: {description[:120]}{'...' if len(description) > 120 else ''}")
 
+        if generate_thumbnail:
+            try:
+                info(" => Generating thumbnail before upload...")
+                self.generate_thumbnail()
+            except Exception as e:
+                warning(f"Thumbnail generation failed: {str(e)[:200]} (upload will continue without custom thumbnail)")
+                self.thumbnail_path = ""
+
         # Persist a sidecar so a future retry skips the LLM/Whisper round.
         # Detect long-vs-short from existing sidecar if any; default short.
-        is_long = bool((sidecar or {}).get("is_long", False))
-        self._persist_metadata_sidecar(is_long=is_long)
+        self._persist_metadata_sidecar(is_long=effective_is_long)
 
         return self.upload_video()
 
@@ -2840,16 +2893,12 @@ RULES:
 
         cache = get_youtube_cache_path()
 
-        with open(cache, "r", encoding="utf-8") as file:
-            previous_json = json.loads(file.read())
-
-            # Find our account
-            accounts = previous_json["accounts"]
-            for account in accounts:
+        with json_write_lock(cache):
+            with open(cache, "r", encoding="utf-8") as file:
+                previous_json = json.loads(file.read())
+            for account in previous_json["accounts"]:
                 if account["id"] == self._account_uuid:
                     account["videos"].append(video)
-
-            # Commit changes
             with open(cache, "w", encoding="utf-8") as f:
                 f.write(json.dumps(previous_json))
 
@@ -3013,7 +3062,7 @@ RULES:
 
         return srt_path
 
-    def _build_karaoke_subtitles(self, audio_duration: float):
+    def _build_karaoke_subtitles(self, audio_duration: float, fps: int = 30):
         """
         Build word-by-word karaoke subtitle clip from word_timestamps.
         Shows groups of up to 5 words with multi-line wrapping; the active
@@ -3157,8 +3206,8 @@ RULES:
                 return blank_alpha
             return rendered[idx][1]
 
-        clip = VideoClip(make_rgb, duration=audio_duration).set_fps(30)
-        mask = VideoClip(make_mask, duration=audio_duration, ismask=True).set_fps(30)
+        clip = VideoClip(make_rgb, duration=audio_duration).set_fps(fps)
+        mask = VideoClip(make_mask, duration=audio_duration, ismask=True).set_fps(fps)
         clip = clip.set_mask(mask)
         clip = clip.set_position(("center", 1300))
         return clip
@@ -3188,6 +3237,84 @@ RULES:
             return
         meta["description"] = (desc.rstrip() + "\n\n" + line).lstrip()
 
+    @staticmethod
+    def _available_ffmpeg_encoders() -> set[str]:
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-encoders"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                check=False,
+            )
+        except Exception:
+            return set()
+        output = f"{result.stdout}\n{result.stderr}"
+        return {
+            codec
+            for codec in ("h264_nvenc", "h264_qsv", "h264_amf", "libx264")
+            if codec in output
+        }
+
+    def _render_codec_candidates(self) -> list[str]:
+        configured = get_render_codec().strip()
+        if configured.lower() != "auto":
+            return [configured or "libx264"]
+
+        available = self._available_ffmpeg_encoders()
+        candidates = [
+            codec
+            for codec in ("h264_nvenc", "h264_qsv", "h264_amf")
+            if codec in available
+        ]
+        candidates.append("libx264")
+        return candidates
+
+    def _write_videofile_with_fallback(self, clip, output_path: str, *, threads: int, fps: int) -> None:
+        candidates = self._render_codec_candidates()
+        configured_preset = get_render_preset()
+        bitrate = get_render_bitrate()
+        last_error = None
+
+        for idx, codec in enumerate(candidates):
+            preset = configured_preset
+            if not preset and codec == "libx264":
+                preset = "ultrafast"
+
+            kwargs = {
+                "threads": threads,
+                "fps": fps,
+                "codec": codec,
+                "audio_codec": "aac",
+                "audio": True,
+                "logger": "bar",
+            }
+            if preset:
+                kwargs["preset"] = preset
+            if bitrate:
+                kwargs["bitrate"] = bitrate
+
+            if get_verbose():
+                info(
+                    " => Render settings: "
+                    f"fps={fps}, codec={codec}, preset={preset or '(default)'}, "
+                    f"threads={threads}"
+                )
+
+            try:
+                clip.write_videofile(output_path, **kwargs)
+                return
+            except Exception as exc:
+                last_error = exc
+                if idx >= len(candidates) - 1:
+                    break
+                warning(
+                    f"Render failed with codec {codec}; "
+                    f"trying {candidates[idx + 1]} instead."
+                )
+
+        raise last_error
+
     def combine(self) -> str:
         """
         Combines everything into the final video.
@@ -3197,10 +3324,22 @@ RULES:
         """
         combined_image_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".mp4")
         threads = get_threads()
+        render_profile = get_short_render_profile()
+        render_fps = get_short_render_fps()
+        ken_burns_enabled = get_short_ken_burns_enabled()
+        karaoke_enabled = get_short_karaoke_subtitles_enabled()
+        crossfade = get_short_crossfade_seconds()
         tts_clip = AudioFileClip(self.tts_path)
         max_duration = tts_clip.duration
 
         print(colored("[+] Combining images...", "blue"))
+        if get_verbose():
+            info(
+                " => Short render profile: "
+                f"{render_profile} | fps={render_fps} | "
+                f"ken_burns={ken_burns_enabled} | "
+                f"karaoke={karaoke_enabled} | crossfade={crossfade:.2f}s"
+            )
 
         # Verify all images exist BEFORE computing duration distribution —
         # stale paths would inflate n_imgs and shrink req_dur, leaving a
@@ -3215,7 +3354,6 @@ RULES:
             self.images = valid_images
 
         # Crossfade overlap between clips — compensate so the composed total == max_duration
-        crossfade = 0.4
         n_imgs = len(self.images)
         total_overlap = crossfade * max(0, n_imgs - 1)
         req_dur = (max_duration + total_overlap) / n_imgs
@@ -3232,7 +3370,7 @@ RULES:
                 this_dur = req_dur
             if this_dur <= 0:
                 break
-            clip = ImageClip(image_path).set_duration(this_dur).set_fps(30)
+            clip = ImageClip(image_path).set_duration(this_dur).set_fps(render_fps)
 
             # Not all images are same size,
             # so we need to resize them
@@ -3258,25 +3396,22 @@ RULES:
                 )
             clip = clip.resize((1080, 1920))
 
-            # Ken Burns: subtle zoom (alternating in/out per image for variety).
-            # Pre-scale to 1.06x so zoom never reveals empty edges, then animate scale
-            # between 1.00 (fit) and ~1.06 (fill+zoom). We wrap in a fixed-size
-            # CompositeVideoClip so the output stays a deterministic 1080x1920 —
-            # this is critical: variable-size clips make concatenate_videoclips
-            # miscompute timing, which caused all images to play in the first half.
-            base = clip.resize(1.06).set_position("center")
-            if idx % 2 == 0:
-                # Zoom in: 0.943 → 1.000 (relative to the 1.06x base → 1.00 → 1.06 effective)
-                kb = base.resize(lambda t, d=this_dur: (1 / 1.06) + (1 - 1 / 1.06) * (t / d))
-            else:
-                # Zoom out: 1.000 → 0.943
-                kb = base.resize(lambda t, d=this_dur: 1 - (1 - 1 / 1.06) * (t / d))
-            kb = kb.set_position("center")
+            if ken_burns_enabled:
+                # Ken Burns: subtle zoom (alternating in/out per image for variety).
+                # Pre-scale to 1.06x so zoom never reveals empty edges, then animate scale
+                # between 1.00 (fit) and ~1.06 (fill+zoom). We wrap in a fixed-size
+                # CompositeVideoClip so the output stays a deterministic 1080x1920.
+                base = clip.resize(1.06).set_position("center")
+                if idx % 2 == 0:
+                    kb = base.resize(lambda t, d=this_dur: (1 / 1.06) + (1 - 1 / 1.06) * (t / d))
+                else:
+                    kb = base.resize(lambda t, d=this_dur: 1 - (1 - 1 / 1.06) * (t / d))
+                kb = kb.set_position("center")
 
-            clip = CompositeVideoClip([kb], size=(1080, 1920)).set_duration(this_dur)
+                clip = CompositeVideoClip([kb], size=(1080, 1920)).set_duration(this_dur)
 
             # Subtle crossfade in (except first clip) for smooth transitions
-            if idx > 0 and this_dur > crossfade:
+            if crossfade > 0 and idx > 0 and this_dur > crossfade:
                 clip = clip.crossfadein(crossfade)
 
             # Re-assert duration just in case
@@ -3288,8 +3423,9 @@ RULES:
         # Negative padding overlaps clips by `crossfade` seconds for smooth blending.
         # Duration was pre-compensated so composed total == max_duration (no black tail).
         padding = -crossfade if len(clips) > 1 else 0
-        final_clip = concatenate_videoclips(clips, padding=padding, method="compose")
-        final_clip = final_clip.set_fps(30)
+        concat_method = "compose" if padding else "chain"
+        final_clip = concatenate_videoclips(clips, padding=padding, method=concat_method)
+        final_clip = final_clip.set_fps(render_fps)
         # Trim any float drift so video matches TTS exactly
         if final_clip.duration > max_duration:
             final_clip = final_clip.subclip(0, max_duration)
@@ -3298,19 +3434,22 @@ RULES:
             self._append_music_attribution(MATYAS_ATTRIBUTION)
 
         subtitles = None
-        try:
-            print(colored("[+] Building karaoke subtitles...", "blue"), flush=True)
+        if karaoke_enabled:
+            try:
+                print(colored("[+] Building karaoke subtitles...", "blue"), flush=True)
 
-            # If TTS didn't provide word timestamps, estimate them
-            if not self.word_timestamps:
-                self.word_timestamps = self._estimate_word_timestamps(max_duration)
+                # If TTS didn't provide word timestamps, estimate them
+                if not self.word_timestamps:
+                    self.word_timestamps = self._estimate_word_timestamps(max_duration)
 
-            subtitles = self._build_karaoke_subtitles(max_duration)
+                subtitles = self._build_karaoke_subtitles(max_duration, fps=render_fps)
 
-            if subtitles is not None:
-                print(colored("[+] Karaoke subtitles ready.", "green"), flush=True)
-        except Exception as e:
-            warning(f"Failed to generate subtitles, continuing without subtitles: {e}")
+                if subtitles is not None:
+                    print(colored("[+] Karaoke subtitles ready.", "green"), flush=True)
+            except Exception as e:
+                warning(f"Failed to generate subtitles, continuing without subtitles: {e}")
+        elif get_verbose():
+            info(" => Skipping burned-in karaoke subtitles for faster rendering.")
 
         print(colored("[+] Mixing audio...", "blue"), flush=True)
         random_song_clip = AudioFileClip(random_song).set_fps(44100)
@@ -3338,13 +3477,19 @@ RULES:
             ).set_duration(max_duration)
 
         print(colored("[+] Rendering final video (this may take a minute)...", "blue"), flush=True)
-        final_clip.write_videofile(combined_image_path, threads=threads)
+        self._write_videofile_with_fallback(
+            final_clip,
+            combined_image_path,
+            threads=threads,
+            fps=render_fps,
+        )
 
         success(f'Wrote Video to "{combined_image_path}"')
 
         return combined_image_path
 
-    def generate_video(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai") -> str:
+    def generate_video(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai",
+                       preset_script: str = "") -> str:
         """
         Public entry point for the Shorts pipeline. Pins the LLM to the same
         cloud thinking model used by long videos (DeepSeek V4 Pro on Ollama
@@ -3353,6 +3498,10 @@ RULES:
         When the user picked a specific provider+model from the UI
         (`is_user_override()`), the hardcoded force_provider call is skipped
         so the user's choice is respected end-to-end.
+
+        `preset_script` skips the LLM script step — used by the "Vista previa"
+        flow so the user-approved (and possibly edited) script is rendered
+        as-is.
         """
         from llm_provider import force_provider, warmup_ollama_model, is_user_override, get_active_provider, get_active_model
         if is_user_override():
@@ -3361,14 +3510,15 @@ RULES:
             info(f"\n  Short LLM: {active}/{active_model} (user override — no think pin)")
             if active == "ollama" and active_model and active_model != "(default)":
                 warmup_ollama_model(active_model)
-            return self._generate_video_inner(tts_instance, custom_topic, image_mode)
+            return self._generate_video_inner(tts_instance, custom_topic, image_mode, preset_script)
         long_model = get_long_video_llm_model()
         info(f"\n  Short LLM: ollama/{long_model}")
         warmup_ollama_model(long_model)
         with force_provider("ollama", long_model):
-            return self._generate_video_inner(tts_instance, custom_topic, image_mode)
+            return self._generate_video_inner(tts_instance, custom_topic, image_mode, preset_script)
 
-    def _generate_video_inner(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai") -> str:
+    def _generate_video_inner(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai",
+                              preset_script: str = "") -> str:
         """
         Generates a YouTube Short based on the provided niche and language.
 
@@ -3377,6 +3527,10 @@ RULES:
             custom_topic (str): Optional user-provided topic. If given, skips auto topic generation.
             image_mode (str): "ai" (default) uses AI image generators first.
                               "photos" uses real photos (Wikimedia / Pexels / Pixabay) first.
+            preset_script (str): Optional pre-approved script body. When non-empty,
+                                 the LLM script-generation step is skipped — used by
+                                 the "Vista previa" flow so the user can review (and
+                                 even edit) the script before render starts.
 
         Returns:
             path (str): The path to the generated MP4 File, or empty string if cancelled.
@@ -3413,8 +3567,13 @@ RULES:
             self.video_path = ""
             return ""
 
-        # Generate the Script
-        self.generate_script()
+        # Generate the Script (unless the caller pre-approved one)
+        if preset_script and preset_script.strip():
+            self.script = preset_script.strip()
+            if get_verbose():
+                info(f" => Using pre-approved script ({len(self.script)} chars)")
+        else:
+            self.generate_script()
 
         # Generate the Metadata
         self.generate_metadata()
@@ -5545,12 +5704,13 @@ No markdown. No explanation. Just the JSON array."""
         info("\t   (polling in a SEPARATE tab so the upload tab is never disturbed)")
 
         deadline = time.time() + max_wait_s
-        listing_url = (
-    f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
-    if listing_tab == "short"
-    else f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
-    f'?d=ud&filter=%5B%5D&sort=%7B%22columnType%22%3A%22date%22%2C%22sortOrder%22%3A%22DESCENDING%22%7D'
-)
+        if listing_tab == "short":
+            listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/short"
+        else:
+            listing_url = (
+                f"https://studio.youtube.com/channel/{self.channel_id}/videos"
+                f'?filter=%5B%5D&sort=%7B%22columnType%22%3A%22date%22%2C%22sortOrder%22%3A%22DESCENDING%22%7D'
+            )
         target_title = (self.metadata.get("title") or "").strip()
         target_match = target_title[:50] if target_title else ""
 
@@ -5626,7 +5786,8 @@ No markdown. No explanation. Just the JSON array."""
             driver.switch_to.window(status_handle)
 
             try:
-                time.sleep(8)
+                driver.get(listing_url)
+                time.sleep(12)
             except Exception as e:
                 warning(f"\t=> Could not navigate status tab to listing: {e}")
                 return False
@@ -5739,7 +5900,7 @@ No markdown. No explanation. Just the JSON array."""
                     # If many polls in a row return zero rows (no error text either —
                     # could be a slow render, ghost spinner, or a blank Studio page),
                     # force a hard re-navigation rather than waiting for the next refresh.
-                    if consecutive_empty_polls >= 8:
+                    if consecutive_empty_polls >= 12:
                         studio_error_retries += 1
                         if studio_error_retries > max_studio_error_retries:
                             warning(
@@ -5753,7 +5914,7 @@ No markdown. No explanation. Just the JSON array."""
                         )
                         try:
                             driver.get(listing_url)
-                            time.sleep(8)
+                            time.sleep(15)
                             last_refresh = time.time()
                         except Exception as e:
                             warning(f"\t=> Re-navigation failed: {e}")
@@ -5800,12 +5961,13 @@ No markdown. No explanation. Just the JSON array."""
         """
         if not getattr(self, "channel_id", None):
             return ""
-        listing_url = (
-    f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
-    if listing_tab == "short"
-    else f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
-    f'?d=ud&filter=%5B%5D&sort=%7B%22columnType%22%3A%22date%22%2C%22sortOrder%22%3A%22DESCENDING%22%7D'
-)
+        if listing_tab == "short":
+            listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/short"
+        else:
+            listing_url = (
+                f"https://studio.youtube.com/channel/{self.channel_id}/videos"
+                f'?filter=%5B%5D&sort=%7B%22columnType%22%3A%22date%22%2C%22sortOrder%22%3A%22DESCENDING%22%7D'
+            )
         target_title = (self.metadata.get("title") or "").strip()
         target_match = target_title[:50] if target_title else ""
 
@@ -5826,14 +5988,13 @@ No markdown. No explanation. Just the JSON array."""
         status_handle = None
         try:
             existing = set(driver.window_handles)
-            driver.execute_script(f"window.open('{listing_url}', '_blank');")
-            time.sleep(5)
+            driver.execute_script("window.open('about:blank', '_blank');")
+            time.sleep(3)
             new_handles = [h for h in driver.window_handles if h not in existing]
             if not new_handles:
                 return ""
             status_handle = new_handles[0]
             driver.switch_to.window(status_handle)
-            time.sleep(6)
 
             # Retry the navigation if YT Studio greets us with the "Oops"
             # error page or with an empty listing. Up to 5 attempts, each
@@ -5846,7 +6007,7 @@ No markdown. No explanation. Just the JSON array."""
                     warning(f"URL-resolve navigation failed (attempt {attempt}): {e}")
                     time.sleep(3)
                     continue
-                time.sleep(6 if attempt == 1 else 10)
+                time.sleep(12 if attempt == 1 else 15)
 
                 try:
                     videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
@@ -6307,7 +6468,7 @@ No markdown. No explanation. Just the JSON array."""
                     info("\t=> Long video — polling listing page in a separate tab...")
                 upload_finished = self._wait_for_listing_settled(
                     driver,
-                    listing_tab="upload",
+                    listing_tab="long",
                     kind_label="long video",
                     max_wait_s=10800,        # 3h total cap (HD 30+ min videos can take a while to encode)
                     poll_interval_s=15,
@@ -6333,7 +6494,7 @@ No markdown. No explanation. Just the JSON array."""
             if verbose:
                 info("\t=> Getting video URL...")
 
-            listing_tab = "upload_video" if is_long_video else "short"
+            listing_tab = "long" if is_long_video else "short"
             url = None
 
             if is_long_video:
@@ -6465,17 +6626,18 @@ No markdown. No explanation. Just the JSON array."""
     def _update_last_video_url(self, date_marker: str, new_url: str) -> None:
         """Update the URL field of the cache entry that matches `date_marker`."""
         cache = get_youtube_cache_path()
-        with open(cache, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        for account in data.get("accounts", []):
-            if account.get("id") != self._account_uuid:
-                continue
-            for video in account.get("videos", []):
-                if video.get("date") == date_marker and video.get("url") in ("uploading...", "", None):
-                    video["url"] = new_url
-                    break
-        with open(cache, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
+        with json_write_lock(cache):
+            with open(cache, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for account in data.get("accounts", []):
+                if account.get("id") != self._account_uuid:
+                    continue
+                for video in account.get("videos", []):
+                    if video.get("date") == date_marker and video.get("url") in ("uploading...", "", None):
+                        video["url"] = new_url
+                        break
+            with open(cache, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
 
     def get_videos(self) -> List[dict]:
         """

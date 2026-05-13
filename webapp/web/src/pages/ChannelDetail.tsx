@@ -55,7 +55,7 @@ import { ChannelFormDialog } from "./ChannelFormDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProgressDialog } from "@/components/ProgressDialog";
 import { toast } from "sonner";
-import { formatDate, relativeTime, truncate, formatCount } from "@/lib/utils";
+import { formatDate, relativeTime, truncate, formatCount, formatCompact } from "@/lib/utils";
 
 export function ChannelDetail() {
   const { id } = useParams<{ id: string }>();
@@ -221,7 +221,29 @@ export function ChannelDetail() {
         {/* Channel summary — editorial telemetry strip */}
         {channel && !loading ? (
           <div className="studio-surface overflow-hidden">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7">
+              <SummaryItem
+                label="Suscriptores"
+                value={
+                  channel.subscriber_count == null
+                    ? "—"
+                    : formatCompact(channel.subscriber_count)
+                }
+                hint={
+                  channel.subscriber_count == null
+                    ? "Sin sincronizar — corre Sync YT"
+                    : channel.stats_synced_at
+                    ? `Sync: ${channel.stats_synced_at}`
+                    : undefined
+                }
+                fullValue={
+                  channel.subscriber_count != null
+                    ? channel.subscriber_count.toLocaleString("es-ES")
+                    : undefined
+                }
+                highlight={channel.subscriber_count != null}
+                dotVar="var(--violeta)"
+              />
               <SummaryItem
                 label="Videos"
                 value={`${channel.videos_count}`}
@@ -747,11 +769,21 @@ function SummaryItem({
   value,
   dotVar,
   last,
+  hint,
+  fullValue,
+  highlight,
 }: {
   label: string;
   value: string;
   dotVar: string;
   last?: boolean;
+  hint?: string;
+  // Optional precise number (e.g. "12,345") shown below the compact value
+  // when the field is a metric — `formatCompact` rounds aggressively.
+  fullValue?: string;
+  // When true, render the value in the accent color (used for the subscriber
+  // count to draw the eye to the most important channel KPI).
+  highlight?: boolean;
 }) {
   return (
     <div
@@ -759,6 +791,7 @@ function SummaryItem({
       style={{
         borderRight: last ? undefined : "1px solid hsl(var(--border) / .04)",
       }}
+      title={hint || value}
     >
       <div className="flex items-center gap-1.5">
         <span
@@ -773,11 +806,35 @@ function SummaryItem({
         </span>
       </div>
       <span
-        className="font-mono text-[15px] font-semibold tracking-tight text-foreground tabular-nums truncate"
-        title={value}
+        className={
+          "font-mono text-[15px] font-semibold tracking-tight tabular-nums truncate " +
+          (highlight ? "text-primary" : "text-foreground")
+        }
       >
         {value}
       </span>
+      {fullValue && fullValue !== value && (
+        <span className="font-mono text-[10px] text-muted-foreground tabular-nums truncate">
+          {fullValue}
+        </span>
+      )}
     </div>
+  );
+}
+
+function StatCell({ value }: { value: number | null | undefined }) {
+  // `null` (never synced) is rendered muted. Real zeros stay full opacity so
+  // a synced-but-no-views video doesn't look like missing data.
+  const muted = value == null;
+  return (
+    <span
+      className={
+        "text-xs " +
+        (muted ? "text-muted-foreground/60" : "text-foreground font-medium")
+      }
+      title={value == null ? "Sin sincronizar" : String(value)}
+    >
+      {formatCompact(value)}
+    </span>
   );
 }

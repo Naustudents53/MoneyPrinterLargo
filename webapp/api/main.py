@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
@@ -48,6 +49,12 @@ CONFIG_PATH = ROOT_DIR / "config.json"
 # we (a) add src/ to sys.path and (b) overwrite config.ROOT_DIR after import.
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
+# Also add API_DIR so sibling modules (auto_sync, run_job) can be imported by
+# bare name regardless of whether uvicorn loaded us as `webapp.api.main` or
+# directly as `main`. Without this, the lifespan handler's lazy import of
+# auto_sync fails with ModuleNotFoundError on uvicorn startup.
+if str(API_DIR) not in sys.path:
+    sys.path.insert(0, str(API_DIR))
 
 import config as mp_config  # noqa: E402
 
@@ -78,10 +85,39 @@ ops.init(ROOT_DIR, MP_DIR, CONFIG_PATH)
 # FastAPI app
 # ---------------------------------------------------------------------------
 
+# Auto-sync scheduler: started on app startup, stopped on shutdown. We keep
+# the instance module-level so the /api/auto-sync/* endpoints can reach it.
+_auto_sync_scheduler = None  # populated in lifespan
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _auto_sync_scheduler
+    from auto_sync import AutoSyncScheduler  # lazy: keeps test imports light
+
+    _auto_sync_scheduler = AutoSyncScheduler(
+        root_dir=ROOT_DIR,
+        config_loader=_read_config,
+    )
+    try:
+        _auto_sync_scheduler.start()
+    except Exception as e:
+        print(f"[main] WARN: could not start auto-sync scheduler: {e}", flush=True)
+    try:
+        yield
+    finally:
+        if _auto_sync_scheduler is not None:
+            try:
+                await _auto_sync_scheduler.stop()
+            except Exception as e:
+                print(f"[main] WARN: scheduler shutdown failed: {e}", flush=True)
+
+
 app = FastAPI(
     title="MoneyPrinter Largo API",
     description="REST + SSE API exposing MoneyPrinterLargo functionality",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -189,6 +225,10 @@ def _channel_out(acc: dict) -> dict:
         "voice_drama": acc.get("voice_drama", False),
         "youtube_handle": acc.get("youtube_handle", ""),
         "videos_count": len(acc.get("videos", []) or []),
+        # Populated by scripts/sync_youtube_cache.py. `null` means the channel
+        # has never been synced; the frontend renders that as a muted "—".
+        "subscriber_count": acc.get("subscriber_count"),
+        "stats_synced_at": acc.get("stats_synced_at", ""),
     }
 
 
@@ -214,6 +254,19 @@ def _write_config(data: dict) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
+def _infer_llm_provider_from_model(model_id: str) -> str:
+    m = (model_id or "").strip().lower()
+    if not m:
+        return ""
+    if m.startswith("gemini-") or m.startswith("gemma-"):
+        return "gemini"
+    if m.startswith("gpt-") or m.startswith("chatgpt-") or m.startswith(("o1", "o3", "o4")):
+        return "openai"
+    if ":" in m:
+        return "ollama"
+    return "pollinations"
+
+
 # ---------------------------------------------------------------------------
 # System
 # ---------------------------------------------------------------------------
@@ -228,6 +281,7 @@ def system_info():
         "llm_provider": cfg.get("llm_provider", "ollama"),
         "tts_voice": cfg.get("tts_voice", "Jasper"),
         "image_aspect_ratio": "9:16",
+        "short_render_profile": cfg.get("short_render_profile", "quality"),
         "stt_provider": cfg.get("stt_provider", "local_whisper"),
         "headless": cfg.get("headless", False),
         "version": "1.0.0",
@@ -371,10 +425,14 @@ def list_channel_videos(channel_id: str):
                     "url": v.get("url", ""),
                     "date": v.get("date", ""),
                     "is_short": _infer_is_short(v),
+                    # Engagement stats are populated by scripts/sync_youtube_cache.py.
+                    # Missing (= never synced) is reported as -1 so the UI can
+                    # show "—" instead of a misleading "0".
                     "view_count": v.get("view_count", -1),
                     "like_count": v.get("like_count", -1),
                     "comment_count": v.get("comment_count", -1),
                     "dislike_count": v.get("dislike_count", -1),
+                    "stats_synced_at": v.get("stats_synced_at", ""),
                 }
                 for i, v in enumerate(sorted_videos)
             ]
@@ -576,7 +634,11 @@ _CONFIG_FIELD_DEFS = [
     {"key": "font", "label": "Subtitle font filename", "type": "str", "group": "Core"},
     {"key": "script_sentence_length", "label": "Script sentence length", "type": "int", "group": "Core"},
     # LLM
-    {"key": "llm_provider", "label": "LLM provider (ollama / gemini)", "type": "str", "group": "LLM"},
+    {"key": "llm_provider", "label": "LLM provider (openai / gemini / ollama / pollinations)", "type": "str", "group": "LLM"},
+    {"key": "openai_api_key", "label": "OpenAI API key", "type": "secret", "group": "LLM"},
+    {"key": "openai_base_url", "label": "OpenAI base URL", "type": "str", "group": "LLM"},
+    {"key": "openai_model", "label": "OpenAI default model", "type": "str", "group": "LLM"},
+    {"key": "openai_reasoning_effort", "label": "OpenAI reasoning effort", "type": "str", "group": "LLM"},
     {"key": "ollama_base_url", "label": "Ollama base URL", "type": "str", "group": "LLM"},
     {"key": "ollama_model", "label": "Ollama model", "type": "str", "group": "LLM"},
     # Image
@@ -597,6 +659,184 @@ _CONFIG_FIELD_DEFS = [
     # Twitter
     {"key": "twitter_language", "label": "Twitter language", "type": "str", "group": "Twitter"},
 ]
+
+
+# Curated list of LLM models the user can pick as override for a single
+# generation job. We deliberately keep this short and group it by provider so
+# the UI dropdown stays readable. The default (used when the user doesn't
+# touch the selector) matches the first entry of `gemini_models` in config.json.
+_OPENAI_MODEL_CATALOG = [
+    {"id": "gpt-5.5", "label": "GPT-5.5", "provider": "openai",
+     "description": "OpenAI frontier model para razonamiento, guiones largos y máxima calidad."},
+    {"id": "gpt-5.5-2026-04-23", "label": "GPT-5.5 (snapshot 2026-04-23)", "provider": "openai",
+     "description": "Snapshot estable de GPT-5.5 para resultados reproducibles."},
+    {"id": "gpt-5.4", "label": "GPT-5.4", "provider": "openai",
+     "description": "Modelo OpenAI potente con menor coste que GPT-5.5."},
+    {"id": "gpt-5.4-mini", "label": "GPT-5.4 Mini", "provider": "openai",
+     "description": "Más rápido y económico para volumen alto."},
+]
+
+_GEMINI_MODEL_CATALOG = [
+    {"id": "gemini-3-flash-preview", "label": "Gemini 3 Flash (preview)", "provider": "gemini",
+     "description": "Default — más reciente, mejor balance velocidad/calidad."},
+    {"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash", "provider": "gemini",
+     "description": "Probado, alta calidad para texto."},
+    {"id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite", "provider": "gemini",
+     "description": "Más rápido y barato; 10 RPM free tier."},
+    {"id": "gemini-3.1-flash-lite", "label": "Gemini 3.1 Flash Lite", "provider": "gemini",
+     "description": "500 RPD free tier — buen volumen."},
+    {"id": "gemini-2.5-pro", "label": "Gemini 2.5 Pro", "provider": "gemini",
+     "description": "Mayor calidad (requiere billing)."},
+    {"id": "gemma-4-31b", "label": "Gemma 4 31B", "provider": "gemini",
+     "description": "Open model: 1.5K RPD free tier, TPM ilimitado."},
+    {"id": "gemma-4-26b", "label": "Gemma 4 26B", "provider": "gemini",
+     "description": "Más ligero: 1.5K RPD free tier."},
+]
+
+
+@app.get("/api/llm/models")
+def list_llm_models():
+    """Return the catalog of LLM models the UI can offer for per-job model
+    selection. Always includes the curated Gemini catalog; appends Ollama
+    models if an Ollama server is reachable so the user can route a single
+    job to local hardware without touching settings."""
+    cfg = _read_config()
+    default_model = ""
+    active_provider = cfg.get("llm_provider", "gemini")
+    if active_provider == "openai":
+        openai_models = cfg.get("openai_models") or []
+        if openai_models:
+            default_model = openai_models[0]
+        elif cfg.get("openai_model"):
+            default_model = cfg["openai_model"]
+    else:
+        gem_models = cfg.get("gemini_models") or []
+        if gem_models:
+            default_model = gem_models[0]
+        elif cfg.get("gemini_model"):
+            default_model = cfg["gemini_model"]
+
+    out = list(_OPENAI_MODEL_CATALOG) + list(_GEMINI_MODEL_CATALOG)
+
+    # Ollama models — combine: (a) what's actually installed/available on the
+    # local Ollama server, (b) a curated catalog of cloud-hosted Ollama models
+    # the user may want to try without installing them first. The cloud
+    # variants tagged ":cloud" are served by Ollama's hosted inference and
+    # don't need a local download, so it's safe to surface them upfront.
+    installed: set[str] = set()
+    try:
+        import importlib
+        llm_mod = importlib.import_module("llm_provider")
+        original_provider = getattr(llm_mod, "_llm_provider", None)
+        llm_mod.set_llm_provider("ollama")
+        try:
+            installed = set(llm_mod.list_models())
+        finally:
+            llm_mod.set_llm_provider(original_provider or "")
+    except Exception:
+        pass
+
+    # Curated Ollama catalog — covers the most-used cloud variants plus the
+    # popular local models. Order: cloud first (always available), then locals
+    # (only useful if the user has them pulled).
+    _OLLAMA_CATALOG = [
+        # Cloud-hosted (no local pull needed, billed by Ollama subscription)
+        ("kimi-k2.6:cloud",         "Kimi K2.6 (cloud)",         "Moonshot Kimi — fuerte razonamiento y escritura larga."),
+        ("glm-5.1:cloud",           "GLM 5.1 (cloud)",           "Zhipu GLM 5.1 — multilingüe, buena prosa."),
+        ("qwen3.5:cloud",           "Qwen 3.5 (cloud)",          "Qwen 3.5 — alto rendimiento, multilingüe."),
+        ("qwen3.6:cloud",           "Qwen 3.6 (cloud)",          "Más reciente que 3.5, mejor seguimiento de instrucciones."),
+        ("nemotron-3-super:cloud",  "Nemotron 3 Super (cloud)",  "NVIDIA Nemotron — texto narrativo de alta calidad."),
+        ("gemma4:31b-cloud",        "Gemma 4 31B (cloud)",       "Google Gemma 4 — open weights, gran ventana de contexto."),
+        ("llama3.3:70b-cloud",      "Llama 3.3 70B (cloud)",     "Meta Llama 3.3 70B — generalista potente."),
+        ("deepseek-v3.1:cloud",     "DeepSeek V3.1 (cloud)",     "DeepSeek V3 — buen ratio calidad/coste."),
+        # Local pull-only — useful if the user has Ollama running locally with
+        # these models downloaded.
+        ("gemma4:latest",           "Gemma 4 (local)",           "Modelo local de Google Gemma 4."),
+        ("qwen3.6:latest",          "Qwen 3.6 (local)",          "Modelo local Qwen 3.6."),
+        ("llama3.2:latest",         "Llama 3.2 (local)",         "Llama 3.2 local — rápido y ligero."),
+        ("llama3.3:latest",         "Llama 3.3 (local)",         "Llama 3.3 local — más capaz que 3.2."),
+        ("mistral:latest",          "Mistral 7B (local)",        "Mistral 7B local — eficiente."),
+        ("phi3:latest",             "Phi-3 (local)",             "Microsoft Phi-3 — pequeño y rápido."),
+        ("codellama:latest",        "CodeLlama (local)",         "Variante orientada a código."),
+    ]
+
+    catalog_ids: set[str] = set()
+    for mid, label, desc in _OLLAMA_CATALOG:
+        catalog_ids.add(mid)
+        is_installed = mid in installed
+        # Tag the description so the user knows whether the model is ready to
+        # run locally or will need to be pulled / require cloud credentials.
+        suffix = ""
+        if mid.endswith(":cloud"):
+            suffix = " [requiere Ollama cloud]"
+        elif is_installed:
+            suffix = " [instalado ✓]"
+        else:
+            suffix = " [no instalado — corre `ollama pull` primero]"
+        out.append({
+            "id": mid,
+            "label": label,
+            "provider": "ollama",
+            "description": desc + suffix,
+        })
+
+    # Any installed model NOT in the curated catalog gets appended at the end
+    # so the user can still pick it (e.g. a custom fine-tune).
+    for m in sorted(installed):
+        if m in catalog_ids:
+            continue
+        out.append({
+            "id": m,
+            "label": f"{m} (local)",
+            "provider": "ollama",
+            "description": "Modelo local instalado [✓].",
+        })
+
+    # Pollinations — small curated set, used as fallback or override.
+    for pid, plabel in [
+        ("openai", "Pollinations · OpenAI (gpt-style)"),
+        ("openai-large", "Pollinations · OpenAI Large"),
+        ("deepseek", "Pollinations · DeepSeek"),
+        ("llama", "Pollinations · Llama"),
+        ("mistral", "Pollinations · Mistral"),
+    ]:
+        out.append({
+            "id": pid,
+            "label": plabel,
+            "provider": "pollinations",
+            "description": "Modelo gratis vía Pollinations (sin API key).",
+        })
+
+    return {
+        "models": out,
+        "default": default_model or ("gpt-5.5" if active_provider == "openai" else "gemini-3-flash-preview"),
+        "active_provider": active_provider,
+    }
+
+
+@app.get("/api/llm/hook-styles")
+def list_hook_styles():
+    """Return every hook style declared in HOOK_PROFILES, flattened so the UI
+    can offer a single dropdown grouped by profile. Each style id encodes the
+    profile so a single string round-trips back through the override env var
+    without ambiguity."""
+    from classes.YouTube import HOOK_PROFILES  # lazy import — keeps startup light
+
+    out = []
+    for profile_name, styles in HOOK_PROFILES.items():
+        for style_name, example in styles:
+            # Truncate the example so the dropdown stays readable — full text
+            # lives in the source, the UI just needs a snippet to differentiate.
+            snippet = example.strip()
+            if len(snippet) > 120:
+                snippet = snippet[:117].rstrip() + "…"
+            out.append({
+                "id": f"{profile_name}::{style_name}",
+                "profile": profile_name,
+                "name": style_name,
+                "example": snippet,
+            })
+    return {"styles": out}
 
 
 @app.get("/api/voices")
@@ -896,8 +1136,7 @@ def stop_job(job_id: str):
     return {"ok": True}
 
 
-@app.get("/api/llm/models")
-def list_llm_models():
+def _legacy_list_llm_models_unused():
     """Return the list of available models per provider so the UI can offer
     a dropdown override per generation. Failures on a single provider are
     swallowed so a missing Ollama daemon doesn't break the whole endpoint.
@@ -908,7 +1147,7 @@ def list_llm_models():
     options at the top of the dropdown; locally-installed-but-not-curated
     entries follow.
     """
-    out: dict[str, Any] = {"ollama": [], "gemini": [], "errors": {}}
+    out: dict[str, Any] = {"ollama": [], "gemini": [], "pollinations": [], "errors": {}}
 
     try:
         from llm_provider import (
@@ -943,8 +1182,184 @@ def list_llm_models():
     except Exception as e:
         out["errors"]["gemini"] = str(e)[:200]
 
+    try:
+        from llm_provider import _list_pollinations_models
+        out["pollinations"] = _list_pollinations_models()
+    except Exception as e:
+        out["errors"]["pollinations"] = str(e)[:200]
+
     return out
 
+
+
+# ---------------------------------------------------------------------------
+# AI-assisted helpers — topic suggestions + script preview
+# ---------------------------------------------------------------------------
+
+@app.get("/api/channels/{channel_id}/suggest-topics")
+def suggest_topics(channel_id: str, n: int = 5, model: str = ""):
+    """Ask the LLM for `n` topic ideas tailored to the channel's niche and
+    language. Returns synchronously (one LLM call, not a streaming job) so
+    the UI can pop them inline. Reads the channel's recent subjects from the
+    cache and asks the LLM to avoid repeating them."""
+    ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
+    if not ch:
+        raise HTTPException(404, "Channel not found")
+    n = max(1, min(int(n or 5), 10))
+
+    # Recent subjects → injected into the prompt so suggestions stay fresh.
+    raw = _read_youtube_raw()
+    recent_subjects: list[str] = []
+    for acc in raw.get("accounts", []):
+        if acc.get("id") == channel_id:
+            for v in (acc.get("videos") or [])[:30]:
+                s = (v.get("subject") or v.get("title") or "").strip()
+                if s:
+                    recent_subjects.append(s)
+            break
+
+    niche = ch.get("niche") or "(sin niche)"
+    language = ch.get("language") or "español"
+    avoid_block = ""
+    if recent_subjects:
+        # Cap to ~20 entries to keep the prompt small.
+        bullets = "\n".join(f"- {s}" for s in recent_subjects[:20])
+        avoid_block = (
+            "\n\nTEMAS RECIENTES A EVITAR (no repitas ni reformules estos):\n"
+            f"{bullets}\n"
+        )
+
+    prompt = (
+        f"Eres un experto en creación de contenido para YouTube Shorts. "
+        f"Genera EXACTAMENTE {n} ideas de temas concretos para un canal en {language} "
+        f"sobre: {niche}.\n\n"
+        f"REGLAS ESTRICTAS:\n"
+        f"- Cada idea debe ser un TEMA específico (no un concepto abstracto). "
+        f"Por ejemplo: 'La caída de Constantinopla en 1453' NO 'la historia bizantina'.\n"
+        f"- Cada idea ocupa UNA línea, sin numeración, sin guiones, sin viñetas.\n"
+        f"- Cada idea debe ser entendible por sí sola y digna de un short de 30-60s.\n"
+        f"- Escribe EN {language}.\n"
+        f"- NO incluyas explicaciones, encabezados ni nada extra. Solo las {n} líneas con los temas."
+        f"{avoid_block}"
+    )
+
+    # Apply per-job model override (same env-var trick used by the runner)
+    saved_override = os.environ.get("MP_GEMINI_MODEL_OVERRIDE", "")
+    if model and (model.startswith("gemini-") or model.startswith("gemma-")):
+        os.environ["MP_GEMINI_MODEL_OVERRIDE"] = model
+    try:
+        from llm_provider import generate_text  # lazy import — keeps API startup fast
+        raw_out = generate_text(prompt, temperature=0.9)
+    except Exception as e:
+        raise HTTPException(500, f"LLM failure: {e}") from e
+    finally:
+        if saved_override:
+            os.environ["MP_GEMINI_MODEL_OVERRIDE"] = saved_override
+        else:
+            os.environ.pop("MP_GEMINI_MODEL_OVERRIDE", None)
+
+    # Clean up: drop empty lines, strip bullets/numbering, dedupe.
+    import re as _re
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for line in (raw_out or "").splitlines():
+        clean = _re.sub(r"^[\s\-\*•\d\.\)]+", "", line).strip()
+        if not clean or len(clean) < 6:
+            continue
+        key = clean.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(clean)
+        if len(candidates) >= n:
+            break
+
+    return {"topics": candidates}
+
+
+# Preview-script artifacts live in .mp/.preview-<uuid>.txt — the same directory
+# as the rest of the pipeline scratch space, prefixed so rem_temp_files() won't
+# wipe them (they end in .txt which is allowed to stay).
+@app.get("/api/channels/{channel_id}/preview-script")
+async def preview_script(
+    channel_id: str,
+    kind: str = "short",
+    custom_topic: str = "",
+    model: str = "",
+    sentence_length: int = 0,
+    hook_style: str = "",
+):
+    """Run only the subject + script generation steps and stream progress as
+    SSE. The runner writes the result to a .mp/.preview-<uuid>.txt file; the
+    UI then reads the content and (after approval) passes the same uuid back
+    to /generate?script_file=<uuid> to skip script generation."""
+    ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
+    if not ch:
+        raise HTTPException(404, "Channel not found")
+    if kind not in ("short",):
+        raise HTTPException(400, "Preview only supports kind='short' for now")
+
+    args = ["preview-script", "--channel-id", channel_id]
+    if custom_topic:
+        args += ["--topic", custom_topic]
+    if model:
+        args += ["--model", model]
+    if sentence_length and sentence_length > 0:
+        args += ["--sentence-length", str(sentence_length)]
+    if hook_style:
+        args += ["--hook-style", hook_style]
+
+    title = f"Previa de script — {ch.get('nickname', channel_id)}"
+    job = _spawn_job(args, title=title, channel_id=channel_id, kind="short")
+    return EventSourceResponse(_stream_job(job))
+
+
+@app.get("/api/preview/{preview_id}")
+def read_preview(preview_id: str):
+    """Return the content of a previously-generated preview script. Format:
+    {subject, script}. Used by the frontend after the SSE stream finishes."""
+    if not re.fullmatch(r"[A-Za-z0-9_\-]{4,64}", preview_id):
+        raise HTTPException(400, "Invalid preview id")
+    path = MP_DIR / f".preview-{preview_id}.txt"
+    if not path.is_file():
+        raise HTTPException(404, "Preview not found or already consumed")
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(500, f"Could not read preview: {e}") from e
+    head, _, body = raw.partition("\n\n")
+    return {"id": preview_id, "subject": (head or "").strip(), "script": (body or "").strip()}
+
+
+class PreviewSave(BaseModel):
+    subject: str
+    script: str
+
+
+@app.put("/api/preview/{preview_id}")
+def save_preview(preview_id: str, payload: PreviewSave):
+    """Persist an edited preview script back to disk so the subsequent
+    /generate call picks up the user's changes. The frontend calls this only
+    when the user actually modifies the textarea before clicking 'continuar'."""
+    if not re.fullmatch(r"[A-Za-z0-9_\-]{4,64}", preview_id):
+        raise HTTPException(400, "Invalid preview id")
+    path = MP_DIR / f".preview-{preview_id}.txt"
+    if not path.is_file():
+        raise HTTPException(404, "Preview not found")
+    subject = (payload.subject or "").strip()
+    script = (payload.script or "").strip()
+    if not subject or not script:
+        raise HTTPException(400, "subject and script are required")
+    try:
+        path.write_text(f"{subject}\n\n{script}\n", encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(500, f"Could not write preview: {e}") from e
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Generation endpoints
+# ---------------------------------------------------------------------------
 
 @app.get("/api/channels/{channel_id}/generate")
 async def generate_video(
@@ -955,9 +1370,14 @@ async def generate_video(
     auto_upload: bool = False,
     series_id: str = "",
     duration_seconds: int = 0,
+    render_profile: str = "",
     llm_provider: str = "",
     llm_model: str = "",
     hook_profile: str = "",
+    model: str = "",
+    sentence_length: int = 0,
+    hook_style: str = "",
+    script_file: str = "",
 ):
     ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
     if not ch:
@@ -975,8 +1395,8 @@ async def generate_video(
                 f"duration_seconds must be one of {list(ALLOWED_SHORT_DURATIONS)}",
             )
 
-    if llm_provider and llm_provider not in ("ollama", "gemini"):
-        raise HTTPException(400, "llm_provider must be 'ollama' or 'gemini'")
+    if llm_provider and llm_provider not in ("ollama", "gemini", "openai", "pollinations"):
+        raise HTTPException(400, "llm_provider must be 'ollama', 'gemini', 'openai', or 'pollinations'")
 
     # Validate hook_profile against the canonical list in YouTube.py so a typo
     # from the UI fails fast instead of silently falling back to "educational"
@@ -989,6 +1409,9 @@ async def generate_video(
                 400,
                 f"hook_profile must be one of {list(HOOK_PROFILES.keys())}",
             )
+
+    if kind == "short" and render_profile and render_profile not in ("quality", "fast", "turbo"):
+        raise HTTPException(400, "render_profile must be 'quality', 'fast', or 'turbo'")
 
     args = [
         "generate",
@@ -1004,17 +1427,126 @@ async def generate_video(
         args += ["--series-id", series_id]
     if kind == "short" and duration_seconds:
         args += ["--duration", str(duration_seconds)]
+    if kind == "short" and render_profile:
+        args += ["--render-profile", render_profile]
     if llm_provider:
         args += ["--llm-provider", llm_provider]
     if llm_model:
         args += ["--llm-model", llm_model]
     if hook_profile_norm:
         args += ["--hook-profile", hook_profile_norm]
+    if model:
+        args += ["--model", model]
+    if sentence_length and sentence_length > 0:
+        args += ["--sentence-length", str(sentence_length)]
+    if hook_style:
+        args += ["--hook-style", hook_style]
+    if script_file:
+        # Resolve the script ref to a real .mp/ path. The frontend only sees
+        # the opaque preview id (a uuid) returned by /preview-script — we
+        # translate it to the actual file here so the runner stays simple.
+        script_path = MP_DIR / f".preview-{script_file}.txt"
+        if not script_path.is_file():
+            raise HTTPException(400, f"Preview script {script_file!r} not found")
+        args += ["--script-file", str(script_path)]
 
     label = "Short" if kind == "short" else "Long video"
     title = f"Generando {label} — {ch.get('nickname', channel_id)}"
     job = _spawn_job(args, title=title, channel_id=channel_id, kind=kind)
     return EventSourceResponse(_stream_job(job))
+
+
+class BatchJobItem(BaseModel):
+    channel_id: str
+    kind: str = "short"
+    custom_topic: str = ""
+    image_mode: str = "ai"
+    auto_upload: bool = False
+    series_id: str = ""
+    model: str = ""
+    sentence_length: int = 0
+    hook_style: str = ""
+    render_profile: str = ""
+
+
+class BatchGeneratePayload(BaseModel):
+    jobs: list[BatchJobItem]
+
+
+@app.post("/api/generate-batch")
+def generate_batch(payload: BatchGeneratePayload):
+    """Spawn N generation jobs in parallel — one subprocess per item — and
+    return the list of created job ids so the UI can subscribe to each
+    via /api/jobs/<id>/stream individually.
+
+    Each item is independent: different channels, kinds, topics, even
+    models. We don't enforce a hard cap here (the limiting factor is your
+    Gemini RPM and disk I/O) but the UI surfaces a guard for sanity."""
+    if not payload.jobs:
+        raise HTTPException(400, "Empty job list")
+    if len(payload.jobs) > 50:
+        raise HTTPException(400, "Too many jobs in a single batch (max 50)")
+
+    valid_channels = {a.get("id") for a in get_accounts("youtube")}
+    out: list[dict] = []
+    for item in payload.jobs:
+        if item.channel_id not in valid_channels:
+            out.append({
+                "channel_id": item.channel_id,
+                "ok": False,
+                "error": "channel not found",
+            })
+            continue
+        if item.kind not in ("short", "long"):
+            out.append({
+                "channel_id": item.channel_id,
+                "ok": False,
+                "error": f"invalid kind {item.kind!r}",
+            })
+            continue
+        if item.kind == "short" and item.render_profile and item.render_profile not in ("quality", "fast", "turbo"):
+            out.append({
+                "channel_id": item.channel_id,
+                "ok": False,
+                "error": f"invalid render_profile {item.render_profile!r}",
+            })
+            continue
+
+        ch = next((a for a in get_accounts("youtube") if a.get("id") == item.channel_id), None)
+        args = [
+            "generate",
+            "--channel-id", item.channel_id,
+            "--kind", item.kind,
+            "--image-mode", item.image_mode or "ai",
+        ]
+        if item.custom_topic:
+            args += ["--topic", item.custom_topic]
+        if item.auto_upload:
+            args += ["--upload"]
+        if item.series_id:
+            args += ["--series-id", item.series_id]
+        if item.model:
+            args += ["--model", item.model]
+        if item.sentence_length and item.sentence_length > 0:
+            args += ["--sentence-length", str(item.sentence_length)]
+        if item.hook_style:
+            args += ["--hook-style", item.hook_style]
+        if item.kind == "short" and item.render_profile:
+            args += ["--render-profile", item.render_profile]
+
+        nick = (ch or {}).get("nickname", item.channel_id)
+        label = "Short" if item.kind == "short" else "Long"
+        title = f"[Batch] {label} — {nick}"
+        job = _spawn_job(args, title=title, channel_id=item.channel_id, kind=item.kind)
+        out.append({
+            "channel_id": item.channel_id,
+            "channel_nickname": nick,
+            "kind": item.kind,
+            "job_id": job.id,
+            "ok": True,
+        })
+
+    return {"jobs": out, "spawned": sum(1 for j in out if j.get("ok"))}
 
 
 @app.get("/api/channels/{channel_id}/upload-last")
@@ -1057,6 +1589,57 @@ async def sync_youtube(
         title = "Sync YouTube — todos los canales"
     job = _spawn_job(args, title=title)
     return EventSourceResponse(_stream_job(job))
+
+
+# ---------------------------------------------------------------------------
+# Auto-sync scheduler endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/auto-sync/status")
+def auto_sync_status():
+    """Return the current state of all three tiers + their config. The UI
+    polls this every few seconds so the user can see "next sync in 12 min"
+    live without holding a websocket open."""
+    if _auto_sync_scheduler is None:
+        return {"running": False, "tiers": {}, "config": {}, "logs": {}}
+    return _auto_sync_scheduler.get_state()
+
+
+@app.post("/api/auto-sync/run/{tier}")
+async def auto_sync_run_now(tier: str):
+    """Force a specific tier to run immediately — interrupts whatever wait
+    is in progress without changing the configured interval."""
+    if _auto_sync_scheduler is None:
+        raise HTTPException(503, "Scheduler not initialized")
+    if tier not in ("light", "recent", "full"):
+        raise HTTPException(400, f"Unknown tier {tier!r}")
+    await _auto_sync_scheduler.trigger_now(tier)
+    return {"ok": True, "tier": tier}
+
+
+class AutoSyncConfig(BaseModel):
+    enabled: Optional[bool] = None
+    light_enabled: Optional[bool] = None
+    light_interval_minutes: Optional[int] = None
+    recent_enabled: Optional[bool] = None
+    recent_interval_minutes: Optional[int] = None
+    recent_video_count: Optional[int] = None
+    full_enabled: Optional[bool] = None
+    full_interval_minutes: Optional[int] = None
+
+
+@app.put("/api/auto-sync/config")
+def auto_sync_update_config(payload: AutoSyncConfig):
+    """Patch the auto_sync block in config.json. Only the fields the user
+    explicitly sets get written — leaves other keys alone. The scheduler
+    re-reads config every cycle, so changes apply within ~1 min."""
+    current = _read_config()
+    sub = current.get("auto_sync") or {}
+    patch = {k: v for k, v in payload.model_dump().items() if v is not None}
+    sub.update(patch)
+    current["auto_sync"] = sub
+    _write_config(current)
+    return {"ok": True, "auto_sync": sub}
 
 
 @app.get("/api/twitter/accounts/{account_id}/post")

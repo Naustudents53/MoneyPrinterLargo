@@ -8,6 +8,8 @@ import {
   Search,
   ChevronRight,
   RefreshCw,
+  Users,
+  ArrowUpRight,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
@@ -19,7 +21,7 @@ import { api, type Channel, type ChannelVideo } from "@/lib/api";
 import { ChannelFormDialog } from "./ChannelFormDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { toast } from "sonner";
-import { cn, relativeTime, truncate } from "@/lib/utils";
+import { cn, relativeTime, truncate, formatCompact } from "@/lib/utils";
 
 // Cycle channel accent through the design's 5 brand stops so each card
 // reads with a distinct colour band even when the API doesn't supply one.
@@ -256,6 +258,8 @@ function ChannelCard({
   const flag = flagFromLang(channel.language);
   const voiceShort = compactVoice(channel.short_voice || channel.long_voice || "");
   const initial = (channel.nickname || "?").slice(0, 1).toUpperCase();
+  // Subscriber count surfaced by sync_youtube_cache.py — null = never synced.
+  const subs = channel.subscriber_count;
 
   return (
     <div
@@ -424,6 +428,20 @@ function ChannelCard({
           <span className="font-mono text-[10.5px] text-foreground">
             {channel.videos_count}{" "}
             <span className="text-muted-foreground">vids</span>
+          </span>
+          <span className="text-muted-foreground text-[10.5px]">·</span>
+          <span
+            className="font-mono text-[10.5px] flex items-center gap-1"
+            title={
+              channel.stats_synced_at
+                ? `Sincronizado: ${channel.stats_synced_at}`
+                : "Sin sincronizar — corre Sync YT o activa auto-sync"
+            }
+          >
+            <Users className="h-3 w-3 text-muted-foreground" />
+            <span className={subs == null ? "text-muted-foreground/60" : "text-foreground"}>
+              {formatCompact(subs)}
+            </span>
           </span>
           {voiceShort && (
             <>

@@ -6,24 +6,44 @@ import {
   Check,
   Play,
   Cpu,
+  Eye,
+  Layers,
+  Lightbulb,
+  Loader2,
+  X,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { ProgressDialog } from "@/components/ProgressDialog";
+import { ScriptPreviewDialog } from "@/components/ScriptPreviewDialog";
+import { BatchGenerateDialog } from "@/components/BatchGenerateDialog";
 import {
   api,
   SHORT_DURATION_OPTIONS,
   HOOK_PROFILE_OPTIONS,
+  SHORT_RENDER_PROFILE_OPTIONS,
   type Channel,
   type HookProfile,
+  type LLMModel,
   type SeriesEntry,
   type ShortDurationSeconds,
+  type ShortRenderProfile,
   type SystemInfo,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+
+const SHORT_RENDER_META: Record<ShortRenderProfile, {
+  label: string;
+  hint: string;
+  fps: number;
+}> = {
+  quality: { label: "Calidad", hint: "Ken Burns + karaoke", fps: 30 },
+  fast: { label: "Rápido", hint: "Karaoke, sin zoom", fps: 24 },
+  turbo: { label: "Turbo", hint: "Render limpio", fps: 24 },
+};
 
 export function Generate() {
   const [params] = useSearchParams();
@@ -43,6 +63,7 @@ export function Generate() {
   const [autoUpload, setAutoUpload] = useState(false);
   const [previewAtEnd, setPreviewAtEnd] = useState(false);
   const [shortDuration, setShortDuration] = useState<ShortDurationSeconds>(60);
+  const [shortRenderProfile, setShortRenderProfile] = useState<ShortRenderProfile>("fast");
 
   // Decorative mixer knobs — not wired to the backend. They make the panel
   // feel like a control surface; the actual TTS/BSO volumes live in
@@ -53,16 +74,44 @@ export function Generate() {
   const [pace, setPace] = useState(50);
   const [seed, setSeed] = useState("");
 
-  const [llmProvider, setLlmProvider] = useState<"" | "ollama" | "gemini">("");
+  const [llmProvider, setLlmProvider] = useState<"" | "ollama" | "gemini" | "openai" | "pollinations">("");
   const [llmModel, setLlmModel] = useState<string>("");
-  const [llmModels, setLlmModels] = useState<{
-    ollama: string[];
-    gemini: string[];
-    errors: Record<string, string>;
-  }>({ ollama: [], gemini: [], errors: {} });
+  // Rich model catalog from /api/llm/models — keeps `label` + `description` so
+  // the dropdown can show human-readable names instead of raw ids like
+  // "gemini-2.5-flash-lite" or "kimi-k2.6:cloud".
+  const [llmCatalog, setLlmCatalog] = useState<LLMModel[]>([]);
+
+  const llmModels = useMemo(() => {
+    const buckets: Record<"ollama" | "gemini" | "openai" | "pollinations", LLMModel[]> = {
+      ollama: [],
+      gemini: [],
+      openai: [],
+      pollinations: [],
+    };
+    for (const m of llmCatalog) {
+      if (m.provider in buckets) buckets[m.provider].push(m);
+    }
+    return buckets;
+  }, [llmCatalog]);
 
   const [progressOpen, setProgressOpen] = useState(false);
   const [sseUrl, setSseUrl] = useState<string | null>(null);
+
+  // Script preview flow — opens its own dialog with editable text. After
+  // approval, kicks the full /generate flow with `script_file=<previewId>`
+  // so the renderer skips re-generating the script.
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewSseUrl, setPreviewSseUrl] = useState<string | null>(null);
+
+  // Batch generation — pop a dialog that lets the user queue jobs across
+  // multiple channels in one shot. Independent of the single-job flow above.
+  const [batchOpen, setBatchOpen] = useState(false);
+
+  // Topic suggestions — N LLM-generated ideas tailored to the channel's niche
+  // that the user can click to fill the topic textarea. Empty list = no
+  // suggestions fetched yet; loading flag throttles concurrent calls.
+  const [topicIdeas, setTopicIdeas] = useState<string[]>([]);
+  const [ideasLoading, setIdeasLoading] = useState(false);
 
   useEffect(() => {
     api
@@ -74,18 +123,28 @@ export function Generate() {
       .catch(() => {});
     api.listSeries().then(setSeries).catch(() => {});
     api.systemInfo().then(setInfo).catch(() => {});
-    api.listLlmModels().then(setLlmModels).catch(() => {});
+    api
+      .listLLMModels()
+      .then((d) => setLlmCatalog(d.models ?? []))
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const profile = info?.short_render_profile;
+    if (profile && SHORT_RENDER_PROFILE_OPTIONS.includes(profile)) {
+      setShortRenderProfile(profile);
+    }
+  }, [info?.short_render_profile]);
 
   useEffect(() => {
     if (!llmProvider) {
       setLlmModel("");
       return;
     }
-    const list = llmProvider === "ollama" ? llmModels.ollama : llmModels.gemini;
+    const list = llmModels[llmProvider] ?? [];
     if (list.length === 0) setLlmModel("");
-    else if (!list.includes(llmModel)) setLlmModel(list[0]);
+    else if (!list.some((m) => m.id === llmModel)) setLlmModel(list[0].id);
   }, [llmProvider, llmModels, llmModel]);
 
   const selectedChannel = useMemo(
@@ -115,6 +174,7 @@ export function Generate() {
       auto_upload: serverAutoUpload,
       series_id: seriesId || undefined,
       duration_seconds: kind === "short" ? shortDuration : undefined,
+      render_profile: kind === "short" ? shortRenderProfile : undefined,
       llm_provider: llmProvider || undefined,
       llm_model: llmProvider && llmModel ? llmModel : undefined,
       hook_profile: hookProfile || undefined,
@@ -123,9 +183,87 @@ export function Generate() {
     setProgressOpen(true);
   };
 
+  const fetchTopicIdeas = async () => {
+    if (!channelId) {
+      toast.error("Selecciona un canal");
+      return;
+    }
+    if (ideasLoading) return;
+    setIdeasLoading(true);
+    try {
+      const { topics } = await api.suggestTopics(channelId, {
+        n: 6,
+        model: llmProvider && llmModel ? llmModel : undefined,
+      });
+      setTopicIdeas(topics || []);
+      if (!topics?.length) toast.info("El LLM no devolvió ideas — prueba otro modelo");
+    } catch (e) {
+      toast.error(`No se pudieron generar ideas: ${(e as Error).message}`);
+    } finally {
+      setIdeasLoading(false);
+    }
+  };
+
+  // Re-set the cached ideas whenever the user switches channels — the cached
+  // list belongs to the previous niche and would be misleading.
+  useEffect(() => {
+    setTopicIdeas([]);
+  }, [channelId]);
+
+  // Open the script-preview flow. Only available for shorts (the long-video
+  // pipeline doesn't expose a single-LLM-call preview yet).
+  const startPreview = () => {
+    if (!channelId) {
+      toast.error("Selecciona un canal");
+      return;
+    }
+    if (kind !== "short") {
+      toast.error("La vista previa solo está disponible para shorts");
+      return;
+    }
+    const url = api.previewScriptUrl(channelId, {
+      custom_topic: topic.trim(),
+      model: llmProvider && llmModel ? llmModel : undefined,
+    });
+    setPreviewSseUrl(url);
+    setPreviewOpen(true);
+  };
+
+  // When the user approves the preview, kick the full /generate flow but
+  // pass `script_file=<previewId>` so the runner reuses the script instead
+  // of regenerating it.
+  const onPreviewApproved = (data: { previewId: string }) => {
+    if (!channelId) return;
+    const serverAutoUpload = autoUpload && !previewAtEnd;
+    const url = api.generateUrl(channelId, {
+      kind: "short",
+      custom_topic: topic.trim(),
+      image_mode: imageMode,
+      auto_upload: serverAutoUpload,
+      series_id: seriesId || undefined,
+      duration_seconds: shortDuration,
+      render_profile: shortRenderProfile,
+      llm_provider: llmProvider || undefined,
+      llm_model: llmProvider && llmModel ? llmModel : undefined,
+      script_file: data.previewId,
+    });
+    setPreviewOpen(false);
+    setSseUrl(url);
+    setProgressOpen(true);
+  };
+
   const eta = kind === "short"
-    ? Math.round(shortDuration * 0.18 + 90)
+    ? Math.round(
+        shortDuration *
+          (shortRenderProfile === "quality"
+            ? 0.18
+            : shortRenderProfile === "fast"
+            ? 0.11
+            : 0.07) +
+          90,
+      )
     : 900;
+  const outputFps = kind === "short" ? SHORT_RENDER_META[shortRenderProfile].fps : 24;
 
   return (
     <>
@@ -133,6 +271,36 @@ export function Generate() {
         eyebrow="· estudio"
         title="Generar contenido"
         description="Pipeline LLM → TTS → imagen → render"
+        actions={
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={startPreview}
+              disabled={!channelId || kind !== "short"}
+              title={
+                kind !== "short"
+                  ? "La vista previa solo está disponible para shorts"
+                  : "Revisar el guion antes de renderizar"
+              }
+            >
+              <Eye className="h-4 w-4" />
+              <span className="hidden sm:inline">Vista previa</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => setBatchOpen(true)}
+              disabled={channels.length === 0}
+              title="Generar varios shorts/largos en paralelo"
+            >
+              <Layers className="h-4 w-4" />
+              <span className="hidden sm:inline">Lote</span>
+            </Button>
+          </div>
+        }
       />
 
       <PageShell>
@@ -198,12 +366,80 @@ export function Generate() {
                   />
                 </Field>
                 <Field label="Tema" hint={`${topic.length} chars`}>
-                  <TextArea
-                    value={topic}
-                    onChange={setTopic}
-                    placeholder="Déjalo vacío para que el LLM elija un tema según el niche del canal"
-                    rows={3}
-                  />
+                  <div className="flex flex-col gap-1.5">
+                    <TextArea
+                      value={topic}
+                      onChange={setTopic}
+                      placeholder="Déjalo vacío para que el LLM elija un tema según el niche del canal"
+                      rows={3}
+                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={fetchTopicIdeas}
+                        disabled={!channelId || ideasLoading}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium",
+                          "border transition-colors",
+                          ideasLoading
+                            ? "text-muted-foreground"
+                            : "text-foreground hover:bg-surface",
+                        )}
+                        style={{
+                          borderColor: "hsl(var(--border) / .12)",
+                          background: "hsl(var(--bg-raised) / .5)",
+                        }}
+                        title="Pídele al LLM 6 ideas de temas según el niche del canal"
+                      >
+                        {ideasLoading ? (
+                          <Loader2 className="h-3 w-3 animate-spin" strokeWidth={1.7} />
+                        ) : (
+                          <Lightbulb
+                            className="h-3 w-3"
+                            strokeWidth={1.7}
+                            style={{ color: "hsl(var(--gold))" }}
+                          />
+                        )}
+                        {ideasLoading ? "Pensando…" : "Dame ideas"}
+                      </button>
+                      {topicIdeas.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setTopicIdeas([])}
+                          className="inline-flex items-center gap-1 text-[10.5px] text-muted-foreground hover:text-foreground"
+                          title="Limpiar ideas sugeridas"
+                        >
+                          <X className="h-3 w-3" strokeWidth={1.7} />
+                          limpiar
+                        </button>
+                      )}
+                    </div>
+                    {topicIdeas.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-0.5">
+                        {topicIdeas.map((idea) => (
+                          <button
+                            key={idea}
+                            type="button"
+                            onClick={() => {
+                              setTopic(idea);
+                              // Remove the picked idea so the user sees what's
+                              // left instead of being tempted to re-click it.
+                              setTopicIdeas((prev) => prev.filter((i) => i !== idea));
+                            }}
+                            className="text-left text-[11.5px] leading-snug px-2.5 py-1.5 rounded-md transition-colors max-w-full"
+                            style={{
+                              background: "hsl(var(--bg-raised) / .55)",
+                              border: "1px solid hsl(var(--border) / .12)",
+                              color: "hsl(var(--foreground))",
+                            }}
+                            title="Usar este tema"
+                          >
+                            {idea}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </Field>
                 {kind === "long" && channelSeries.length > 0 && (
                   <Field label="Serie (opcional)">
@@ -229,19 +465,35 @@ export function Generate() {
                 style={{ borderRight: "1px solid hsl(var(--border) / .07)" }}
               >
                 {kind === "short" && (
-                  <Field label="Duración">
-                    <Segmented
-                      value={String(shortDuration)}
-                      onChange={(v) =>
-                        setShortDuration(Number(v) as ShortDurationSeconds)
-                      }
-                      accentVar="var(--accent)"
-                      options={SHORT_DURATION_OPTIONS.map((s) => ({
-                        value: String(s),
-                        label: `${s}s`,
-                      }))}
-                    />
-                  </Field>
+                  <>
+                    <Field label="Duración">
+                      <Segmented
+                        value={String(shortDuration)}
+                        onChange={(v) =>
+                          setShortDuration(Number(v) as ShortDurationSeconds)
+                        }
+                        accentVar="var(--accent)"
+                        options={SHORT_DURATION_OPTIONS.map((s) => ({
+                          value: String(s),
+                          label: `${s}s`,
+                        }))}
+                      />
+                    </Field>
+                    <Field
+                      label="Render"
+                      hint={SHORT_RENDER_META[shortRenderProfile].hint}
+                    >
+                      <Segmented
+                        value={shortRenderProfile}
+                        onChange={(v) => setShortRenderProfile(v as ShortRenderProfile)}
+                        accentVar="var(--accent)"
+                        options={SHORT_RENDER_PROFILE_OPTIONS.map((p) => ({
+                          value: p,
+                          label: SHORT_RENDER_META[p].label,
+                        }))}
+                      />
+                    </Field>
+                  </>
                 )}
                 <Field label="Fuente de imágenes">
                   <Segmented
@@ -342,7 +594,9 @@ export function Generate() {
                       value={llmProvider || "auto"}
                       onChange={(v) =>
                         setLlmProvider(
-                          v === "auto" ? "" : (v as "ollama" | "gemini"),
+                          v === "auto"
+                            ? ""
+                            : (v as "ollama" | "gemini" | "openai" | "pollinations"),
                         )
                       }
                       options={[
@@ -350,16 +604,26 @@ export function Generate() {
                         {
                           value: "ollama",
                           label: `Ollama${
-                            llmModels.ollama.length
-                              ? ` (${llmModels.ollama.length})`
-                              : ""
+                            llmModels.ollama.length ? ` (${llmModels.ollama.length})` : ""
                           }`,
                         },
                         {
                           value: "gemini",
                           label: `Gemini${
-                            llmModels.gemini.length
-                              ? ` (${llmModels.gemini.length})`
+                            llmModels.gemini.length ? ` (${llmModels.gemini.length})` : ""
+                          }`,
+                        },
+                        {
+                          value: "openai",
+                          label: `OpenAI${
+                            llmModels.openai.length ? ` (${llmModels.openai.length})` : ""
+                          }`,
+                        },
+                        {
+                          value: "pollinations",
+                          label: `Pollinations${
+                            llmModels.pollinations.length
+                              ? ` (${llmModels.pollinations.length})`
                               : ""
                           }`,
                         },
@@ -370,10 +634,10 @@ export function Generate() {
                       <SelectMini
                         value={llmModel}
                         onChange={setLlmModel}
-                        options={(llmProvider === "ollama"
-                          ? llmModels.ollama
-                          : llmModels.gemini
-                        ).map((m) => ({ value: m, label: m }))}
+                        options={(llmModels[llmProvider] ?? []).map((m) => ({
+                          value: m.id,
+                          label: m.label || m.id,
+                        }))}
                       />
                     )}
                   </div>
@@ -406,7 +670,7 @@ export function Generate() {
                   <div className="mt-2.5 flex items-center justify-between text-[11px] text-muted-foreground font-mono">
                     <span>ETA ~{eta}s</span>
                     <span>
-                      · {kind === "short" ? "1080×1920" : "1920×1080"} · 30fps
+                      · {kind === "short" ? "1080×1920" : "1920×1080"} · {outputFps}fps
                     </span>
                   </div>
                 </div>
@@ -461,6 +725,30 @@ export function Generate() {
         kind={kind}
         previewOnFinish={previewAtEnd}
         uploadAfterPreview={autoUpload && previewAtEnd}
+      />
+
+      <ScriptPreviewDialog
+        open={previewOpen}
+        onOpenChange={(o) => {
+          setPreviewOpen(o);
+          if (!o) setPreviewSseUrl(null);
+        }}
+        sseUrl={previewSseUrl}
+        onApprove={onPreviewApproved}
+        onRegenerate={startPreview}
+      />
+
+      <BatchGenerateDialog
+        open={batchOpen}
+        onOpenChange={setBatchOpen}
+        channels={channels}
+        defaults={{
+          kind,
+          imageMode,
+          autoUpload,
+          model: llmProvider && llmModel ? llmModel : undefined,
+          renderProfile: kind === "short" ? shortRenderProfile : undefined,
+        }}
       />
     </>
   );

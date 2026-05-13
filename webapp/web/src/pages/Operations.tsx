@@ -30,6 +30,8 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { StatCard } from "@/components/StatCard";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -65,26 +67,46 @@ export function Operations() {
       />
       <PageShell>
         <Tabs defaultValue="disk" className="w-full">
-          <TabsList className="flex flex-wrap h-auto gap-1">
-            <TabsTrigger value="disk" className="gap-2">
-              <HardDrive className="h-4 w-4" /> Disco
+          <TabsList className="flex flex-wrap h-auto gap-0.5 bg-transparent border-0 p-0 justify-start">
+            <TabsTrigger
+              value="disk"
+              className="gap-2 rounded-none border-b-2 border-transparent bg-transparent px-4 py-2.5 data-[state=active]:bg-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:ring-0 data-[state=active]:text-foreground hover:text-foreground transition-colors"
+            >
+              <HardDrive className="h-3.5 w-3.5" /> Disco
             </TabsTrigger>
-            <TabsTrigger value="cost" className="gap-2">
-              <DollarSign className="h-4 w-4" /> Costos
+            <TabsTrigger
+              value="cost"
+              className="gap-2 rounded-none border-b-2 border-transparent bg-transparent px-4 py-2.5 data-[state=active]:bg-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:ring-0 data-[state=active]:text-foreground hover:text-foreground transition-colors"
+            >
+              <DollarSign className="h-3.5 w-3.5" /> Costos
             </TabsTrigger>
-            <TabsTrigger value="errors" className="gap-2">
-              <AlertTriangle className="h-4 w-4" /> Errores
+            <TabsTrigger
+              value="errors"
+              className="gap-2 rounded-none border-b-2 border-transparent bg-transparent px-4 py-2.5 data-[state=active]:bg-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:ring-0 data-[state=active]:text-foreground hover:text-foreground transition-colors"
+            >
+              <AlertTriangle className="h-3.5 w-3.5" /> Errores
             </TabsTrigger>
-            <TabsTrigger value="logs" className="gap-2">
-              <ListChecks className="h-4 w-4" /> Historial
+            <TabsTrigger
+              value="logs"
+              className="gap-2 rounded-none border-b-2 border-transparent bg-transparent px-4 py-2.5 data-[state=active]:bg-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:ring-0 data-[state=active]:text-foreground hover:text-foreground transition-colors"
+            >
+              <ListChecks className="h-3.5 w-3.5" /> Historial
             </TabsTrigger>
-            <TabsTrigger value="notifications" className="gap-2">
-              <Bell className="h-4 w-4" /> Notificaciones
+            <TabsTrigger
+              value="notifications"
+              className="gap-2 rounded-none border-b-2 border-transparent bg-transparent px-4 py-2.5 data-[state=active]:bg-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:ring-0 data-[state=active]:text-foreground hover:text-foreground transition-colors"
+            >
+              <Bell className="h-3.5 w-3.5" /> Notificaciones
             </TabsTrigger>
-            <TabsTrigger value="backup" className="gap-2">
-              <Archive className="h-4 w-4" /> Backup
+            <TabsTrigger
+              value="backup"
+              className="gap-2 rounded-none border-b-2 border-transparent bg-transparent px-4 py-2.5 data-[state=active]:bg-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:ring-0 data-[state=active]:text-foreground hover:text-foreground transition-colors"
+            >
+              <Archive className="h-3.5 w-3.5" /> Backup
             </TabsTrigger>
           </TabsList>
+          <div className="h-px bg-border/30 -mt-px" />
+
 
           <TabsContent value="disk"><DiskTab /></TabsContent>
           <TabsContent value="cost"><CostTab /></TabsContent>
@@ -133,62 +155,167 @@ function DiskTab() {
   if (loading && !data) return <Skeleton className="h-96 w-full" />;
   if (!data) return null;
 
+  const oldestRel = data.oldest
+    ? relativeTime(new Date(data.oldest.mtime * 1000).toISOString())
+    : "—";
+  const usedPct =
+    data.disk_free_bytes >= 0 && data.total_bytes > 0
+      ? Math.min(100, (data.total_bytes / (data.total_bytes + data.disk_free_bytes)) * 100)
+      : 0;
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatTile label="Total .mp/" value={formatBytes(data.total_bytes)} sub={`${data.files} archivos`} />
-        <StatTile label="Libre en disco" value={data.disk_free_bytes >= 0 ? formatBytes(data.disk_free_bytes) : "—"} />
-        <StatTile label="Tipos" value={String(data.by_ext.length)} sub="extensiones" />
-        <StatTile
+        <StatCard
+          label="Total .mp/"
+          value={formatBytes(data.total_bytes)}
+          hint={`${data.files} archivos`}
+          icon={HardDrive}
+          accent="primary"
+        />
+        <StatCard
+          label="Libre en disco"
+          value={data.disk_free_bytes >= 0 ? formatBytes(data.disk_free_bytes) : "—"}
+          hint={usedPct > 0 ? `${usedPct.toFixed(1)}% ocupado` : undefined}
+          accent="lima"
+        />
+        <StatCard
+          label="Tipos"
+          value={String(data.by_ext.length)}
+          hint="extensiones"
+          accent="violeta"
+        />
+        <StatCard
           label="Más antiguo"
-          value={data.oldest ? relativeTime(new Date(data.oldest.mtime * 1000).toISOString()) : "—"}
-          sub={data.oldest ? truncate(data.oldest.path, 30) : undefined}
+          value={oldestRel}
+          hint={data.oldest ? truncate(data.oldest.path.split(/[\\/]/).pop() || data.oldest.path, 28) : undefined}
+          accent="gold"
         />
       </div>
 
-      <div className="flex gap-2">
-        <Button onClick={load} variant="outline" size="sm" className="gap-2">
-          <RefreshCw className="h-4 w-4" /> Refrescar
-        </Button>
-        <Button onClick={() => setConfirmClear(true)} variant="outline" size="sm" className="gap-2">
-          <Eraser className="h-4 w-4" /> Borrar scratch (.wav/.png/.srt)
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
+        <div className="flex items-center gap-2">
+          <span className="eyebrow">Mantenimiento</span>
+          <span className="text-[11px] text-muted-foreground">
+            Limpieza segura — no toca .mp4 ni JSONs de estado.
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <Button onClick={load} variant="outline" size="sm" className="gap-2">
+            <RefreshCw className="h-3.5 w-3.5" /> Refrescar
+          </Button>
+          <Button onClick={() => setConfirmClear(true)} variant="outline" size="sm" className="gap-2">
+            <Eraser className="h-3.5 w-3.5" /> Borrar scratch
+          </Button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader><CardTitle className="text-base">Por extensión</CardTitle></CardHeader>
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+        {/* Extension breakdown — 2/5 narrow column with editorial label */}
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-3">
+            <div className="flex items-baseline justify-between">
+              <div className="flex flex-col gap-0.5">
+                <span className="eyebrow">Distribución</span>
+                <CardTitle>Por extensión</CardTitle>
+              </div>
+              <span className="font-mono text-[10px] tracking-wider uppercase text-muted-foreground">
+                {data.by_ext.length} tipos
+              </span>
+            </div>
+          </CardHeader>
           <CardContent>
-            <div className="space-y-1.5">
-              {data.by_ext.map((row) => {
+            <div className="space-y-3">
+              {data.by_ext.map((row, i) => {
                 const pct = data.total_bytes ? (row.bytes / data.total_bytes) * 100 : 0;
+                const accentVar = EXT_ACCENTS[i % EXT_ACCENTS.length];
                 return (
-                  <div key={row.ext}>
-                    <div className="flex justify-between text-xs">
-                      <span className="font-mono">{row.ext}</span>
-                      <span className="text-muted-foreground">{formatBytes(row.bytes)} · {row.count}</span>
+                  <div key={row.ext} className="group">
+                    <div className="flex justify-between items-baseline mb-1">
+                      <span
+                        className="font-mono text-[12px] font-medium"
+                        style={{ color: `hsl(var(--${accentVar}))` }}
+                      >
+                        {row.ext}
+                      </span>
+                      <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+                        {formatBytes(row.bytes)} · {row.count}
+                      </span>
                     </div>
-                    <div className="h-1.5 bg-muted/60 rounded-full overflow-hidden">
-                      <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
+                    <div className="h-1 bg-muted/40 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          width: `${Math.max(pct, 1)}%`,
+                          background: `hsl(var(--${accentVar}) / 0.85)`,
+                        }}
+                      />
                     </div>
                   </div>
                 );
               })}
-              {data.by_ext.length === 0 && <EmptyState title="Vacío" description="No hay archivos en .mp/" />}
+              {data.by_ext.length === 0 && (
+                <EmptyState title="Vacío" description="No hay archivos en .mp/" />
+              )}
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader><CardTitle className="text-base">Top 25 archivos</CardTitle></CardHeader>
+        {/* Top files — 3/5 wide column with rank badges */}
+        <Card className="lg:col-span-3">
+          <CardHeader className="pb-3">
+            <div className="flex items-baseline justify-between">
+              <div className="flex flex-col gap-0.5">
+                <span className="eyebrow">Top consumidores</span>
+                <CardTitle>25 archivos más pesados</CardTitle>
+              </div>
+              <span className="font-mono text-[10px] tracking-wider uppercase text-muted-foreground">
+                {formatBytes(data.biggest.reduce((s, f) => s + f.bytes, 0))} total
+              </span>
+            </div>
+          </CardHeader>
           <CardContent>
-            <div className="text-xs space-y-1 max-h-[420px] overflow-y-auto">
-              {data.biggest.map((f) => (
-                <div key={f.path} className="flex justify-between gap-3 py-1 border-b border-border/40 last:border-0">
-                  <span className="font-mono truncate" title={f.path}>{f.path}</span>
-                  <span className="text-muted-foreground shrink-0">{formatBytes(f.bytes)}</span>
-                </div>
-              ))}
+            <div className="max-h-[440px] overflow-y-auto scrollbar-thin -mx-2 px-2">
+              {data.biggest.length === 0 ? (
+                <EmptyState title="Sin datos" description="No hay archivos para listar." />
+              ) : (
+                <ul className="space-y-0.5">
+                  {data.biggest.map((f, i) => {
+                    const pct = data.biggest[0]?.bytes
+                      ? (f.bytes / data.biggest[0].bytes) * 100
+                      : 0;
+                    return (
+                      <li
+                        key={f.path}
+                        className="group relative flex items-center gap-3 px-2 py-1.5 rounded-md hover:bg-muted/30 transition-colors"
+                      >
+                        <span
+                          className={cn(
+                            "shrink-0 w-6 text-right font-mono text-[10px] tabular-nums",
+                            i < 3 ? "text-foreground/80 font-semibold" : "text-muted-foreground/60",
+                          )}
+                        >
+                          {String(i + 1).padStart(2, "0")}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-mono text-[11.5px] truncate text-foreground/90" title={f.path}>
+                            {f.path.split(/[\\/]/).pop() || f.path}
+                          </div>
+                          <div className="h-[2px] mt-1 bg-muted/30 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-primary/60 group-hover:bg-primary transition-colors"
+                              style={{ width: `${Math.max(pct, 2)}%` }}
+                            />
+                          </div>
+                        </div>
+                        <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
+                          {formatBytes(f.bytes)}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -205,6 +332,8 @@ function DiskTab() {
     </div>
   );
 }
+
+const EXT_ACCENTS = ["primary", "accent", "gold", "lima", "violeta", "rose"] as const;
 
 // ---------------------------------------------------------------------------
 // Cost
@@ -241,12 +370,12 @@ function CostTab() {
   const maxDay = Math.max(0, ...data.by_day.map((d) => d.cost_usd));
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatTile label={`Total ${days}d`} value={`$${data.total_usd.toFixed(4)}`} />
-        <StatTile label="Llamadas" value={String(data.total_calls)} />
-        <StatTile label="Proveedores" value={String(data.by_provider.length)} />
-        <StatTile label="Modelos" value={String(data.by_model.length)} />
+        <StatCard label={`Total ${days}d`} value={`$${data.total_usd.toFixed(4)}`} accent="primary" icon={DollarSign} />
+        <StatCard label="Llamadas" value={String(data.total_calls)} accent="accent" />
+        <StatCard label="Proveedores" value={String(data.by_provider.length)} accent="lima" />
+        <StatCard label="Modelos" value={String(data.by_model.length)} accent="violeta" />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -269,7 +398,17 @@ function CostTab() {
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Costo por día</CardTitle></CardHeader>
+        <CardHeader className="pb-3">
+          <div className="flex items-baseline justify-between">
+            <div className="flex flex-col gap-0.5">
+              <span className="eyebrow">Serie temporal</span>
+              <CardTitle>Costo por día</CardTitle>
+            </div>
+            <span className="font-mono text-[10px] tracking-wider uppercase text-muted-foreground">
+              {data.by_day.length} días con actividad
+            </span>
+          </div>
+        </CardHeader>
         <CardContent>
           {data.by_day.length === 0 ? (
             <EmptyState
@@ -277,13 +416,34 @@ function CostTab() {
               description="No hay llamadas registradas en este rango. Las llamadas a Gemini se loguean automáticamente."
             />
           ) : (
-            <div className="flex items-end gap-1 h-40">
+            <div className="flex items-end gap-1 h-44 pt-4">
               {data.by_day.map((d) => {
                 const h = maxDay > 0 ? (d.cost_usd / maxDay) * 100 : 0;
+                const isPeak = d.cost_usd === maxDay && maxDay > 0;
                 return (
-                  <div key={d.day} className="flex-1 flex flex-col items-center gap-1 group" title={`${d.day} · $${d.cost_usd.toFixed(4)} · ${d.calls} llamadas`}>
-                    <div className="w-full bg-primary/70 hover:bg-primary rounded-t" style={{ height: `${h}%`, minHeight: 2 }} />
-                    <span className="text-[9px] text-muted-foreground rotate-45 origin-left whitespace-nowrap mt-3">{d.day.slice(5)}</span>
+                  <div
+                    key={d.day}
+                    className="flex-1 flex flex-col items-center gap-1 group"
+                    title={`${d.day} · $${d.cost_usd.toFixed(4)} · ${d.calls} llamadas`}
+                  >
+                    <div
+                      className={cn(
+                        "w-full rounded-t-sm transition-all relative",
+                        isPeak
+                          ? "bg-accent group-hover:bg-accent"
+                          : "bg-primary/55 group-hover:bg-primary",
+                      )}
+                      style={{ height: `${h}%`, minHeight: 2 }}
+                    >
+                      {isPeak && (
+                        <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[9px] font-mono text-accent tabular-nums whitespace-nowrap">
+                          ${d.cost_usd.toFixed(3)}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[9px] text-muted-foreground rotate-45 origin-left whitespace-nowrap mt-3 font-mono">
+                      {d.day.slice(5)}
+                    </span>
                   </div>
                 );
               })}
@@ -294,15 +454,21 @@ function CostTab() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <CardHeader><CardTitle className="text-base">Por proveedor</CardTitle></CardHeader>
+          <CardHeader className="pb-3">
+            <span className="eyebrow">Breakdown</span>
+            <CardTitle>Por proveedor</CardTitle>
+          </CardHeader>
           <CardContent>
-            <BucketList rows={data.by_provider.map((b) => ({ key: b.provider!, ...b }))} />
+            <BucketList rows={data.by_provider.map((b) => ({ key: b.provider!, ...b }))} accentBase="primary" />
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-base">Por modelo</CardTitle></CardHeader>
+          <CardHeader className="pb-3">
+            <span className="eyebrow">Breakdown</span>
+            <CardTitle>Por modelo</CardTitle>
+          </CardHeader>
           <CardContent>
-            <BucketList rows={data.by_model.map((b) => ({ key: b.model!, ...b }))} />
+            <BucketList rows={data.by_model.map((b) => ({ key: b.model!, ...b }))} accentBase="accent" />
           </CardContent>
         </Card>
       </div>
@@ -353,21 +519,35 @@ function CostTab() {
   );
 }
 
-function BucketList({ rows }: { rows: Array<{ key: string; cost_usd: number; calls: number }> }) {
+function BucketList({
+  rows,
+  accentBase = "primary",
+}: {
+  rows: Array<{ key: string; cost_usd: number; calls: number }>;
+  accentBase?: "primary" | "accent";
+}) {
   if (rows.length === 0) return <span className="text-xs text-muted-foreground">Sin datos.</span>;
   const total = rows.reduce((s, r) => s + r.cost_usd, 0) || 1;
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2.5">
       {rows.map((r) => {
         const pct = (r.cost_usd / total) * 100;
         return (
-          <div key={r.key}>
-            <div className="flex justify-between text-xs">
-              <span className="font-mono truncate max-w-[200px]">{r.key}</span>
-              <span className="text-muted-foreground">${r.cost_usd.toFixed(4)} · {r.calls}</span>
+          <div key={r.key} className="group">
+            <div className="flex justify-between items-baseline mb-1">
+              <span className="font-mono text-[12px] truncate max-w-[220px]">{r.key}</span>
+              <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+                ${r.cost_usd.toFixed(4)} <span className="opacity-60">· {r.calls}</span>
+              </span>
             </div>
-            <div className="h-1.5 bg-muted/60 rounded-full overflow-hidden">
-              <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
+            <div className="h-1 bg-muted/40 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all group-hover:opacity-100"
+                style={{
+                  width: `${Math.max(pct, 1)}%`,
+                  background: `hsl(var(--${accentBase}) / 0.8)`,
+                }}
+              />
             </div>
           </div>
         );

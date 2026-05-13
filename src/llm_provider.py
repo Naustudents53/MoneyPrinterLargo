@@ -4,7 +4,18 @@ import time as _time
 import requests
 from contextlib import contextmanager
 
-from config import get_ollama_base_url, get_llm_provider, get_gemini_api_key, get_gemini_model, get_gemini_models
+from config import (
+    get_ollama_base_url,
+    get_llm_provider,
+    get_pollinations_text_model,
+    get_gemini_api_key,
+    get_gemini_model,
+    get_gemini_models,
+    get_openai_api_key,
+    get_openai_base_url,
+    get_openai_models,
+    get_openai_reasoning_effort,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -21,6 +32,10 @@ _GEMINI_PRICING = {
     "gemini-2.0-flash":      {"in": 0.10, "out": 0.40},
 }
 
+_OPENAI_PRICING = {
+    "gpt-5.5": {"in": 5.00, "out": 30.00},
+}
+
 
 def _estimate_gemini_cost(model: str, in_tokens: int, out_tokens: int) -> float:
     p = _GEMINI_PRICING.get(model)
@@ -34,6 +49,18 @@ def _estimate_gemini_cost(model: str, in_tokens: int, out_tokens: int) -> float:
     return (in_tokens / 1_000_000) * p["in"] + (out_tokens / 1_000_000) * p["out"]
 
 
+def _estimate_openai_cost(model: str, in_tokens: int, out_tokens: int) -> float:
+    p = _OPENAI_PRICING.get(model)
+    if not p:
+        for k, v in _OPENAI_PRICING.items():
+            if model.startswith(k):
+                p = v
+                break
+    if not p:
+        return 0.0
+    return (in_tokens / 1_000_000) * p["in"] + (out_tokens / 1_000_000) * p["out"]
+
+
 def _log_cost(provider: str, model: str, in_tokens: int, out_tokens: int,
               cost_usd: float | None = None) -> None:
     try:
@@ -42,6 +69,8 @@ def _log_cost(provider: str, model: str, in_tokens: int, out_tokens: int,
         return
     if cost_usd is None and provider == "gemini":
         cost_usd = _estimate_gemini_cost(model, in_tokens, out_tokens)
+    if cost_usd is None and provider == "openai":
+        cost_usd = _estimate_openai_cost(model, in_tokens, out_tokens)
     entry = {
         "ts": _time.time(),
         "provider": provider,
@@ -65,6 +94,7 @@ _disabled_providers: set = set()
 _last_used_provider: str | None = None
 _disabled_gemini_models: set = set()
 _disabled_ollama_models: set = set()
+_disabled_openai_models: set = set()
 # When the user explicitly chose a provider+model from the UI, the long-video
 # pipeline must respect that choice and skip its hardcoded force_provider call.
 _user_override: bool = False
@@ -205,8 +235,31 @@ def _ollama_client():
 
 
 def list_models() -> list[str]:
+    provider = _llm_provider or get_llm_provider()
+    if provider == "pollinations":
+        return _list_pollinations_models()
+    if provider == "openai":
+        return get_openai_models()
     response = _ollama_client().list()
     return sorted(m.model for m in response.models)
+
+
+def _list_pollinations_models() -> list[str]:
+    try:
+        resp = requests.get("https://text.pollinations.ai/models", timeout=15)
+        resp.raise_for_status()
+        models_data = resp.json()
+        return sorted(
+            m.get("name", m.get("id", "unknown"))
+            for m in models_data
+            if isinstance(m, dict)
+        )
+    except Exception:
+        return [
+            "openai", "openai-large", "openai-reasoning",
+            "qwen-coder", "llama", "mistral",
+            "deepseek", "deepseek-r1", "gemini",
+        ]
 
 
 def select_model(model: str) -> None:
@@ -352,33 +405,56 @@ _SYSTEM_PROMPT = (
 )
 
 
-def generate_text(prompt: str, model_name: str = None) -> str:
-    provider = _llm_provider or get_llm_provider()
+def generate_text(prompt: str, model_name: str = None, temperature: float = 0.7) -> str:
+    provider = (_llm_provider or get_llm_provider() or "").lower()
 
     # When the user explicitly chose a provider from the UI, do NOT cross-
-    # fallback to the other one. Pick Gemini → only Gemini; pick Ollama → only
-    # Ollama (its internal model cascade still applies). The auto path keeps
-    # the historical cross-provider safety net.
+    # fallback to the other one. Pick Gemini → only Gemini; pick OpenAI → only
+    # OpenAI; pick Ollama → only Ollama (its internal model cascade still
+    # applies). The auto path keeps the historical cross-provider safety net.
     if _user_override:
         if provider == "gemini":
             # Pin to the model the user explicitly chose; if none, fall back
             # to the configured cascade (mirrors Ollama's behaviour).
             providers = [
-                ("gemini", lambda: _generate_text_gemini(prompt, model_name or _selected_model or None)),
+                ("gemini", lambda: _generate_text_gemini(
+                    prompt,
+                    model=model_name or _selected_model or None,
+                    temperature=temperature,
+                )),
             ]
+        elif provider == "openai":
+            providers = [("openai", lambda: _generate_text_openai(prompt, model_name or _selected_model, temperature=temperature))]
+        elif provider == "pollinations":
+            providers = [("pollinations", lambda: _generate_text_pollinations(prompt, model_name or _selected_model))]
         else:
             providers = [
                 ("ollama", lambda: _generate_text_ollama(prompt, model_name or _selected_model)),
             ]
+    elif provider == "openai":
+        providers = [
+            ("openai", lambda: _generate_text_openai(prompt, model_name or _selected_model, temperature=temperature)),
+            ("gemini", lambda: _generate_text_gemini(prompt, temperature=temperature)),
+            ("ollama", lambda: _generate_text_ollama(prompt, None)),
+            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
+        ]
     elif provider == "gemini":
         providers = [
-            ("gemini", lambda: _generate_text_gemini(prompt)),
+            ("gemini", lambda: _generate_text_gemini(prompt, temperature=temperature)),
+            ("ollama", lambda: _generate_text_ollama(prompt, None)),
+            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
+        ]
+    elif provider == "pollinations":
+        providers = [
+            ("pollinations", lambda: _generate_text_pollinations(prompt, model_name)),
+            ("gemini", lambda: _generate_text_gemini(prompt, temperature=temperature)),
             ("ollama", lambda: _generate_text_ollama(prompt, None)),
         ]
     else:
         providers = [
             ("ollama", lambda: _generate_text_ollama(prompt, model_name or _selected_model)),
-            ("gemini", lambda: _generate_text_gemini(prompt)),
+            ("gemini", lambda: _generate_text_gemini(prompt, temperature=temperature)),
+            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
         ]
 
     last_error = None
@@ -405,7 +481,9 @@ def generate_text(prompt: str, model_name: str = None) -> str:
             msg = str(e).lower()
             permanent = (
                 "no gemini api key" in msg
+                or "no openai api key" in msg
                 or "all gemini models" in msg
+                or "all openai models" in msg
                 or "all ollama fallback models" in msg
             )
             if permanent:
@@ -432,7 +510,127 @@ def _is_garbage_response(text: str) -> bool:
     return any(phrase in start for phrase in garbage_phrases)
 
 
-def _ollama_chat_once(client, model: str, messages: list):
+def _extract_openai_text(data: dict) -> str:
+    text = data.get("output_text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+
+    chunks: list[str] = []
+    for item in data.get("output", []) or []:
+        if not isinstance(item, dict):
+            continue
+        for part in item.get("content", []) or []:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") in {"output_text", "text"} and part.get("text"):
+                chunks.append(str(part["text"]))
+
+    if chunks:
+        return "\n".join(chunks).strip()
+
+    try:
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return ""
+
+
+def _is_openai_reasoning_model(model: str) -> bool:
+    m = (model or "").lower()
+    return m.startswith("gpt-5") or m.startswith("o")
+
+
+def _openai_error_message(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+        err = payload.get("error") or {}
+        if isinstance(err, dict):
+            return str(err.get("message") or payload)
+        return str(err or payload)
+    except Exception:
+        return response.text[:500]
+
+
+def _generate_text_openai(prompt: str, model: str = None, temperature: float = 0.7) -> str:
+    """Generate text using the OpenAI Responses API, cascading through models."""
+    api_key = get_openai_api_key()
+    if not api_key:
+        raise RuntimeError("No OpenAI API key configured")
+
+    chain: list[str] = []
+    if model:
+        chain.append(model)
+    for m in get_openai_models():
+        if m not in chain:
+            chain.append(m)
+
+    candidates = [m for m in chain if m not in _disabled_openai_models]
+    if not candidates:
+        raise RuntimeError("All OpenAI models have been disabled this session")
+
+    effort = get_openai_reasoning_effort().lower()
+    if effort not in {"none", "low", "medium", "high", "xhigh"}:
+        effort = "medium"
+
+    url = f"{get_openai_base_url().rstrip('/')}/responses"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    last_error = None
+    for candidate in candidates:
+        payload = {
+            "model": candidate,
+            "instructions": _SYSTEM_PROMPT,
+            "input": prompt,
+            "store": False,
+        }
+        if _is_openai_reasoning_model(candidate):
+            payload["reasoning"] = {"effort": effort}
+        else:
+            payload["temperature"] = temperature
+
+        try:
+            print(f"  [OpenAI] Trying model: {candidate}")
+            response = requests.post(url, headers=headers, json=payload, timeout=180)
+            if response.status_code >= 400:
+                raise RuntimeError(f"HTTP {response.status_code}: {_openai_error_message(response)}")
+
+            data = response.json()
+            text = _extract_openai_text(data)
+            if not text:
+                raise RuntimeError(f"OpenAI returned empty text: {data}")
+
+            usage = data.get("usage") or {}
+            _log_cost(
+                "openai", candidate,
+                int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0),
+                int(usage.get("output_tokens") or usage.get("completion_tokens") or 0),
+            )
+            print(f"  [OpenAI] Using model: {candidate}")
+            return text
+        except Exception as e:
+            err_msg = str(e).lower()
+            print(f"  [OpenAI] Model '{candidate}' failed: {e}")
+            model_error_markers = (
+                "model", "not found", "does not exist", "unsupported",
+                "not available", "permission",
+            )
+            transient_markers = (
+                "429", "rate limit", "timeout", "timed out", "temporarily",
+                "503", "504", "overloaded",
+            )
+            if (
+                any(t in err_msg for t in model_error_markers)
+                and not any(t in err_msg for t in transient_markers)
+            ):
+                _disabled_openai_models.add(candidate)
+            last_error = e
+
+    raise RuntimeError(f"All OpenAI models failed. Last error: {last_error}")
+
+
+def _ollama_chat_once(client, model: str, messages: list) -> str:
     started = _time.time()
     if _ollama_think is not None:
         try:
@@ -531,7 +729,11 @@ def _generate_text_ollama(prompt: str, model: str = None) -> str:
     raise RuntimeError(f"All Ollama fallback models failed. Last error: {last_error}")
 
 
-def _generate_text_gemini(prompt: str, model: str | None = None) -> str:
+def _generate_text_gemini(
+    prompt: str,
+    model: str | None = None,
+    temperature: float = 0.7,
+) -> str:
     """Generate text using Google Gemini API, optionally pinned to one model.
 
     When the user picked a specific Gemini model from the UI (via
@@ -556,7 +758,7 @@ def _generate_text_gemini(prompt: str, model: str | None = None) -> str:
             {"role": "user", "parts": [{"text": prompt}]}
         ],
         "generationConfig": {
-            "temperature": 0.7,
+            "temperature": temperature,
         },
     }
 
@@ -606,3 +808,70 @@ def _generate_text_gemini(prompt: str, model: str | None = None) -> str:
             last_error = e
 
     raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
+
+
+def _generate_text_pollinations(prompt: str, model: str = None) -> str:
+    """Generate text using the free text.pollinations.ai endpoint.
+
+    Tries the OpenAI-compatible POST first, then falls back to the simple
+    GET endpoint. Retries up to 3 times with progressive backoff because the
+    free tier can rate-limit aggressively.
+    """
+    import time as _time
+    import random as _random
+
+    model = model or get_pollinations_text_model() or "openai"
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        "stream": False,
+        "seed": _random.randint(1, 999999),
+        "cache": False,
+    }
+
+    last_error: Exception | None = None
+    for attempt in range(3):
+        if attempt > 0:
+            wait = 10 * attempt
+            print(f"  [Pollinations] Retry {attempt}/2, waiting {wait}s...")
+            _time.sleep(wait)
+
+        try:
+            response = requests.post(
+                "https://text.pollinations.ai/openai",
+                json=payload,
+                timeout=120,
+            )
+            response.raise_for_status()
+            data = response.json()
+            text = data["choices"][0]["message"]["content"].strip()
+            if text:
+                print(f"  [Pollinations] Using model: {model}")
+                return text
+            raise RuntimeError("Pollinations returned empty text")
+        except Exception as e:
+            last_error = e
+
+        try:
+            import urllib.parse
+            encoded = urllib.parse.quote(prompt[:500])
+            seed = _random.randint(1, 999999)
+            resp = requests.get(
+                f"https://text.pollinations.ai/{encoded}?model={model}&seed={seed}&noCache=true",
+                timeout=120,
+            )
+            resp.raise_for_status()
+            text = resp.text.strip()
+            if text:
+                print(f"  [Pollinations] Using model: {model} (GET fallback)")
+                return text
+        except Exception as e2:
+            last_error = e2
+
+    raise RuntimeError(
+        f"Pollinations text generation failed after 3 attempts: {last_error}"
+    )
