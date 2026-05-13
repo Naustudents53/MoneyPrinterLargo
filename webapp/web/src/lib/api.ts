@@ -33,6 +33,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const SHORT_DURATION_OPTIONS = [60, 120, 180] as const;
 export type ShortDurationSeconds = (typeof SHORT_DURATION_OPTIONS)[number];
 
+// Mirror of HOOK_PROFILES keys in src/classes/YouTube.py. Keep these in sync —
+// the backend rejects anything else with HTTP 400.
+export const HOOK_PROFILE_OPTIONS = ["educational", "storytelling"] as const;
+export type HookProfile = (typeof HOOK_PROFILE_OPTIONS)[number];
+export const SHORT_RENDER_PROFILE_OPTIONS = ["quality", "fast", "turbo"] as const;
+export type ShortRenderProfile = (typeof SHORT_RENDER_PROFILE_OPTIONS)[number];
+
 export interface Channel {
   id: string;
   nickname: string;
@@ -46,6 +53,10 @@ export interface Channel {
   voice_drama: boolean;
   youtube_handle: string;
   videos_count: number;
+  // Populated by scripts/sync_youtube_cache.py. `null` means the channel has
+  // never been synced — render as "—" so it doesn't look like a real "0 subs".
+  subscriber_count: number | null;
+  stats_synced_at: string;
 }
 
 export interface ChannelInput {
@@ -75,6 +86,7 @@ export interface ChannelVideo {
   like_count?: number;
   comment_count?: number;
   dislike_count?: number;
+  stats_synced_at?: string;
 }
 
 export interface TwitterAccount {
@@ -116,6 +128,7 @@ export interface SystemInfo {
   llm_provider: string;
   tts_voice: string;
   image_aspect_ratio: string;
+  short_render_profile?: ShortRenderProfile;
   stt_provider: string;
   headless: boolean;
   version: string;
@@ -180,6 +193,85 @@ export interface Voice {
   alias: string;
   voice_id: string;
   language: string;
+}
+
+export interface LLMModel {
+  id: string;
+  label: string;
+  provider: "gemini" | "ollama" | "openai" | "pollinations";
+  description: string;
+}
+
+export interface LLMModelList {
+  models: LLMModel[];
+  default: string;
+  active_provider: string;
+}
+
+export interface HookStyle {
+  id: string;       // "<profile>::<name>" — round-trips via MP_HOOK_STYLE_OVERRIDE
+  profile: string;  // "educational" | "storytelling" | ...
+  name: string;     // "You-are-there immersion"
+  example: string;  // short snippet (truncated server-side)
+}
+
+export interface BatchJobItem {
+  channel_id: string;
+  kind: "short" | "long";
+  custom_topic?: string;
+  image_mode?: "ai" | "photos";
+  auto_upload?: boolean;
+  series_id?: string;
+  model?: string;
+  sentence_length?: number;
+  hook_style?: string;
+  render_profile?: ShortRenderProfile;
+}
+
+export interface BatchJobResult {
+  channel_id: string;
+  channel_nickname?: string;
+  kind?: string;
+  job_id?: string;
+  ok: boolean;
+  error?: string;
+}
+
+export interface PreviewScript {
+  id: string;
+  subject: string;
+  script: string;
+}
+
+// Auto-sync scheduler ------------------------------------------------------
+
+export type AutoSyncTier = "light" | "recent" | "full";
+
+export interface AutoSyncConfig {
+  enabled: boolean;
+  light_enabled: boolean;
+  light_interval_minutes: number;
+  recent_enabled: boolean;
+  recent_interval_minutes: number;
+  recent_video_count: number;
+  full_enabled: boolean;
+  full_interval_minutes: number;
+}
+
+export interface AutoSyncTierState {
+  last_run_at?: string;
+  last_run_started_at?: string;
+  next_run_at?: string;
+  last_status?: "ok" | "error" | "running" | "disabled";
+  last_message?: string;
+  consecutive_failures?: number;
+}
+
+export interface AutoSyncStatus {
+  running: boolean;
+  config: AutoSyncConfig;
+  tiers: Partial<Record<AutoSyncTier, AutoSyncTierState>>;
+  logs: Partial<Record<AutoSyncTier, string[]>>;
 }
 
 // ---------- Endpoints ----------
@@ -255,6 +347,49 @@ export const api = {
   // Voices (curated Edge-TTS list — used by ChannelFormDialog selects)
   listVoices: () => request<{ voices: Voice[] }>("/api/voices"),
 
+  // LLM models (used by Generate page selector)
+  listLLMModels: () => request<LLMModelList>("/api/llm/models"),
+
+  // Hook styles (used by Generate page hook selector)
+  listHookStyles: () => request<{ styles: HookStyle[] }>("/api/llm/hook-styles"),
+
+  // Topic suggestions — returns N ideas tailored to the channel's niche.
+  suggestTopics: (channelId: string, params: { n?: number; model?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.n) qs.set("n", String(params.n));
+    if (params.model) qs.set("model", params.model);
+    return request<{ topics: string[] }>(
+      `/api/channels/${channelId}/suggest-topics?${qs.toString()}`,
+    );
+  },
+
+  // Preview-script artifacts (used by "Vista previa" flow)
+  readPreview: (id: string) => request<PreviewScript>(`/api/preview/${id}`),
+  savePreview: (id: string, data: { subject: string; script: string }) =>
+    request<{ ok: boolean }>(`/api/preview/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  // Batch generation (spawns N parallel jobs)
+  generateBatch: (jobs: BatchJobItem[]) =>
+    request<{ jobs: BatchJobResult[]; spawned: number }>("/api/generate-batch", {
+      method: "POST",
+      body: JSON.stringify({ jobs }),
+    }),
+
+  // Auto-sync scheduler
+  getAutoSyncStatus: () => request<AutoSyncStatus>("/api/auto-sync/status"),
+  triggerAutoSync: (tier: AutoSyncTier) =>
+    request<{ ok: boolean; tier: string }>(`/api/auto-sync/run/${tier}`, {
+      method: "POST",
+    }),
+  updateAutoSyncConfig: (patch: Partial<AutoSyncConfig>) =>
+    request<{ ok: boolean; auto_sync: AutoSyncConfig }>("/api/auto-sync/config", {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+
   // Config
   getConfig: () => request<ConfigResponse>("/api/config"),
   updateConfig: (data: Record<string, unknown>) =>
@@ -277,6 +412,22 @@ export const api = {
       { method: "POST" },
     ),
 
+  // Deprecated — kept as a thin adapter so legacy callers still compile.
+  // New code should use `listLLMModels()` and group by `provider` directly.
+  listLlmModels: async () => {
+    const data = await request<LLMModelList>("/api/llm/models");
+    const buckets: { ollama: string[]; gemini: string[]; openai: string[]; pollinations: string[] } = {
+      ollama: [],
+      gemini: [],
+      openai: [],
+      pollinations: [],
+    };
+    for (const m of data.models || []) {
+      if (m.provider in buckets) buckets[m.provider].push(m.id);
+    }
+    return { ...buckets, errors: {} as Record<string, string> };
+  },
+
   // SSE URLs (used by EventSource directly)
   generateUrl(id: string, params: {
     kind: "short" | "long";
@@ -285,6 +436,14 @@ export const api = {
     auto_upload?: boolean;
     series_id?: string;
     duration_seconds?: ShortDurationSeconds;
+    render_profile?: ShortRenderProfile;
+    llm_provider?: "ollama" | "gemini" | "openai" | "pollinations" | "";
+    llm_model?: string;
+    hook_profile?: HookProfile | "";
+    model?: string;
+    sentence_length?: number;
+    hook_style?: string;
+    script_file?: string;
   }): string {
     const qs = new URLSearchParams();
     qs.set("kind", params.kind);
@@ -295,7 +454,35 @@ export const api = {
     if (params.kind === "short" && params.duration_seconds) {
       qs.set("duration_seconds", String(params.duration_seconds));
     }
+    if (params.kind === "short" && params.render_profile) {
+      qs.set("render_profile", params.render_profile);
+    }
+    if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
+    if (params.llm_model) qs.set("llm_model", params.llm_model);
+    if (params.hook_profile) qs.set("hook_profile", params.hook_profile);
+    if (params.model) qs.set("model", params.model);
+    if (params.sentence_length && params.sentence_length > 0) {
+      qs.set("sentence_length", String(params.sentence_length));
+    }
+    if (params.hook_style) qs.set("hook_style", params.hook_style);
+    if (params.script_file) qs.set("script_file", params.script_file);
     return `${BASE}/api/channels/${id}/generate?${qs.toString()}`;
+  },
+  previewScriptUrl(id: string, params: {
+    custom_topic?: string;
+    model?: string;
+    sentence_length?: number;
+    hook_style?: string;
+  } = {}): string {
+    const qs = new URLSearchParams();
+    qs.set("kind", "short");
+    if (params.custom_topic) qs.set("custom_topic", params.custom_topic);
+    if (params.model) qs.set("model", params.model);
+    if (params.sentence_length && params.sentence_length > 0) {
+      qs.set("sentence_length", String(params.sentence_length));
+    }
+    if (params.hook_style) qs.set("hook_style", params.hook_style);
+    return `${BASE}/api/channels/${id}/preview-script?${qs.toString()}`;
   },
   uploadLastUrl: (id: string, kind: "short" | "long" = "short") =>
     `${BASE}/api/channels/${id}/upload-last?kind=${kind}`,

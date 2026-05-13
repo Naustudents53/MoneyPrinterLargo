@@ -193,6 +193,46 @@ def fetch_channel(handle: str) -> tuple[dict[str, dict], dict[str, dict]]:
     return longs_by_id, shorts_by_id
 
 
+def fetch_channel_subscriber_count(handle: str) -> int | None:
+    """Return current public subscriber count for the channel handle.
+
+    yt-dlp exposes `channel_follower_count` (the canonical field name) when
+    extracting a channel URL with full info. Returns `None` if the lookup
+    fails or YouTube hides the count — the UI shows "—" in that case so a
+    fetch hiccup doesn't get mistaken for "0 subs"."""
+    import yt_dlp
+    base = handle if handle.startswith(("http://", "https://")) else f"https://www.youtube.com/{handle}"
+    base = base.rstrip("/")
+    # The channel root URL carries the subscriber count in its top-level
+    # metadata; we ask for FLAT extraction so yt-dlp doesn't walk every video.
+    opts = {
+        "extract_flat": True,
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+        "ignoreerrors": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(base, download=False)
+    except Exception as e:
+        print(f"   (subs fetch failed: {str(e)[:80]})", flush=True)
+        return None
+    if not info:
+        return None
+    count = info.get("channel_follower_count")
+    if count is None:
+        # Fallback: some channels carry the count one level deeper under
+        # `entries[0]` when the root URL redirects to /featured.
+        entries = info.get("entries") or []
+        if entries and isinstance(entries[0], dict):
+            count = entries[0].get("channel_follower_count")
+    try:
+        return int(count) if count is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def extract_video_id(url: str) -> str:
     """Extract video id from a watch / shorts / youtu.be URL."""
     if not url:
@@ -292,10 +332,12 @@ def sync_channel(acc: dict, handle: str, args, all_published: dict[str, dict],
             if meta["description"] and (args.refresh_meta or not (v.get("description") or "").strip()):
                 v["description"] = meta["description"]
             # Engagement counters: always overwrite with the freshest values
-            # (they are point-in-time, never user-edited).
+            # (they are point-in-time, never user-edited). Stamp stats_synced_at
+            # so the UI can tell "synced, no views yet" apart from "never synced".
             for k in ("view_count", "like_count", "comment_count", "dislike_count"):
                 if meta.get(k, -1) >= 0:
                     v[k] = meta[k]
+            v["stats_synced_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             if meta["date"] or meta["description"]:
                 meta_refreshed += 1
             time.sleep(args.sleep)
@@ -322,6 +364,7 @@ def sync_channel(acc: dict, handle: str, args, all_published: dict[str, dict],
                 "like_count": meta.get("like_count", -1),
                 "comment_count": meta.get("comment_count", -1),
                 "dislike_count": meta.get("dislike_count", -1),
+                "stats_synced_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             })
             added += 1
             tag = "SHORT" if info["is_short"] else "LONG "
@@ -407,6 +450,16 @@ def main() -> int:
             print("   (no videos returned by yt-dlp — wrong handle or rate-limited)",
                   flush=True)
             continue
+
+        # Subscriber count is cheap (one extra request to the channel root)
+        # and the UI shows it prominently — always refresh on sync.
+        subs = fetch_channel_subscriber_count(handle)
+        if subs is not None:
+            acc["subscriber_count"] = subs
+            acc["stats_synced_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"   subs: {subs:,}", flush=True)
+        else:
+            print("   subs: (unavailable)", flush=True)
 
         by_norm_title: dict[str, dict] = {}
         for v in all_pub.values():

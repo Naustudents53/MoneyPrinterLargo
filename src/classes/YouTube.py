@@ -1,8 +1,9 @@
-import re
+﻿import re
 import base64
 import json
 import time
 import os
+import subprocess
 import requests
 import assemblyai as aai
 
@@ -49,10 +50,10 @@ _PHOTO_STOPWORDS = {
 
 # Generic science/topic words that are NOT distinctive enough to anchor a
 # search result on the right subject. A result whose title only matches these
-# is considered off-topic — e.g. a video about TON 618 must NOT accept any
+# is considered off-topic â€” e.g. a video about TON 618 must NOT accept any
 # photo whose only overlap is "black hole" or "galaxy". The relevance filter
 # requires at least one truly distinctive token (proper noun / unique term)
-# on top of these. Keep this list conservative — adding a real proper noun
+# on top of these. Keep this list conservative â€” adding a real proper noun
 # here would silently disable relevance checks for that subject.
 _GENERIC_TOPIC_TOKENS = {
     # Generic science / cosmos adjectives and qualifiers
@@ -90,7 +91,7 @@ _GENERIC_TOPIC_TOKENS = {
     "cientifico", "scientist", "investigador", "researcher",
     # Generic places / scales
     "mundo", "world", "tierra", "earth", "sistema", "system",
-    "via", "lactea",   # alone too short; "Vía Láctea" is the proper noun (kept distinctive elsewhere)
+    "via", "lactea",   # alone too short; "VÃ­a LÃ¡ctea" is the proper noun (kept distinctive elsewhere)
     "orbita", "orbit", "atmosfera", "atmosphere",
     # Sizes / qualifiers
     "grande", "great", "gigante", "giant", "enorme", "huge", "masivo", "massive",
@@ -108,42 +109,82 @@ _GENERIC_TOPIC_TOKENS = {
 # Per-channel hook style presets used by `generate_script`. Each entry is
 # (style_name, hook_example). One style is picked at random per script so
 # every short doesn't open the same way. Configure on the account JSON via
-# `hook_profile` — falls back to "educational" if missing or unknown.
+# `hook_profile` â€” falls back to "educational" if missing or unknown.
 HOOK_PROFILES: dict = {
     "educational": [
-        ("You-are-there immersion", 'Abre con una escena inmersiva en segunda persona que coloca al espectador en el momento exacto: "En este preciso instante, hace [tiempo], [lugar concreto]. [Escena sensorial breve: qué se ve, qué se escucha, qué ocurre]. Nada de lo que conoces hoy existiría si esto hubiera salido distinto."'),
-        ("Impossible true fact", 'Arranca con un hecho que suena falso pero es 100% real, enunciado como afirmación rotunda sin pregunta: "[Hecho completamente contraintuitivo sobre el tema, enunciado como verdad absoluta]. No es ficción. Ocurrió de verdad."'),
-        ("Scale of time awe", 'Usa la escala del tiempo para crear vértigo existencial: "Si comprimieras toda la historia de [la Tierra / la humanidad / la civilización] en [una hora / un año / un día], [el evento del video] ocurriría exactamente en [momento preciso]. Todo lo que vino después cambió en segundos."'),
-        ("Survival on the edge", 'Perfecto para prehistoria y eventos de extinción: "Hubo un momento en que [especie / civilización / grupo] éramos menos de [número pequeño]. Un solo error, una sola tormenta, una sola mala decisión, y esta historia no existiría. Nosotros tampoco."'),
-        ("The consequence chain", 'Revela la cadena de consecuencias de un solo evento: "Sin [evento o decisión del tema], [cosa completamente familiar hoy] no existiría. El mundo entero sería diferente. Y todo empezó con algo que casi nadie recuerda."'),
-        ("Time-warp scene drop", 'Suelta al espectador directamente en el momento histórico sin preámbulo: "[Año o época exacta], [lugar preciso]. [Escena de dos frases: lo que ocurre, lo que está en juego]. Nadie en ese momento sabía que estaban cambiando el mundo."'),
-        ("The reversal", 'Destruye una creencia popular con una afirmación directa: "Durante [siglos / décadas / toda la historia], todos creyeron que [idea popular sobre el tema]. Estaban completamente equivocados. La realidad era algo que nadie quería aceptar."'),
-        ("Discovery shock", 'Arranca desde el momento del descubrimiento arqueológico o científico: "Cuando [arqueólogos / científicos / exploradores] abrieron [lugar o hallazgo del tema], lo que encontraron dentro contradecía todo lo que creíamos saber. Algunos de ellos nunca volvieron a ser los mismos."'),
-        ("The forgotten turning point", 'Rescata un momento decisivo que la historia olvidó: "La historia recuerda [evento famoso o persona famosa]. Pero olvidó por completo el momento en que [evento clave del tema] lo hizo posible. Sin eso, nada de lo que siguió habría ocurrido."'),
-        ("Cultural lens flip", '"Para nosotros sería [reacción moderna: impensable, una locura, un crimen]. Pero en [época o civilización], era exactamente lo contrario: [normalidad opuesta]. Y tenían razones que hoy casi nadie conoce."'),
-        ("Lost world reveal", 'Abre describiendo un mundo radicalmente diferente al nuestro: "Hace [tiempo], existía un mundo tan distinto al nuestro que si pudieras verlo hoy no reconocerías ni el cielo. [Detalle concreto impactante del tema]. Ese mundo desapareció, y lo que lo destruyó también creó todo lo que somos."'),
-        ("The specific moment", 'Ultra-precisión temporal para crear sensación de inevitabilidad: "El [fecha o momento exacto], en [lugar específico], [persona o grupo] tomó [decisión o acción concreta]. En ese instante, sin saberlo, decidió el destino de [civilización / especie / era]."'),
+        ("You-are-there immersion", 'Abre con una escena inmersiva en segunda persona que coloca al espectador en el momento exacto: "En este preciso instante, hace [tiempo], [lugar concreto]. [Escena sensorial breve: quÃ© se ve, quÃ© se escucha, quÃ© ocurre]. Nada de lo que conoces hoy existirÃ­a si esto hubiera salido distinto."'),
+        ("Impossible true fact", 'Arranca con un hecho que suena falso pero es 100% real, enunciado como afirmaciÃ³n rotunda sin pregunta: "[Hecho completamente contraintuitivo sobre el tema, enunciado como verdad absoluta]. No es ficciÃ³n. OcurriÃ³ de verdad."'),
+        ("Scale of time awe", 'Usa la escala del tiempo para crear vÃ©rtigo existencial: "Si comprimieras toda la historia de [la Tierra / la humanidad / la civilizaciÃ³n] en [una hora / un aÃ±o / un dÃ­a], [el evento del video] ocurrirÃ­a exactamente en [momento preciso]. Todo lo que vino despuÃ©s cambiÃ³ en segundos."'),
+        ("Survival on the edge", 'Perfecto para prehistoria y eventos de extinciÃ³n: "Hubo un momento en que [especie / civilizaciÃ³n / grupo] Ã©ramos menos de [nÃºmero pequeÃ±o]. Un solo error, una sola tormenta, una sola mala decisiÃ³n, y esta historia no existirÃ­a. Nosotros tampoco."'),
+        ("The consequence chain", 'Revela la cadena de consecuencias de un solo evento: "Sin [evento o decisiÃ³n del tema], [cosa completamente familiar hoy] no existirÃ­a. El mundo entero serÃ­a diferente. Y todo empezÃ³ con algo que casi nadie recuerda."'),
+        ("Time-warp scene drop", 'Suelta al espectador directamente en el momento histÃ³rico sin preÃ¡mbulo: "[AÃ±o o Ã©poca exacta], [lugar preciso]. [Escena de dos frases: lo que ocurre, lo que estÃ¡ en juego]. Nadie en ese momento sabÃ­a que estaban cambiando el mundo."'),
+        ("The reversal", 'Destruye una creencia popular con una afirmaciÃ³n directa: "Durante [siglos / dÃ©cadas / toda la historia], todos creyeron que [idea popular sobre el tema]. Estaban completamente equivocados. La realidad era algo que nadie querÃ­a aceptar."'),
+        ("Discovery shock", 'Arranca desde el momento del descubrimiento arqueolÃ³gico o cientÃ­fico: "Cuando [arqueÃ³logos / cientÃ­ficos / exploradores] abrieron [lugar o hallazgo del tema], lo que encontraron dentro contradecÃ­a todo lo que creÃ­amos saber. Algunos de ellos nunca volvieron a ser los mismos."'),
+        ("The forgotten turning point", 'Rescata un momento decisivo que la historia olvidÃ³: "La historia recuerda [evento famoso o persona famosa]. Pero olvidÃ³ por completo el momento en que [evento clave del tema] lo hizo posible. Sin eso, nada de lo que siguiÃ³ habrÃ­a ocurrido."'),
+        ("Cultural lens flip", '"Para nosotros serÃ­a [reacciÃ³n moderna: impensable, una locura, un crimen]. Pero en [Ã©poca o civilizaciÃ³n], era exactamente lo contrario: [normalidad opuesta]. Y tenÃ­an razones que hoy casi nadie conoce."'),
+        ("Lost world reveal", 'Abre describiendo un mundo radicalmente diferente al nuestro: "Hace [tiempo], existÃ­a un mundo tan distinto al nuestro que si pudieras verlo hoy no reconocerÃ­as ni el cielo. [Detalle concreto impactante del tema]. Ese mundo desapareciÃ³, y lo que lo destruyÃ³ tambiÃ©n creÃ³ todo lo que somos."'),
+        ("The specific moment", 'Ultra-precisiÃ³n temporal para crear sensaciÃ³n de inevitabilidad: "El [fecha o momento exacto], en [lugar especÃ­fico], [persona o grupo] tomÃ³ [decisiÃ³n o acciÃ³n concreta]. En ese instante, sin saberlo, decidiÃ³ el destino de [civilizaciÃ³n / especie / era]."'),
     ],
     # Cosmic mystery / awe-driven storytelling. Designed to pull the viewer in
     # with an unsolved cosmic puzzle, an eerie astronomical observation, or a
     # mind-bending consequence of physics.
     "storytelling": [
-        ("Cosmic anomaly opener", '"Detectaron una señal que nadie pudo explicar." o "Lo que vieron en aquella imagen del Webb no debería existir."'),
-        ("In medias res observation", '"Eran las 3:14 AM cuando el detector se disparó." o "Aquella noche en el observatorio, el cielo cambió y ningún protocolo lo había previsto."'),
-        ("Time-warp cosmic opener", '"Era el año 1977, y un mensaje del cosmos llegó a la Tierra." o "Hace 13.800 millones de años, en menos de un segundo, todo cambió."'),
-        ("Sole-survivor probe cliffhanger", '"De las dos sondas que cruzaron el sistema solar, solo una sigue enviando señales. Esta es su historia."'),
-        ("Disturbing discovery", '"Lo que detectaron en el centro de la galaxia no debería estar ahí." o "Cuando analizaron los datos, ya era demasiado tarde para fingir que no existía."'),
-        ("Visceral cosmic imperative", '"No apartes la mirada del cielo. Eso fue lo último que dijo antes de..." o "Nunca debieron apuntar el telescopio a esa coordenada."'),
-        ("Lost-signal epic", '"Una señal entera apareció una sola vez, duró 72 segundos, y nunca volvió a escucharse."'),
-        ("Cosmic quest twist", '"Buscaban un planeta habitable. Lo que encontraron fue infinitamente más extraño."'),
-        ("Forbidden observation", '"Estos datos se discutían en susurros entre astrónomos, y quienes los publicaban se quedaban sin financiación."'),
-        ("Last transmission testimony", '"Las últimas palabras que envió la sonda antes de cruzar el horizonte fueron estas..."'),
+        ("Cosmic anomaly opener", '"Detectaron una seÃ±al que nadie pudo explicar." o "Lo que vieron en aquella imagen del Webb no deberÃ­a existir."'),
+        ("In medias res observation", '"Eran las 3:14 AM cuando el detector se disparÃ³." o "Aquella noche en el observatorio, el cielo cambiÃ³ y ningÃºn protocolo lo habÃ­a previsto."'),
+        ("Time-warp cosmic opener", '"Era el aÃ±o 1977, y un mensaje del cosmos llegÃ³ a la Tierra." o "Hace 13.800 millones de aÃ±os, en menos de un segundo, todo cambiÃ³."'),
+        ("Sole-survivor probe cliffhanger", '"De las dos sondas que cruzaron el sistema solar, solo una sigue enviando seÃ±ales. Esta es su historia."'),
+        ("Disturbing discovery", '"Lo que detectaron en el centro de la galaxia no deberÃ­a estar ahÃ­." o "Cuando analizaron los datos, ya era demasiado tarde para fingir que no existÃ­a."'),
+        ("Visceral cosmic imperative", '"No apartes la mirada del cielo. Eso fue lo Ãºltimo que dijo antes de..." o "Nunca debieron apuntar el telescopio a esa coordenada."'),
+        ("Lost-signal epic", '"Una seÃ±al entera apareciÃ³ una sola vez, durÃ³ 72 segundos, y nunca volviÃ³ a escucharse."'),
+        ("Cosmic quest twist", '"Buscaban un planeta habitable. Lo que encontraron fue infinitamente mÃ¡s extraÃ±o."'),
+        ("Forbidden observation", '"Estos datos se discutÃ­an en susurros entre astrÃ³nomos, y quienes los publicaban se quedaban sin financiaciÃ³n."'),
+        ("Last transmission testimony", '"Las Ãºltimas palabras que enviÃ³ la sonda antes de cruzar el horizonte fueron estas..."'),
     ],
 }
 
 
+# Narrative roles for the 10 sections of a long-form documentary. Designed to
+# front-load engagement (sections 1-2 act as the "first 5 min hook engine")
+# and manage open loops across the rest of the video. Series-defined themes
+# (via `series.section_themes` of exactly 10 entries) override these defaults.
+#
+# Index â†’ minute (approx, at 165 wpm and ~300 words/section):
+#   S1  â‰ˆ min 1-3   immersive vignette (closes nothing, opens visual hook)
+#   S2  â‰ˆ min 3-5   mystery pivot (plants the MAIN loop â€” paid off at S9)
+#   S3  â‰ˆ min 5-7   first partial revelation + LIKE-BREAK at the opening
+#   S4  â‰ˆ min 7-9   backstory / how-we-got-here
+#   S5  â‰ˆ min 9-11  escalation / second hook
+#   S6  â‰ˆ min 11-13 reversal (kills a popular belief)
+#   S7  â‰ˆ min 13-15 human element (anecdote, slower beat)
+#   S8  â‰ˆ min 15-17 unexpected modern connection
+#   S9  â‰ˆ min 17-18 climax â€” pays off the MAIN loop from S2
+#   S10 â‰ˆ min 18-19 legacy / consequences
+LONG_VIDEO_SECTION_THEMES: list[str] = [
+    # S1
+    "ViÃ±eta inmersiva: una escena SENSORIAL concreta del momento o lugar mÃ¡s cinematogrÃ¡fico del tema. Mete al espectador DENTRO de la escena con detalles concretos (quÃ© se ve, quÃ© se oye, quÃ© se huele, quiÃ©n estÃ¡ ahÃ­). NO expliques aÃºn el contexto general â€” la escena habla sola. Termina dejando una imagen visual potente que enganche.",
+    # S2
+    "Pivote misterio â€” siembra el LOOP PRINCIPAL del video. Introduce UNA contradicciÃ³n especÃ­fica, anomalÃ­a o pregunta sin respuesta que el espectador no podrÃ¡ dejar pasar (algo no encaja, alguien hizo algo inexplicable, un detalle que rompe la versiÃ³n oficial). Plantea la pregunta con claridad, promÃ©tele al espectador que la respuesta llega mÃ¡s adelante, y NO la respondas todavÃ­a. Puedes sembrar 1 loop secundario adicional mÃ¡s pequeÃ±o.",
+    # S3
+    "Primera revelaciÃ³n parcial CON LIKE-BREAK al inicio. ABRE con 1-2 oraciones cÃ¡lidas y orgÃ¡nicas pidiendo al espectador que dÃ© 'me gusta' si estÃ¡ disfrutando el video â€” debe sonar natural, no a publicidad ni a lista de instrucciones, como un narrador que confÃ­a y agradece. DESPUÃ‰S, cierra un loop SECUNDARIO pequeÃ±o (NUNCA el loop principal sembrado en la secciÃ³n anterior â€” ese debe quedar abierto hasta el clÃ­max) y aprovecha la energÃ­a para abrir un nuevo loop mÃ¡s profundo.",
+    # S4
+    "Backstory cinemÃ¡tica: cÃ³mo se llegÃ³ hasta el momento que abriÃ³ el video. Una escena concreta del ORIGEN (fecha exacta, lugar especÃ­fico, personaje real) que explica por quÃ© pasÃ³ lo que pasÃ³. MantÃ©n el tono narrativo y sensorial, NO expositivo de libro de texto. Sigue sin tocar el loop principal.",
+    # S5
+    "Escalada â€” segundo gancho de retenciÃ³n. Las apuestas suben. Aparecen complicaciones, obstÃ¡culos, o un giro intermedio inesperado. Este es el punto donde se reactiva al espectador que estaba perdiendo interÃ©s: un nuevo elemento sorprendente, una tensiÃ³n que no veÃ­a venir, o el cierre dramÃ¡tico de un loop secundario. Si abres otra pregunta aquÃ­, serÃ¡ respondida pronto, no al final.",
+    # S6
+    "Reversal: destruye una creencia popular que el espectador probablemente trajo al video. 'Durante aÃ±os todos creyeron X. Estaban equivocados. La realidad era Y.' Una idea fuerte, contraintuitiva, bien sostenida con un hecho concreto, nombre, fecha o cita. El espectador debe sentir que aprendiÃ³ algo que cambia su mapa mental.",
+    # S7
+    "Elemento humano: baja el ritmo deliberadamente. Una anÃ©cdota Ã­ntima, un testimonio, un detalle personal de alguien involucrado en la historia. Apela a la emociÃ³n â€” miedo, asombro, dolor, esperanza, vergÃ¼enza. Un respiro narrativo antes del clÃ­max, pero cargado de carga emocional. El espectador debe sentir que conoce a alguien.",
+    # S8
+    "ConexiÃ³n inesperada con el presente: un paralelismo con algo familiar HOY. Por quÃ© esto le importa al espectador en su vida actual. Una resonancia moderna â€” costumbre que sigue, palabra que usamos, tecnologÃ­a que heredamos, error que repetimos. Cierra preparando el terreno para el clÃ­max: el lector debe sentir que la respuesta del loop principal estÃ¡ cerca.",
+    # S9
+    "ClÃ­max â€” PAGO DEL LOOP PRINCIPAL. Por fin la respuesta a la pregunta sembrada en la secciÃ³n 2. Este es el momento mÃ¡s impactante de toda la narraciÃ³n. Construye tensiÃ³n en las primeras 2-3 oraciones, revela el dato/giro/verdad concreta en el medio, y deja al espectador procesando en las Ãºltimas. AsegÃºrate de cerrar de forma satisfactoria el loop principal â€” no dejes la pregunta abierta.",
+    # S10
+    "Legado y consecuencias: quÃ© quedÃ³ despuÃ©s, quÃ© cambiÃ³, quÃ© seguimos viendo hoy gracias a (o por culpa de) lo que pasÃ³. Conecta el pasado del tema con el presente del espectador. Prepara emocionalmente al espectador para el cierre â€” esta secciÃ³n NO debe abrir loops nuevos, debe asentar lo aprendido.",
+]
+
+
 # Visual context anchoring is now niche-agnostic and computed per-video by
-# `_get_context_profile()` — see that method. The LLM is asked once per video
+# `_get_context_profile()` â€” see that method. The LLM is asked once per video
 # to derive a setting + visual anchors + things-to-avoid brief from the
 # channel niche + topic + script, and that brief is injected into image-prompt
 # generation. This replaces the previous hardcoded CIVILIZATIONS dict, which
@@ -216,7 +257,7 @@ class YouTube:
         self._account_uuid: str = account_uuid
         self._account_nickname: str = account_nickname
         # Fall back to the global default in config.json when the per-account
-        # profile is missing — re-uploads from old accounts left this empty.
+        # profile is missing â€” re-uploads from old accounts left this empty.
         if not fp_profile_path or not str(fp_profile_path).strip():
             try:
                 fp_profile_path = get_firefox_profile_path() or ""
@@ -233,7 +274,7 @@ class YouTube:
         self._hook_profile: str = (hook_profile or "").strip().lower()
         self._voice_drama: bool = bool(voice_drama)
 
-        # Target Short duration → drives sentence count, target word count,
+        # Target Short duration â†’ drives sentence count, target word count,
         # and image count. Resolved through a single source of truth so we
         # never have to keep two preset tables in sync.
         from classes.duration_presets import resolve_short_duration
@@ -255,7 +296,7 @@ class YouTube:
         # Initialize the Firefox profile
         self.options: Options = Options()
 
-        # YouTube's upload page fires a beforeunload `confirmEx` ("Leave page? —
+        # YouTube's upload page fires a beforeunload `confirmEx` ("Leave page? â€”
         # changes you made may not be saved") whenever Selenium navigates while
         # an upload is in progress. Default driver policy is "dismiss and notify"
         # which raises UnexpectedAlertPresentException mid-upload. Tell the
@@ -304,6 +345,10 @@ class YouTube:
 
         self.options.add_argument("-profile")
         self.options.add_argument(temp_profile)
+        # Allow multiple Firefox instances simultaneously (each job uses its
+        # own temp profile, so --no-remote lets geckodriver launch a fresh
+        # process without attaching to an already-running Firefox window).
+        self.options.add_argument("--no-remote")
 
         # Browser is initialized lazily just before upload (see _ensure_browser)
         self.browser: webdriver.Firefox = None
@@ -328,7 +373,7 @@ class YouTube:
         """
         return self._language
 
-    def generate_response(self, prompt: str, model_name: str = None) -> str:
+    def generate_response(self, prompt: str, model_name: str = None, temperature: float = 0.7) -> str:
         """
         Generates an LLM Response based on a prompt and the user-provided model.
 
@@ -338,21 +383,21 @@ class YouTube:
         Returns:
             response (str): The generated AI Repsonse.
         """
-        return generate_text(prompt, model_name=model_name)
+        return generate_text(prompt, model_name=model_name, temperature=temperature)
 
     def generate_topic(self) -> str:
         """
         Generates a topic based on the YouTube Channel niche.
         Channel-lifetime duplicate guard: if the LLM cannot produce a topic
         that does not collide with any previously uploaded video, this method
-        returns "" (the caller must then abort — we NEVER knowingly publish a
+        returns "" (the caller must then abort â€” we NEVER knowingly publish a
         repeat).
 
         Detection layers, in order of strictness:
           1. markdown/prefix cleanup (LLMs love wrapping in ** or "Topic:")
           2. language guard (reject English when channel language is Spanish)
           3. shared distinctive-entity match (e.g. "Hammurabi", "Cosimo I",
-             "Vasari" appearing in both candidate and a past topic → duplicate,
+             "Vasari" appearing in both candidate and a past topic â†’ duplicate,
              regardless of surrounding words)
           4. token-overlap and sequence-similarity fallbacks
 
@@ -407,18 +452,18 @@ class YouTube:
             # Code blocks
             s = re.sub(r"```[\s\S]*?```", " ", s)
             s = re.sub(r"`+", "", s)
-            # Hashtags (#Foo, #HistoriaAntigua) — they'd otherwise be captured
+            # Hashtags (#Foo, #HistoriaAntigua) â€” they'd otherwise be captured
             # as distinctive entities, but every historical-channel video
             # shares the same pool of tags so they collide spuriously.
             s = re.sub(r"#\w+", " ", s, flags=re.UNICODE)
             # Bold/italic/headers
             s = re.sub(r"[*_#]+", "", s)
             # Leading "Topic:", "Tema:", "Title:", "Titulo:"
-            s = re.sub(r"^\s*(?:topic|tema|title|t[ií]tulo)\s*:\s*", "", s, flags=re.I)
+            s = re.sub(r"^\s*(?:topic|tema|title|t[iÃ­]tulo)\s*:\s*", "", s, flags=re.I)
             # Collapse whitespace
             s = re.sub(r"\s+", " ", s).strip()
             # Strip enclosing quotes (regular, curly, guillemets)
-            s = s.strip(" \t\"'“”‘’«»").strip()
+            s = s.strip(" \t\"'â€œâ€â€˜â€™Â«Â»").strip()
             return s
 
         def _normalize(s: str) -> str:
@@ -470,12 +515,12 @@ class YouTube:
         # ---- 4. Build forbidden block (recent topics as avoidance hint for the LLM) ----
         forbidden_block = ""
         if past_topics:
-            shown = past_clean[-25:]
+            shown = past_clean[-40:]
             forbidden_block = (
                 "\n\nALREADY COVERED in this niche (pick a DIFFERENT angle, but stay WITHIN the niche):\n"
                 + "\n".join(f"- {t}" for t in shown)
                 + f"\n\nGenerate a fresh angle WITHIN the niche \"{self.niche}\". "
-                f"The new topic must still unmistakably belong to this niche — "
+                f"The new topic must still unmistakably belong to this niche â€” "
                 f"only the specific subject should differ from the list above."
             )
 
@@ -489,7 +534,7 @@ class YouTube:
             IMPORTANT: the response MUST be at least ~10 chars long. llm_provider's
             garbage filter (`_is_garbage_response`) treats any reply shorter than 10
             chars as conversational and DISABLES the provider for the whole session.
-            We require a short structured line ("VERDICT: FITS — <reason>") that
+            We require a short structured line ("VERDICT: FITS â€” <reason>") that
             clears that bar.
             """
             try:
@@ -501,32 +546,32 @@ CHANNEL NICHE: {self.niche}
 CANDIDATE TOPIC: {candidate}
 
 Rules for your verdict:
-- Answer FITS only if the topic is undeniably part of the niche — a viewer would immediately recognize it as belonging to that niche.
+- Answer FITS only if the topic is undeniably part of the niche â€” a viewer would immediately recognize it as belonging to that niche.
 - Answer OFFNICHE if the topic is fictional, made-up, abstract, metaphorical, or drifts toward storytelling/fiction when the niche is factual/educational.
 - Answer OFFNICHE if the topic is a generic life lesson or philosophical musing not tied to the niche's actual subject matter.
-- Answer OFFNICHE if the topic could fit dozens of different niches — niches require specificity.
+- Answer OFFNICHE if the topic could fit dozens of different niches â€” niches require specificity.
 - When in doubt, answer OFFNICHE.
 
 OUTPUT FORMAT (strict, exactly one line):
-VERDICT: <FITS or OFFNICHE> — <short reason in 5-15 words>
+VERDICT: <FITS or OFFNICHE> â€” <short reason in 5-15 words>
 
 Example outputs:
-VERDICT: FITS — clearly a real astronomical phenomenon within the niche
-VERDICT: OFFNICHE — fictional sci-fi storytelling, not a real scientific subject
+VERDICT: FITS â€” clearly a real astronomical phenomenon within the niche
+VERDICT: OFFNICHE â€” fictional sci-fi storytelling, not a real scientific subject
 
 Return ONLY that single line. No other text."""
                 )
             except Exception:
-                # If the validator call fails, don't block the pipeline — accept the candidate.
+                # If the validator call fails, don't block the pipeline â€” accept the candidate.
                 return True
             verdict_up = (verdict or "").strip().upper()
             # Look for the verdict token anywhere in the response (handles wrappers like
-            # "**VERDICT: FITS — ...**" or stray quotes around the line).
+            # "**VERDICT: FITS â€” ...**" or stray quotes around the line).
             if "OFFNICHE" in verdict_up or "OFF-NICHE" in verdict_up or "OFF NICHE" in verdict_up:
                 return False
             if "FITS" in verdict_up:
                 return True
-            # Unparseable response → accept (the cache-side dedupe still guards the run).
+            # Unparseable response â†’ accept (the cache-side dedupe still guards the run).
             return True
 
         # ---- 5. Generate with retries ----
@@ -538,7 +583,7 @@ Return ONLY that single line. No other text."""
             extra_reject = ""
             if rejected:
                 extra_reject = (
-                    "\n\nYou already suggested these and they were REJECTED — "
+                    "\n\nYou already suggested these and they were REJECTED â€” "
                     "pick a completely unrelated angle:\n"
                     + "\n".join(f"- {t}" for t in rejected[-6:])
                 )
@@ -548,16 +593,16 @@ Return ONLY that single line. No other text."""
 
 YOUR NICHE (you MUST stay strictly within this niche): {self.niche}
 
-CRITICAL RULE: The topic MUST be directly and unmistakably part of the niche above. Anything that does not clearly belong to that niche is FORBIDDEN — including fictional stories, made-up characters, abstract metaphors, generic life lessons, philosophical musings disconnected from the niche, or any unrelated field. ONLY generate topics whose subject matter a viewer would immediately recognize as belonging to "{self.niche}".
+CRITICAL RULE: The topic MUST be directly and unmistakably part of the niche above. Anything that does not clearly belong to that niche is FORBIDDEN â€” including fictional stories, made-up characters, abstract metaphors, generic life lessons, philosophical musings disconnected from the niche, or any unrelated field. ONLY generate topics whose subject matter a viewer would immediately recognize as belonging to "{self.niche}".
 
-The topic must be ONE concrete story, event, mystery, fact, person, place, or phenomenon — NOT a broad category, NOT a fictional scenario.
+The topic must be ONE concrete story, event, mystery, fact, person, place, or phenomenon â€” NOT a broad category, NOT a fictional scenario.
 
 BAD example: "Curiosidades del universo" (too broad, leads to random facts)
-BAD example: "Un planeta donde todo es al revés" (fictional fantasy, not a real subject)
-GOOD example: "TON 618: el agujero negro 66 mil millones de veces más masivo que el Sol" (one specific real cosmic object)
-GOOD example: "¿Por qué Voyager 1 sigue enviando datos 47 años después de su lanzamiento?" (one specific real mission detail)
-GOOD example: "El día que LIGO detectó dos agujeros negros fusionándose por primera vez" (one specific real event)
-GOOD example: "Encélado: la luna de Saturno que escupe agua líquida al espacio" (one specific real phenomenon)
+BAD example: "Un planeta donde todo es al revÃ©s" (fictional fantasy, not a real subject)
+GOOD example: "TON 618: el agujero negro 66 mil millones de veces mÃ¡s masivo que el Sol" (one specific real cosmic object)
+GOOD example: "Â¿Por quÃ© Voyager 1 sigue enviando datos 47 aÃ±os despuÃ©s de su lanzamiento?" (one specific real mission detail)
+GOOD example: "El dÃ­a que LIGO detectÃ³ dos agujeros negros fusionÃ¡ndose por primera vez" (one specific real event)
+GOOD example: "EncÃ©lado: la luna de Saturno que escupe agua lÃ­quida al espacio" (one specific real phenomenon)
 
 SELF-CHECK BEFORE ANSWERING: Re-read the niche "{self.niche}". If your topic is not unmistakably part of THAT niche, discard it and pick a different one.
 
@@ -568,7 +613,8 @@ OUTPUT FORMAT (strict):
 - NO surrounding quotes.
 - WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.{forbidden_block}{extra_reject}
 
-(Creativity seed: {creativity_seed} — use this to inspire a fresh angle WITHIN the niche. "Fresh" means a different specific subject from the same niche, NOT a different field.)"""
+(Creativity seed: {creativity_seed} â€” use this to inspire a fresh angle WITHIN the niche. "Fresh" means a different specific subject from the same niche, NOT a different field.)""",
+                temperature=0.95,
             )
 
             candidate = _strip_markdown(raw_candidate or "")
@@ -578,7 +624,7 @@ OUTPUT FORMAT (strict):
             if _looks_english(candidate):
                 warning(
                     f"Topic is not in {self.language} (attempt {attempt + 1}/{max_attempts}): "
-                    f"'{candidate[:80]}' — regenerating."
+                    f"'{candidate[:80]}' â€” regenerating."
                 )
                 rejected.append(candidate)
                 continue
@@ -609,7 +655,7 @@ OUTPUT FORMAT (strict):
             # Channel-lifetime duplicate guard: we NEVER knowingly publish a
             # repeat. Return "" so the caller aborts the run.
             error(
-                f"Could not generate a unique topic after {max_attempts} attempts — "
+                f"Could not generate a unique topic after {max_attempts} attempts â€” "
                 f"refusing to publish a duplicate. Try again later or broaden the niche."
             )
             self.subject = ""
@@ -638,9 +684,9 @@ OUTPUT FORMAT (strict):
         if target_words and target_seconds:
             duration_clause = (
                 f"TARGET DURATION: ~{target_seconds} seconds of narration. "
-                f"Aim for {target_words} words total (±10%). Average sentence "
+                f"Aim for {target_words} words total (Â±10%). Average sentence "
                 f"length: ~{max(8, target_words // max(1, sentence_length))} words. "
-                f"DO NOT undershoot — a script that comes in short produces a "
+                f"DO NOT undershoot â€” a script that comes in short produces a "
                 f"video noticeably below {target_seconds}s, which is worse than "
                 f"running slightly long."
             )
@@ -657,6 +703,25 @@ OUTPUT FORMAT (strict):
             warning(f"Unknown hook_profile '{self._hook_profile}', falling back to 'educational'.")
             profile_name = "educational"
         hook_style, hook_example = random.choice(hook_styles)
+
+        # Per-job override (set by the webapp's "hook style" selector). Format:
+        # MP_HOOK_STYLE_OVERRIDE = "<profile>::<style_name>" â€” both pieces must
+        # match a key in HOOK_PROFILES. Falls back silently to the random pick
+        # above if the override doesn't resolve, so a stale env var never
+        # crashes the pipeline.
+        override = os.environ.get("MP_HOOK_STYLE_OVERRIDE", "").strip()
+        if override and "::" in override:
+            ov_profile, ov_style = override.split("::", 1)
+            ov_profile = ov_profile.strip().lower()
+            ov_style = ov_style.strip()
+            candidates = HOOK_PROFILES.get(ov_profile) or []
+            for s_name, s_example in candidates:
+                if s_name == ov_style:
+                    profile_name = ov_profile
+                    hook_style, hook_example = s_name, s_example
+                    if get_verbose():
+                        info(f" => Hook style override: {ov_profile} / {ov_style}")
+                    break
 
         if get_verbose():
             info(f" => Hook profile: {profile_name} | style: {hook_style}")
@@ -678,9 +743,9 @@ CRITICAL RULES:
 - EXACTLY {sentence_length} sentences. Short and punchy (under 20 words each).
 - NO markdown, NO formatting, NO titles, NO bullet points.
 - NO "welcome", NO "voiceover", NO meta-references.
-- ABSOLUTELY NO stage directions of any kind. Never write "(image of ...)", "(imagen de ...)", "[B-roll: ...]", "(plano cerrado)", "(music)", "(música suave)", "(emoji)", "(transition)", "(voice over)" or anything similar. Only text a narrator would speak ALOUD.
+- ABSOLUTELY NO stage directions of any kind. Never write "(image of ...)", "(imagen de ...)", "[B-roll: ...]", "(plano cerrado)", "(music)", "(mÃºsica suave)", "(emoji)", "(transition)", "(voice over)" or anything similar. Only text a narrator would speak ALOUD.
 - NUMBERS: spell numbers out as words, not digits. Examples (in {self.language}): "mil cuatrocientos cincuenta y tres" not "1453"; "four thousand five hundred" not "4,500".
-- YEAR vs DURATION — keep them strictly separate. A YEAR is a calendar date; a DURATION is elapsed time. They are different things. To cite a calendar year, say "el año <año>" / "in the year <year>". The phrase "hace <N> años" / "<N> years ago" expresses ONLY duration: <N> is the difference between the current year and the year of the event — it is NOT the year itself. When in doubt, name the year ("el año X") and do NOT use the "hace X años" / "X years ago" phrasing.
+- YEAR vs DURATION â€” keep them strictly separate. A YEAR is a calendar date; a DURATION is elapsed time. They are different things. To cite a calendar year, say "el aÃ±o <aÃ±o>" / "in the year <year>". The phrase "hace <N> aÃ±os" / "<N> years ago" expresses ONLY duration: <N> is the difference between the current year and the year of the event â€” it is NOT the year itself. When in doubt, name the year ("el aÃ±o X") and do NOT use the "hace X aÃ±os" / "X years ago" phrasing.
 - ONLY return the raw script text. Nothing else.
 - WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.
 """
@@ -803,8 +868,8 @@ ABSOLUTE RULES:
         Generates Image Prompts based on the provided Video Script.
 
         Args:
-            image_mode (str): "ai" → cinematic prompts for AI generators.
-                              "photos" → short search queries for real-photo sources
+            image_mode (str): "ai" â†’ cinematic prompts for AI generators.
+                              "photos" â†’ short search queries for real-photo sources
                               (Wikimedia Commons, Pexels, Pixabay).
 
         Returns:
@@ -835,18 +900,18 @@ ABSOLUTE RULES:
 
 These queries will be searched against NASA Image Library + ESA archive + Wikipedia + Wikimedia Commons + Hubble/JWST/Cassini/Voyager photo archives. Tailor the wording for those archives.
 
-ABSOLUTE RULE — SUBJECT ANCHORING:
-Every single query MUST contain the canonical English name of the subject (or, if the section is about a specific cosmic object/mission/scientist tied to the subject, that proper noun directly — e.g. "Pillars of Creation" or "Cassini Saturn flyby" for a Saturn-rings video). NEVER write a query that is just a generic concept ("a black hole image", "a galaxy in space", "a star exploding") — the search will return random unrelated results. The subject's proper noun, or a proper noun strictly identifying the same exact thing/object/event/mission, MUST be present in every query.
+ABSOLUTE RULE â€” SUBJECT ANCHORING:
+Every single query MUST contain the canonical English name of the subject (or, if the section is about a specific cosmic object/mission/scientist tied to the subject, that proper noun directly â€” e.g. "Pillars of Creation" or "Cassini Saturn flyby" for a Saturn-rings video). NEVER write a query that is just a generic concept ("a black hole image", "a galaxy in space", "a star exploding") â€” the search will return random unrelated results. The subject's proper noun, or a proper noun strictly identifying the same exact thing/object/event/mission, MUST be present in every query.
 
-CRITICAL — use the CANONICAL ENGLISH NAME (the form Wikipedia / NASA uses) for every cosmic object, mission, or scientist:
-  - WRONG: "huge black hole in big galaxy"        →   RIGHT: "TON 618" or "Sagittarius A* black hole"
-  - WRONG: "NASA probe leaving solar system"      →   RIGHT: "Voyager 1 heliopause" or "Voyager 1 Pale Blue Dot"
-  - WRONG: "telescope picture of nebula"          →   RIGHT: "JWST Carina Nebula" or "Pillars of Creation Hubble"
-  - WRONG: "moon with water on Saturn"            →   RIGHT: "Enceladus plumes Cassini"
-  - WRONG: "Einstein theory of light bending"     →   RIGHT: "Eddington 1919 eclipse" or "Einstein ring SDSS"
+CRITICAL â€” use the CANONICAL ENGLISH NAME (the form Wikipedia / NASA uses) for every cosmic object, mission, or scientist:
+  - WRONG: "huge black hole in big galaxy"        â†’   RIGHT: "TON 618" or "Sagittarius A* black hole"
+  - WRONG: "NASA probe leaving solar system"      â†’   RIGHT: "Voyager 1 heliopause" or "Voyager 1 Pale Blue Dot"
+  - WRONG: "telescope picture of nebula"          â†’   RIGHT: "JWST Carina Nebula" or "Pillars of Creation Hubble"
+  - WRONG: "moon with water on Saturn"            â†’   RIGHT: "Enceladus plumes Cassini"
+  - WRONG: "Einstein theory of light bending"     â†’   RIGHT: "Eddington 1919 eclipse" or "Einstein ring SDSS"
 A Wikipedia / NASA article should EXIST for the subject of every query.
 
-ANCHORING EXAMPLES — for a video about "TON 618":
+ANCHORING EXAMPLES â€” for a video about "TON 618":
   - GOOD: "TON 618 quasar", "TON 618 size comparison", "supermassive black hole accretion disk simulation", "EHT M87 black hole", "quasar host galaxy Hubble", "TON 618 hyperluminous quasar".
   - BAD:  "huge black hole space", "biggest object universe", "supermassive accretion disk", "galaxy with black hole". (None names TON 618 or a proper noun strictly tied to it.)
 
@@ -873,18 +938,18 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 if ctx.get("must_avoid"):
                     bits.append(f"FORBIDDEN (anachronistic or off-era): {ctx['must_avoid']}")
                 era_context = (
-                    "\n\nERA & SETTING — MANDATORY FOR PERIOD ACCURACY: "
+                    "\n\nERA & SETTING â€” MANDATORY FOR PERIOD ACCURACY: "
                     + ". ".join(bits)
                     + ". Every prompt MUST be visually faithful to this era. All clothing, "
                       "architecture, objects, lighting conditions and environments must belong "
                       "to this specific time and place. A viewer must immediately recognize the "
                       "correct historical period just by looking at the image. "
-                      "Do not enumerate props as a costume checklist — weave them into the action naturally."
+                      "Do not enumerate props as a costume checklist â€” weave them into the action naturally."
                 )
 
             video_title = (self.metadata or {}).get("title", "") if hasattr(self, "metadata") else ""
 
-            prompt = f"""Task: write exactly {n_prompts} image prompts for a YouTube Short. The script has been divided into {n_prompts} sections — write ONE image prompt per section. Each image must visually represent what is being narrated in THAT EXACT SECTION: the specific action happening, the environment where it takes place, and the atmosphere or emotion of that moment.{era_context}
+            prompt = f"""Task: write exactly {n_prompts} image prompts for a YouTube Short. The script has been divided into {n_prompts} sections â€” write ONE image prompt per section. Each image must visually represent what is being narrated in THAT EXACT SECTION: the specific action happening, the environment where it takes place, and the atmosphere or emotion of that moment.{era_context}
 
 VIDEO TITLE: {video_title or self.subject}
 TOPIC: {self.subject}
@@ -894,23 +959,23 @@ SCRIPT DIVIDED INTO {n_prompts} SECTIONS (prompt N must illustrate section N):
 
 RULES FOR EACH PROMPT:
 
-1. SECTION FIDELITY — MANDATORY. Read your assigned section carefully. The image must show what is LITERALLY happening in those sentences: the action described, the place mentioned, the object referenced, the emotion conveyed. Do NOT invent a scene unrelated to the section. If the section describes a landscape or a phenomenon with no people, depict that landscape or phenomenon.
+1. SECTION FIDELITY â€” MANDATORY. Read your assigned section carefully. The image must show what is LITERALLY happening in those sentences: the action described, the place mentioned, the object referenced, the emotion conveyed. Do NOT invent a scene unrelated to the section. If the section describes a landscape or a phenomenon with no people, depict that landscape or phenomenon.
 
 2. FULL SCENE DESCRIPTION. Every prompt must describe THREE things together:
-   a) THE ACTION or main subject — what is happening or what is being shown
-   b) THE ENVIRONMENT — where it takes place, time of day, weather, architecture, terrain
-   c) THE ATMOSPHERE — lighting, mood, emotional tone that matches what the narrator is describing
+   a) THE ACTION or main subject â€” what is happening or what is being shown
+   b) THE ENVIRONMENT â€” where it takes place, time of day, weather, architecture, terrain
+   c) THE ATMOSPHERE â€” lighting, mood, emotional tone that matches what the narrator is describing
 
-3. ENGLISH ONLY. Even if the script is in Spanish, every prompt is in English. Translate proper nouns naturally ("Platón" → "Plato", "Alejandro" → "Alexander"). No Spanish words anywhere.
+3. ENGLISH ONLY. Even if the script is in Spanish, every prompt is in English. Translate proper nouns naturally ("PlatÃ³n" â†’ "Plato", "Alejandro" â†’ "Alexander"). No Spanish words anywhere.
 
 4. ACTION OR SCENE FIRST. If people appear, open with a verb-driven action. If the section describes a place, landscape, or phenomenon, open with that environment vividly described.
    FORBIDDEN openings: "[Name] standing in [costume]", "[Name] portrait", "A figure looking intently", "[Name] in [outfit] in front of [backdrop]".
 
 5. PEOPLE AND EMOTION. When people appear, describe their facial expression and body language to match the emotion of the moment (fear, determination, awe, grief, triumph, etc.). Give a brief physical anchor for named real people (max ~10 words). The emotion must match what the narrator is saying in that section.
 
-6. CONCRETE OBJECTS. Name at least one specific object from the section (a tool, weapon, structure, artifact, natural element). Generic props are forbidden — use only what the script actually references.
+6. CONCRETE OBJECTS. Name at least one specific object from the section (a tool, weapon, structure, artifact, natural element). Generic props are forbidden â€” use only what the script actually references.
 
-7. UNIQUE SCENES. No two prompts may show the same scene. Each of the {n_prompts} sections happens at a different moment — use that to ensure visual variety.
+7. UNIQUE SCENES. No two prompts may show the same scene. Each of the {n_prompts} sections happens at a different moment â€” use that to ensure visual variety.
 
 8. NO ART-STYLE WORDS. Describe scenes only. NEVER write: "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art", "watercolor", "sketch". The visual style is added downstream.
 
@@ -920,28 +985,28 @@ RULES FOR EACH PROMPT:
 
 11. LENGTH. 40-65 English words per prompt.
 
-EXAMPLES — pattern only, not templates to copy:
-   GOOD ✓ (person + action + emotion) "A exhausted soldier drops to his knees on a smoldering battlefield at dusk, clutching a broken spear, his face streaked with ash and tears, enemy fortifications burning in the distance behind him, smoke rising into an orange sky."
-   GOOD ✓ (landscape / no people) "A vast primeval forest stretches to the horizon under a hazy amber sky, enormous ferns and cycad trees towering over a muddy river delta, volcanic mountains smoking faintly in the far background, the air thick with mist at dawn."
-   GOOD ✓ (phenomenon) "A massive wall of glacial ice advances slowly across a flat tundra plain under a pale grey sky, uprooting ancient trees in its path, frozen mammoths visible beneath the translucent surface, a herd of woolly rhinoceroses fleeing in the foreground."
-   GOOD ✓ (discovery moment) "An archaeologist kneels in a narrow underground chamber, trembling hand holding a torch over a perfectly preserved golden death mask resting on stone, dust particles floating in the warm light, rough-hewn rock walls pressing close on all sides."
+EXAMPLES â€” pattern only, not templates to copy:
+   GOOD âœ“ (person + action + emotion) "A exhausted soldier drops to his knees on a smoldering battlefield at dusk, clutching a broken spear, his face streaked with ash and tears, enemy fortifications burning in the distance behind him, smoke rising into an orange sky."
+   GOOD âœ“ (landscape / no people) "A vast primeval forest stretches to the horizon under a hazy amber sky, enormous ferns and cycad trees towering over a muddy river delta, volcanic mountains smoking faintly in the far background, the air thick with mist at dawn."
+   GOOD âœ“ (phenomenon) "A massive wall of glacial ice advances slowly across a flat tundra plain under a pale grey sky, uprooting ancient trees in its path, frozen mammoths visible beneath the translucent surface, a herd of woolly rhinoceroses fleeing in the foreground."
+   GOOD âœ“ (discovery moment) "An archaeologist kneels in a narrow underground chamber, trembling hand holding a torch over a perfectly preserved golden death mask resting on stone, dust particles floating in the warm light, rough-hewn rock walls pressing close on all sides."
 
-STRUCTURAL EXAMPLES — these show the PATTERN only (action-first, named anchor, concrete feature, narrative beat). Each GOOD example below is about a DIFFERENT cosmic subject on purpose: your {n_prompts} prompts must use the actual subject, named objects and concrete features from THIS video's script — NOT the subjects in the examples.
+STRUCTURAL EXAMPLES â€” these show the PATTERN only (action-first, named anchor, concrete feature, narrative beat). Each GOOD example below is about a DIFFERENT cosmic subject on purpose: your {n_prompts} prompts must use the actual subject, named objects and concrete features from THIS video's script â€” NOT the subjects in the examples.
 
-   GOOD ✓ (supermassive black hole) "Light bends around the photon ring of TON 618, an orange-white accretion disk swirling at relativistic speeds, gravitationally lensed background galaxies smeared into arcs, deep cosmic blackness beyond, the faint glow of distant quasars sprinkling the field."
-   GOOD ✓ (deep-space mission)     "Voyager 1 drifts past the rings of Saturn at golden hour, its dish antenna angled back toward the inner Solar System, the gold-plated record glinting on its flank, ring shadows striping the spacecraft's body, the pale crescent of Titan in the distance."
-   GOOD ✓ (neutron star)            "A magnetar's twin magnetic-field lines arc thousands of kilometres above its glowing crust, X-ray flares ripple outward in violent pulses, the millisecond-pulsar surface cracks with starquake fissures, surrounding nebular gas glowing blue from the radiation bath."
-   GOOD ✓ (observatory)             "JWST's hexagonal gold mirror unfolds against the blackness of L2, the Carina Nebula reflected in its segments, the sun-shield's silver layers tilted away from the Sun, distant stars dotting the deep-cold backdrop, the spacecraft's struts catching faint sunlight."
+   GOOD âœ“ (supermassive black hole) "Light bends around the photon ring of TON 618, an orange-white accretion disk swirling at relativistic speeds, gravitationally lensed background galaxies smeared into arcs, deep cosmic blackness beyond, the faint glow of distant quasars sprinkling the field."
+   GOOD âœ“ (deep-space mission)     "Voyager 1 drifts past the rings of Saturn at golden hour, its dish antenna angled back toward the inner Solar System, the gold-plated record glinting on its flank, ring shadows striping the spacecraft's body, the pale crescent of Titan in the distance."
+   GOOD âœ“ (neutron star)            "A magnetar's twin magnetic-field lines arc thousands of kilometres above its glowing crust, X-ray flares ripple outward in violent pulses, the millisecond-pulsar surface cracks with starquake fissures, surrounding nebular gas glowing blue from the radiation bath."
+   GOOD âœ“ (observatory)             "JWST's hexagonal gold mirror unfolds against the blackness of L2, the Carina Nebula reflected in its segments, the sun-shield's silver layers tilted away from the Sun, distant stars dotting the deep-cold backdrop, the spacecraft's struts catching faint sunlight."
 
-   BAD ✗ "A big black hole in deep space with stars around it." (no verb, no concrete feature, generic wallpaper — exact failure mode)
-   BAD ✗ "A supermassive black hole with accretion disk, glowing brightly, with galaxies in the background." (checklist instead of story; no specific action or comparison)
-   BAD ✗ "Outer space with a planet and stars." (no specific moment, no story-specific feature, no named object)
-   BAD ✗ "[subject] portrait, glowing in the void, with stars behind it." (forbidden opening — static stock image)
+   BAD âœ— "A big black hole in deep space with stars around it." (no verb, no concrete feature, generic wallpaper â€” exact failure mode)
+   BAD âœ— "A supermassive black hole with accretion disk, glowing brightly, with galaxies in the background." (checklist instead of story; no specific action or comparison)
+   BAD âœ— "Outer space with a planet and stars." (no specific moment, no story-specific feature, no named object)
+   BAD âœ— "[subject] portrait, glowing in the void, with stars behind it." (forbidden opening â€” static stock image)
 
 Return ONLY a JSON array of {n_prompts} prompt strings, in chronological order following the script. No markdown, no explanation, no preamble. Just the array.
 
 Example format:
-["section 1 prompt …", "section 2 prompt …", "section 3 prompt …", "section 4 prompt …", "section 5 prompt …", "section 6 prompt …"]"""
+["section 1 prompt â€¦", "section 2 prompt â€¦", "section 3 prompt â€¦", "section 4 prompt â€¦", "section 5 prompt â€¦", "section 6 prompt â€¦"]"""
 
         completion = (
             str(self.generate_response(prompt))
@@ -993,7 +1058,7 @@ Example format:
             fallback_prompts = [self.subject] * n_prompts
         else:
             # Single-image, scene-only fallback prompts. No "illustrated", no
-            # "series" / "sequence" / "panels" — those words make Gemini /
+            # "series" / "sequence" / "panels" â€” those words make Gemini /
             # Nano Banana 2 produce a stacked collage instead of one image.
             fallback_prompts = [
                 f"{self.subject}, the central cosmic subject in full view, scientifically accurate scale and palette, single image",
@@ -1021,7 +1086,7 @@ Example format:
         image_prompts = image_prompts[:n_prompts]
 
         # ------------------------------------------------------------------
-        # Diversity guard (AI mode only) — detects the failure mode where
+        # Diversity guard (AI mode only) â€” detects the failure mode where
         # the LLM returns N near-identical "[name] in armor in front of
         # columns" portraits instead of N narratively distinct beats.
         # If it triggers, regenerate ONCE with a stricter directive.
@@ -1034,7 +1099,7 @@ Example format:
                 if not prompts:
                     return "no prompts"
 
-                # 1. STATIC WALLPAPER — opens with generic stock framing like
+                # 1. STATIC WALLPAPER â€” opens with generic stock framing like
                 #    "A black hole in space", "A galaxy with stars",
                 #    "A nebula floating", "A planet in the cosmos".
                 portrait_re = re.compile(
@@ -1049,7 +1114,7 @@ Example format:
                 if portrait_count >= max(2, len(prompts) // 2):
                     return f"{portrait_count}/{len(prompts)} prompts open with a generic cosmic-wallpaper pattern"
 
-                # 2. CHECKLIST — many prompts pile up >= 3 generic cosmic
+                # 2. CHECKLIST â€” many prompts pile up >= 3 generic cosmic
                 #    objects without a specific feature ("stars + nebula +
                 #    galaxy + planet + moon" generic-space-art mode).
                 generic_terms = {"stars", "nebula", "galaxy", "galaxies", "planet",
@@ -1063,7 +1128,7 @@ Example format:
                 if heavy_generic >= max(2, len(prompts) // 2):
                     return f"{heavy_generic}/{len(prompts)} prompts read as generic-cosmos checklists"
 
-                # 3. LEXICAL DUPLICATION — many prompts share their first 5 words.
+                # 3. LEXICAL DUPLICATION â€” many prompts share their first 5 words.
                 first5 = [" ".join((p or "").lower().split()[:5]) for p in prompts]
                 if len(set(first5)) <= max(1, len(prompts) // 2):
                     return f"only {len(set(first5))} unique opening phrases across {len(prompts)} prompts"
@@ -1075,7 +1140,7 @@ Example format:
                 warning(f"Image prompts look generic ({diag}); regenerating once with stricter directive.")
                 stricter = (
                     prompt
-                    + "\n\nPREVIOUS ATTEMPT REJECTED — your prompts were "
+                    + "\n\nPREVIOUS ATTEMPT REJECTED â€” your prompts were "
                     + diag
                     + ". This is exactly the failure mode the rules above forbid. "
                     "Regenerate from scratch. Each of the "
@@ -1084,7 +1149,7 @@ Example format:
                     "this story (the plow, the fasces, the wax tablet, the farmhouse, etc., "
                     "depending on what the story actually contains), (c) happen in a different "
                     "setting from the others. NEVER write \"X standing in armor in front of "
-                    "columns\" — that is the exact pattern we are rejecting."
+                    "columns\" â€” that is the exact pattern we are rejecting."
                 )
                 try:
                     retry_completion = (
@@ -1111,7 +1176,7 @@ Example format:
                         if get_verbose():
                             info(" => Diversity-guard retry produced acceptable prompts.")
                     else:
-                        # Retry also fell into the failure mode — keep the original;
+                        # Retry also fell into the failure mode â€” keep the original;
                         # at least it parsed. Nothing more to do here without a third call.
                         warning("   Retry still looked generic; keeping original prompts.")
 
@@ -1212,7 +1277,7 @@ Example format:
 
     def _try_leonardo(self, prompt: str) -> bytes:
         """Try Leonardo AI API (excellent quality, $5 free credit).
-        Uses Phoenix 1.0 by default — it follows long prompts much better
+        Uses Phoenix 1.0 by default â€” it follows long prompts much better
         than Lightning XL, which was averaging out specific subjects (e.g.
         rendering "Plato" as a generic Greek figure)."""
         from config import get_leonardo_api_key
@@ -1279,7 +1344,7 @@ Example format:
     def _augment_for_ai_fallback(self, query: str) -> str:
         """Wrap a short photo-mode search query with neutral mood cues so AI
         generators render a usable image. We DO NOT inject 'photorealistic'
-        / 'cinematic photograph' here anymore — those would override a
+        / 'cinematic photograph' here anymore â€” those would override a
         cartoon / illustration channel style. The actual aesthetic is
         decided by `_apply_channel_style` (channel image_style or default
         baseline)."""
@@ -1350,16 +1415,25 @@ Example format:
         text = " ".join(s.text.strip() for s in segments if s.text and s.text.strip())
         return text.strip()
 
-    def reupload_video(self, video_path: str, subject: str | None = None) -> bool:
+    def reupload_video(
+        self,
+        video_path: str,
+        subject: str | None = None,
+        generate_thumbnail: bool = False,
+        is_long: bool | None = None,
+    ) -> bool:
         """Re-upload an already-rendered .mp4 by reusing the standard
         ``upload_video`` Selenium flow.
 
         Metadata source priority:
 
-        1. ``<video>.meta.json`` sidecar — fastest, no LLM call.
-        2. *subject* argument — generate title + description from the topic.
-        3. Whisper transcript — recover from the audio when there is no
+        1. ``<video>.meta.json`` sidecar â€” fastest, no LLM call.
+        2. *subject* argument â€” generate title + description from the topic.
+        3. Whisper transcript â€” recover from the audio when there is no
            sidecar and the user does not remember the topic.
+
+        If ``generate_thumbnail`` is true, generate a custom thumbnail when
+        one is not already restored from the sidecar.
 
         Returns whatever ``upload_video`` returns.
         """
@@ -1371,6 +1445,10 @@ Example format:
 
         # 1) Sidecar
         sidecar = self.load_metadata_sidecar(video_path)
+        sidecar_is_long = bool(sidecar.get("is_long")) if sidecar else False
+        effective_is_long = sidecar_is_long if sidecar else bool(is_long)
+        self._is_long_video = effective_is_long
+
         if sidecar and sidecar.get("title") and sidecar.get("description"):
             self.subject = sidecar.get("subject", "")
             self.metadata = {
@@ -1381,11 +1459,19 @@ Example format:
             if saved_thumb and os.path.isfile(saved_thumb):
                 self.thumbnail_path = saved_thumb
                 info(f" => Restored thumbnail from sidecar: {saved_thumb}")
+            elif generate_thumbnail:
+                try:
+                    info(" => Generating thumbnail before upload...")
+                    self.generate_thumbnail()
+                except Exception as e:
+                    warning(f"Thumbnail generation failed: {str(e)[:200]} (upload will continue without custom thumbnail)")
+                    self.thumbnail_path = ""
+            self._persist_metadata_sidecar(is_long=effective_is_long)
             info(" => Loaded saved metadata from sidecar.")
             success(f" => Title: {self.metadata['title']}")
             return self.upload_video()
 
-        # 2) Subject provided → ask the LLM for title + description.
+        # 2) Subject provided â†’ ask the LLM for title + description.
         if subject and subject.strip():
             self.subject = subject.strip()
             info(f" => Generating title + description for subject: {self.subject}")
@@ -1404,7 +1490,7 @@ Example format:
             # 3) Whisper fallback.
             transcript = self._transcribe_video_audio(video_path)
             if not transcript:
-                error("Whisper produced an empty transcript — cannot generate metadata.")
+                error("Whisper produced an empty transcript â€” cannot generate metadata.")
                 return False
             preview = transcript[:160] + ("..." if len(transcript) > 160 else "")
             info(f"  [Whisper] Transcript: {preview}")
@@ -1422,7 +1508,7 @@ Example format:
             )
 
         title = self.generate_response(title_prompt)
-        title = re.sub(r'^[\"\'“”‘’]+|[\"\'“”‘’]+$', '', title.strip()).strip()
+        title = re.sub(r'^[\"\'â€œâ€â€˜â€™]+|[\"\'â€œâ€â€˜â€™]+$', '', title.strip()).strip()
         if len(title) > 100:
             if "#" in title:
                 title = title[:title.index("#")].strip()
@@ -1430,16 +1516,23 @@ Example format:
                 title = title[:100]
 
         description = self.generate_response(desc_prompt)
-        description = re.sub(r'^[\"\'“”‘’]+|[\"\'“”‘’]+$', '', description.strip()).strip()
+        description = re.sub(r'^[\"\'â€œâ€â€˜â€™]+|[\"\'â€œâ€â€˜â€™]+$', '', description.strip()).strip()
 
         self.metadata = {"title": title, "description": description}
         success(f" => Title: {title}")
         info(f" => Description: {description[:120]}{'...' if len(description) > 120 else ''}")
 
+        if generate_thumbnail:
+            try:
+                info(" => Generating thumbnail before upload...")
+                self.generate_thumbnail()
+            except Exception as e:
+                warning(f"Thumbnail generation failed: {str(e)[:200]} (upload will continue without custom thumbnail)")
+                self.thumbnail_path = ""
+
         # Persist a sidecar so a future retry skips the LLM/Whisper round.
         # Detect long-vs-short from existing sidecar if any; default short.
-        is_long = bool((sidecar or {}).get("is_long", False))
-        self._persist_metadata_sidecar(is_long=is_long)
+        self._persist_metadata_sidecar(is_long=effective_is_long)
 
         return self.upload_video()
 
@@ -1518,7 +1611,7 @@ Example format:
         """Remove multi-image trigger words from a prompt. Image generators
         (especially Gemini) interpret words like "panels", "sequence",
         "storyboard" as a request for a collage even when context says "one
-        image" — so we strip them defensively before sending."""
+        image" â€” so we strip them defensively before sending."""
         if not text:
             return text
         cleaned = cls._COLLAGE_TRIGGERS.sub("", text)
@@ -1544,7 +1637,7 @@ Example format:
            "period-accurate" / "photorealistic" cues that would fight the
            channel style.
 
-        2) No `image_style` configured → fall back to `DEFAULT_BASE_STYLE`
+        2) No `image_style` configured â†’ fall back to `DEFAULT_BASE_STYLE`
            (photoreal documentary look) and a stronger era anchor that
            explicitly forbids modern/industrial visuals.
 
@@ -1562,7 +1655,7 @@ Example format:
         # "ART STYLE: 1" to the LLM, which then drifts into a generic cartoon
         # look instead of falling through to the photoreal default.
         if custom_style:
-            alpha_words = re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]{3,}", custom_style)
+            alpha_words = re.findall(r"[A-Za-zÃÃ‰ÃÃ“ÃšÃ‘Ã¡Ã©Ã­Ã³ÃºÃ±]{3,}", custom_style)
             stripped_lower = custom_style.lower().strip()
             if (
                 len(custom_style) < 8
@@ -1582,22 +1675,22 @@ Example format:
             # Style anchored at front for maximum weight, then scene, then a
             # neutral setting clause, then style repeated at the end as reminder.
             short_style = custom_style if len(custom_style) <= 200 else custom_style[:200].rsplit(",", 1)[0]
-            parts.append(f"ART STYLE — render the entire image in this style: {custom_style}")
+            parts.append(f"ART STYLE â€” render the entire image in this style: {custom_style}")
             parts.append(clean_prompt)
             if ctx and (ctx.get("setting") or ctx.get("visual_anchors")):
                 setting_clause = (
-                    f"ERA ACCURACY — this scene takes place in {ctx['setting']}. All clothing, architecture, objects and environment MUST be period-faithful to this era. " if ctx.get("setting") else ""
+                    f"ERA ACCURACY â€” this scene takes place in {ctx['setting']}. All clothing, architecture, objects and environment MUST be period-faithful to this era. " if ctx.get("setting") else ""
                 )
                 anchors_clause = (
                     f"Period-accurate elements to weave into the scene naturally (in the art style above): {ctx['visual_anchors']}. "
                     if ctx.get("visual_anchors") else ""
                 )
                 avoid_clause = (
-                    f"FORBIDDEN — anachronistic or off-era elements: {ctx['must_avoid']}." if ctx.get("must_avoid") else ""
+                    f"FORBIDDEN â€” anachronistic or off-era elements: {ctx['must_avoid']}." if ctx.get("must_avoid") else ""
                 )
                 parts.append((setting_clause + anchors_clause + avoid_clause).strip())
             parts.append(
-                f"FINAL REMINDER — keep the entire image in the art style described above ({short_style}). "
+                f"FINAL REMINDER â€” keep the entire image in the art style described above ({short_style}). "
                 f"Do NOT default to photorealism. Do NOT add realistic skin texture or photographic lighting. "
                 f"The art style overrides any realism implied by the scene."
             )
@@ -1605,21 +1698,21 @@ Example format:
             parts.append(clean_prompt)
             if ctx and (ctx.get("setting") or ctx.get("visual_anchors")):
                 setting_clause = (
-                    f"ERA ACCURACY — this scene takes place in {ctx['setting']}. All clothing, architecture, objects and environment MUST be period-faithful to this era. " if ctx.get("setting") else ""
+                    f"ERA ACCURACY â€” this scene takes place in {ctx['setting']}. All clothing, architecture, objects and environment MUST be period-faithful to this era. " if ctx.get("setting") else ""
                 )
                 anchors_clause = (
                     f"Period-accurate elements to weave into the scene naturally: {ctx['visual_anchors']}. "
                     if ctx.get("visual_anchors") else ""
                 )
                 avoid_clause = (
-                    f"FORBIDDEN — anachronistic or off-era elements: {ctx['must_avoid']}."
+                    f"FORBIDDEN â€” anachronistic or off-era elements: {ctx['must_avoid']}."
                     if ctx.get("must_avoid") else ""
                 )
                 parts.append((setting_clause + anchors_clause + avoid_clause).strip())
             parts.append(self.DEFAULT_BASE_STYLE)
 
         combined = ". ".join(p for p in parts if p)
-        # Hard cap to ~1500 chars — Gemini accepts up to ~1900 in our payload
+        # Hard cap to ~1500 chars â€” Gemini accepts up to ~1900 in our payload
         # cap, so this leaves headroom while preventing prompt explosion.
         return combined[:1500]
 
@@ -1632,7 +1725,7 @@ Example format:
 
             {
                 "setting": "<short descriptor of where/when/in-what-world the
-                            video takes place — e.g. 'Ancient Rome',
+                            video takes place â€” e.g. 'Ancient Rome',
                             'Modern Wall Street trading floor',
                             'Pro NFL stadium', 'Tokyo high-end omakase
                             kitchen', 'Suburban American household 2020s'>",
@@ -1645,7 +1738,7 @@ Example format:
 
         Replaces the previous hardcoded CIVILIZATIONS keyword-matching system,
         which only covered ~17 historical eras and forced every channel into
-        civilization-flavored visuals. The new approach works for any niche —
+        civilization-flavored visuals. The new approach works for any niche â€”
         history, science, finance, sports, food, tech, modern stories, etc.
 
         Cached per (subject, len(script)) tuple. Returns {} on parse failure
@@ -1663,25 +1756,40 @@ Example format:
         if getattr(self, "_ctx_profile_key", None) == cache_key and cached is not None:
             return cached
 
-        script_excerpt = script[:1200]
+        # Sample beginning + middle + end of the script (â‰ˆ3000 chars total) so
+        # the visual anchors cover the WHOLE video, not just the intro. For a
+        # 20-min documentary that visits multiple eras / places, sampling
+        # only the first 1200 chars (the previous behaviour) made later
+        # sections inherit visual anchors derived only from the cold open.
+        SAMPLE = 1000
+        if len(script) <= SAMPLE * 3:
+            script_excerpt = script
+        else:
+            mid_start = (len(script) // 2) - (SAMPLE // 2)
+            script_excerpt = (
+                f"{script[:SAMPLE]}\n[... middle of script ...]\n"
+                f"{script[mid_start:mid_start + SAMPLE]}\n[... end of script ...]\n"
+                f"{script[-SAMPLE:]}"
+            )
         prompt = f"""You are a visual research assistant. Read the channel niche, the video topic and the script excerpt, and produce a JSON brief that will anchor image generation for this single video.
 
 CHANNEL NICHE: {niche or "(not specified)"}
 VIDEO TOPIC: {subject or "(not specified)"}
-SCRIPT EXCERPT:
+SCRIPT EXCERPT (sampled across the full video â€” beginning, middle and end):
 \"\"\"
 {script_excerpt}
 \"\"\"
 
 Return ONLY a JSON object with EXACTLY these three string fields:
-- "setting": a short descriptor of WHERE and WHEN the story happens — pick the most specific real-world setting that fits the topic and script (e.g. "Ancient Rome, late Republic", "Modern Wall Street trading floor", "Pro NFL stadium, game day", "Tokyo high-end omakase kitchen", "Silicon Valley startup office, 2020s", "Rural American farmhouse, present day", "Open ocean, modern container ship"). Do NOT default to "ancient civilization" unless the topic clearly requires it.
-- "visual_anchors": a comma-separated list of CONCRETE props, clothing, architecture, vehicles, tools, environmental details that should appear naturally in scenes from this setting. 8 to 14 items. Be specific (materials, eras, styles).
+- "setting": a short descriptor of WHERE and WHEN the story happens â€” pick the most specific real-world setting that fits the topic and script (e.g. "Ancient Rome, late Republic", "Modern Wall Street trading floor", "Pro NFL stadium, game day", "Tokyo high-end omakase kitchen", "Silicon Valley startup office, 2020s", "Rural American farmhouse, present day", "Open ocean, modern container ship"). Do NOT default to "ancient civilization" unless the topic clearly requires it.
+- "visual_anchors": a comma-separated list of CONCRETE props, clothing, architecture, vehicles, tools, environmental details that should appear naturally in scenes from this setting. 10 to 16 items. Be specific (materials, eras, styles). If the script visits multiple eras/places (e.g. ancient origin + modern legacy), include anchors from EACH so later sections of the video stay grounded.
 - "must_avoid": a comma-separated list of visual elements that would be anachronistic, off-topic or break immersion for this setting. 4 to 8 items.
 
 RULES:
 - Match the SETTING to the actual subject. A topic about a modern athlete must NOT get a "Greek Olympics" setting just because the channel niche mentions sports history.
+- If the script clearly visits multiple settings (origin + present-day, or different countries/eras), state the PRIMARY setting in "setting" but include anchors for ALL of them in "visual_anchors". Otherwise pick the one most viewers would picture.
 - If the topic is abstract or the script is generic, pick the setting that most viewers would picture when reading the topic.
-- Output ONLY the JSON object — no markdown, no preamble, no explanation. No code fences.
+- Output ONLY the JSON object â€” no markdown, no preamble, no explanation. No code fences.
 """
         try:
             raw = str(self.generate_response(prompt) or "").strip()
@@ -1707,7 +1815,7 @@ RULES:
                     "must_avoid": str(parsed.get("must_avoid", "")).strip(),
                 }
                 # Drop the brief entirely if the LLM produced an empty / useless
-                # blob — prevents injecting a placeholder anchor that would
+                # blob â€” prevents injecting a placeholder anchor that would
                 # confuse the image-prompt model.
                 if not profile["setting"] and not profile["visual_anchors"]:
                     profile = {}
@@ -1732,7 +1840,7 @@ RULES:
 
     def _topic_keywords(self) -> List[str]:
         """Key lowercase tokens from self.subject, used to anchor stock searches to the topic."""
-        words = re.findall(r"[A-Za-zÀ-ÿ]+", (self.subject or "").lower())
+        words = re.findall(r"[A-Za-zÃ€-Ã¿]+", (self.subject or "").lower())
         return [w for w in words if len(w) > 2 and w not in _PHOTO_STOPWORDS]
 
     def _anchor_query(self, query: str) -> str:
@@ -1747,23 +1855,23 @@ RULES:
     def _query_tokens(self, *texts: str) -> set:
         """Extract content-word tokens from the given strings for relevance checks."""
         combined = " ".join(t for t in texts if t).lower()
-        tokens = re.findall(r"[a-zà-ÿ]+", combined)
+        tokens = re.findall(r"[a-zÃ -Ã¿]+", combined)
         return {t for t in tokens if len(t) > 2 and t not in _PHOTO_STOPWORDS}
 
     def _strict_anchor_tokens(self) -> set:
-        """Distinctive tokens from the subject — generic words like 'roman' or
+        """Distinctive tokens from the subject â€” generic words like 'roman' or
         'emperor' are dropped. These act as the must-match anchor when
         validating that a result is actually on-topic."""
         return set(self._topic_keywords()) - _GENERIC_TOPIC_TOKENS
 
     def _query_proper_nouns(self, query: str) -> set:
-        """Capitalized words from the query — usually identify a specific
+        """Capitalized words from the query â€” usually identify a specific
         person/place/event we want to actually appear in the result.
         Generic tokens (e.g. 'Roman') are stripped so they don't satisfy the
         anchor check on their own."""
         if not query:
             return set()
-        nouns = re.findall(r"\b[A-ZÁ-ÚÑ][\wÀ-ſ]{2,}\b", query)
+        nouns = re.findall(r"\b[A-ZÃ-ÃšÃ‘][\wÃ€-Å¿]{2,}\b", query)
         out = set()
         for n in nouns:
             t = n.lower()
@@ -1776,14 +1884,14 @@ RULES:
         """True if the title promises a numbered list of items.
         Catches 'N <noun>' patterns ('5 curiosidades', '3 secretos', '7 razones')
         and 'Top N' constructions in Spanish/English. We trigger only on small
-        single-digit lists (the typical clickbait range) — '1989' or 'mil años'
+        single-digit lists (the typical clickbait range) â€” '1989' or 'mil aÃ±os'
         in a historical title shouldn't false-positive."""
         if not title:
             return False
         t = title.lower()
         # "N + noun" where N is 2-9 (single-digit clickbait counts).
         list_nouns = (
-            r"curiosidad(?:es)?|secret[oa]s?|raz(?:ón|on|ones)|cosas?|"
+            r"curiosidad(?:es)?|secret[oa]s?|raz(?:Ã³n|on|ones)|cosas?|"
             r"dat[oa]s?|hech[oa]s?|reglas?|tips?|consejos?|trucos?|"
             r"misterios?|claves?|pasos?|errores?|verdades?|mitos?|"
             r"thing|things|reason|reasons|secret|secrets|fact|facts|"
@@ -1794,7 +1902,7 @@ RULES:
         # "Top N" in Spanish/English.
         if re.search(r"\btop\s+[2-9]\b", t):
             return True
-        # "N <noun> que..." — catches "5 curiosidades que te sorprenderán" even
+        # "N <noun> que..." â€” catches "5 curiosidades que te sorprenderÃ¡n" even
         # when the noun isn't in the list above.
         if re.search(r"\b[2-9]\s+\w{4,}\s+que\b", t):
             return True
@@ -1803,9 +1911,9 @@ RULES:
     def _title_uses_cliche(self, title: str) -> bool:
         """True if the title contains overused clickbait words we want to ban.
 
-        These are basic/lazy hooks ('secreto', 'sabías que', 'increíble',
-        'no vas a creer'…) that the LLM keeps defaulting to. Detection is
-        accent-insensitive and case-insensitive so 'sabias que' and 'SABÍAS
+        These are basic/lazy hooks ('secreto', 'sabÃ­as que', 'increÃ­ble',
+        'no vas a creer'â€¦) that the LLM keeps defaulting to. Detection is
+        accent-insensitive and case-insensitive so 'sabias que' and 'SABÃAS
         QUE' both trigger.
         """
         if not title:
@@ -1832,7 +1940,7 @@ RULES:
     def _script_has_enumerated_items(self, script: str) -> bool:
         """Crude check: does the script actually list at least 3 enumerated items?
         Looks for explicit ordinal/list markers ('primero', 'segundo', 'tercero',
-        'first', 'second', 'third', 'número uno', 'one:', '1.', '2.', etc.).
+        'first', 'second', 'third', 'nÃºmero uno', 'one:', '1.', '2.', etc.).
         If it doesn't find them, we conclude the script tells one story and a
         list-form title is dishonest."""
         if not script:
@@ -1842,7 +1950,7 @@ RULES:
         # Spanish ordinals as words
         for w in ("primero", "primera", "segundo", "segunda", "tercero", "tercera",
                   "cuarto", "cuarta", "quinto", "quinta", "sexto", "sexta",
-                  "séptimo", "séptima", "octavo", "octava", "noveno", "novena"):
+                  "sÃ©ptimo", "sÃ©ptima", "octavo", "octava", "noveno", "novena"):
             if re.search(rf"\b{w}\b", s):
                 markers += 1
         # English ordinals
@@ -1852,10 +1960,10 @@ RULES:
                 markers += 1
         # Numbered list markers ("1.", "1)", "1 -")
         markers += len(re.findall(r"(?:^|\s)[1-9][\.\)\-:]\s", s))
-        # "número uno/dos/tres" / "number one/two/three"
+        # "nÃºmero uno/dos/tres" / "number one/two/three"
         for w in ("uno", "dos", "tres", "cuatro", "cinco",
                   "one", "two", "three", "four", "five"):
-            if re.search(rf"\bn[uú]mero\s+{w}\b|\bnumber\s+{w}\b", s):
+            if re.search(rf"\bn[uÃº]mero\s+{w}\b|\bnumber\s+{w}\b", s):
                 markers += 1
         return markers >= 3
 
@@ -1863,9 +1971,9 @@ RULES:
         """Strict relevance check used by every photo provider.
 
         A result counts as on-topic if it contains AT LEAST ONE distinctive
-        anchor token — either from the subject itself or from the query's
+        anchor token â€” either from the subject itself or from the query's
         proper nouns. Generic words ('roman', 'emperor', 'history') are NOT
-        sufficient on their own. If we can't derive any anchor (rare — e.g.
+        sufficient on their own. If we can't derive any anchor (rare â€” e.g.
         the subject is a generic phrase), we fall back to the previous
         any-token overlap so the pipeline doesn't deadlock.
         """
@@ -1875,7 +1983,7 @@ RULES:
         anchors = self._strict_anchor_tokens() | self._query_proper_nouns(query)
         if anchors:
             return bool(anchors & result_tokens)
-        # No anchors at all → fall back to the loose any-token check so we
+        # No anchors at all â†’ fall back to the loose any-token check so we
         # still trim obvious off-topic results.
         loose = self._query_tokens(query, self.subject)
         return bool(loose & result_tokens) if loose else True
@@ -1903,7 +2011,7 @@ RULES:
         import urllib.parse
         import random
 
-        # In photos mode the LLM already generated a clean query — don't strip it further.
+        # In photos mode the LLM already generated a clean query â€” don't strip it further.
         if getattr(self, "_image_mode", "ai") == "photos":
             query = prompt.strip()
         else:
@@ -1925,7 +2033,7 @@ RULES:
 
         # Relevance filter: alt text must contain a distinctive anchor token
         # from the subject or one of the query's proper nouns. Generic words
-        # ('roman', 'emperor', etc.) alone are NOT enough — see _is_relevant.
+        # ('roman', 'emperor', etc.) alone are NOT enough â€” see _is_relevant.
         relevant = [p for p in photos if self._is_relevant(query, p.get("alt") or "")]
         if not relevant:
             raise RuntimeError("Pexels: no relevant photos (all off-topic)")
@@ -1972,7 +2080,7 @@ RULES:
         if not hits:
             raise RuntimeError("Pixabay: no photos found")
 
-        # Relevance filter: Pixabay `tags` is a comma-separated list — require
+        # Relevance filter: Pixabay `tags` is a comma-separated list â€” require
         # a distinctive anchor token (proper noun) overlap, not just any word.
         relevant = [h for h in hits if self._is_relevant(query, h.get("tags") or "")]
         if not relevant:
@@ -2001,7 +2109,7 @@ RULES:
         the article's MAIN image (the one in the infobox).
 
         Why this works better than Commons file-search for historical/educational topics:
-          * Wikipedia's article search is fuzzy + redirects-aware (`Hiparco` → `Hipparchus`).
+          * Wikipedia's article search is fuzzy + redirects-aware (`Hiparco` â†’ `Hipparchus`).
           * The infobox image is curated to represent the topic.
           * Tries the channel's language wiki first, then English as fallback.
         """
@@ -2098,7 +2206,7 @@ RULES:
         if len(query) > 60 or any(w in query.lower() for w in ("cinematic", "8k", "lighting", "photorealistic")):
             query = self._extract_search_query(prompt)
 
-        # Build a shortlist of query variants — try the original, then progressively
+        # Build a shortlist of query variants â€” try the original, then progressively
         # shorter / proper-noun-only versions so we recover from over-specific queries.
         words = query.split()
         STOP = {"the", "a", "an", "of", "in", "on", "at", "to", "and", "or",
@@ -2208,7 +2316,7 @@ RULES:
                 img_url = obj.get("primaryImage") or ""
                 if not img_url or img_url in self._used_stock_urls:
                     continue
-                # Strict relevance check against the object's metadata —
+                # Strict relevance check against the object's metadata â€”
                 # generic culture/period words ("Roman", "Imperial") on their
                 # own do not satisfy _is_relevant.
                 metadata_blob = " ".join(
@@ -2291,18 +2399,18 @@ RULES:
         """
         Wikidata-driven image lookup. The flow is:
           1. Search Wikidata entities for the query in the channel language
-             (es/en) — returns a Q-id whose label most closely matches.
+             (es/en) â€” returns a Q-id whose label most closely matches.
           2. Fetch that entity's claims:
-             * P18 (image) → curated lead image used by every Wikipedia entry.
-             * P373 (Commons category) → curated category of related images
+             * P18 (image) â†’ curated lead image used by every Wikipedia entry.
+             * P373 (Commons category) â†’ curated category of related images
                about that exact entity (statues, coins, frescoes, etc.).
           3. Verify the entity's labels actually contain a distinctive anchor
-             token from the subject — protects against Q-id collisions
-             (e.g. "Nero" → musician vs. emperor).
+             token from the subject â€” protects against Q-id collisions
+             (e.g. "Nero" â†’ musician vs. emperor).
 
         Why this works better than fuzzy article search: Wikidata returns a
         deterministic entity ID, not a free-text article match. The image we
-        get back is the canonical one Wikipedia uses everywhere — so for
+        get back is the canonical one Wikipedia uses everywhere â€” so for
         "Nero", we get the bust from the Capitoline Museums, not a generic
         Roman ruin.
         """
@@ -2437,7 +2545,7 @@ RULES:
 
     def _try_europeana(self, prompt: str) -> bytes:
         """
-        Europeana — aggregator of European cultural-heritage institutions
+        Europeana â€” aggregator of European cultural-heritage institutions
         (museums, libraries, archives). Free API key required.
         Coverage is similar in quality to Wikipedia for historical/art topics
         and often surfaces material that isn't on Commons (museum scans,
@@ -2460,8 +2568,8 @@ RULES:
         print(colored(f"    [Europeana] Searching: {query[:60]}...", "cyan"), flush=True)
         headers = {"User-Agent": "MoneyPrinterLargo/1.0 (research use)"}
 
-        # `media=true` → only items with a real media URL we can download.
-        # `type=IMAGE` → drops audio/video/text. `reusability=open` would be
+        # `media=true` â†’ only items with a real media URL we can download.
+        # `type=IMAGE` â†’ drops audio/video/text. `reusability=open` would be
         # safer for licensing but excludes too much; we keep results broad
         # since the videos are not commercial in nature.
         search_url = (
@@ -2614,8 +2722,8 @@ RULES:
 
         Args:
             prompts: List of image prompts / search queries.
-            image_mode: "ai" → AI generators first, stock photos as fallback (default).
-                        "photos" → Wikimedia / stock photos first, AI as last-resort fallback.
+            image_mode: "ai" â†’ AI generators first, stock photos as fallback (default).
+                        "photos" â†’ Wikimedia / stock photos first, AI as last-resort fallback.
         """
         self._image_mode = image_mode
         if image_mode == "photos":
@@ -2628,7 +2736,7 @@ RULES:
                 # so it goes first.
                 ("Wikidata", self._try_wikidata, "stock"),
                 # Tier 2: fuzzy Wikipedia article search (handles redirects,
-                # spelling variants) → curated infobox image.
+                # spelling variants) â†’ curated infobox image.
                 ("Wikipedia article", self._try_wikipedia_article, "stock"),
                 # Tier 3: free-text search across other curated heritage
                 # archives. Europeana aggregates European museums/libraries,
@@ -2638,7 +2746,7 @@ RULES:
                 ("Wikimedia Commons", self._try_wikimedia, "stock"),
                 ("Met Museum", self._try_met_museum, "stock"),
                 ("Library of Congress", self._try_loc, "stock"),
-                # Tier 4: modern stock (filtered by relevance) — useful for
+                # Tier 4: modern stock (filtered by relevance) â€” useful for
                 # non-historical topics where heritage archives are sparse.
                 ("Pexels", self._try_pexels, "stock"),
                 ("Pixabay", self._try_pixabay, "stock"),
@@ -2662,7 +2770,7 @@ RULES:
             saved = False
             for name, fn, kind in providers:
                 try:
-                    # In photos mode the LLM produces short search queries — AI providers need cinematic context to render well.
+                    # In photos mode the LLM produces short search queries â€” AI providers need cinematic context to render well.
                     effective_prompt = prompt
                     if image_mode == "photos" and kind == "ai":
                         effective_prompt = self._augment_for_ai_fallback(prompt)
@@ -2729,7 +2837,7 @@ RULES:
         """
         path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".wav")
 
-        # Sanitize while keeping punctuation (commas, colons, em-dashes, ¿¡)
+        # Sanitize while keeping punctuation (commas, colons, em-dashes, Â¿Â¡)
         # so Edge-TTS pauses naturally. The script we display keeps Roman
         # numerals intact ("Cosimo I"); only the text fed to TTS expands them
         # ("Cosimo primero") so pronunciation is correct.
@@ -2785,16 +2893,12 @@ RULES:
 
         cache = get_youtube_cache_path()
 
-        with open(cache, "r", encoding="utf-8") as file:
-            previous_json = json.loads(file.read())
-
-            # Find our account
-            accounts = previous_json["accounts"]
-            for account in accounts:
+        with json_write_lock(cache):
+            with open(cache, "r", encoding="utf-8") as file:
+                previous_json = json.loads(file.read())
+            for account in previous_json["accounts"]:
                 if account["id"] == self._account_uuid:
                     account["videos"].append(video)
-
-            # Commit changes
             with open(cache, "w", encoding="utf-8") as f:
                 f.write(json.dumps(previous_json))
 
@@ -2958,11 +3062,11 @@ RULES:
 
         return srt_path
 
-    def _build_karaoke_subtitles(self, audio_duration: float):
+    def _build_karaoke_subtitles(self, audio_duration: float, fps: int = 30):
         """
         Build word-by-word karaoke subtitle clip from word_timestamps.
         Shows groups of up to 5 words with multi-line wrapping; the active
-        word is highlighted in yellow — modern YouTube Shorts style.
+        word is highlighted in yellow â€” modern YouTube Shorts style.
         """
         from PIL import Image, ImageDraw, ImageFont
         import numpy as np
@@ -3024,7 +3128,7 @@ RULES:
         if current_group:
             groups.append(current_group)
 
-        # --- Build index: global word index → (group_idx, local_idx) ---
+        # --- Build index: global word index â†’ (group_idx, local_idx) ---
         word_to_group = {}
         gi = 0
         for g_idx, group in enumerate(groups):
@@ -3043,7 +3147,7 @@ RULES:
         stroke_pad = 6 * 2  # stroke_width extends outward on all sides
         canvas_h = max_num_lines * line_h + (max_num_lines - 1) * line_spacing + stroke_pad + 20
 
-        rendered = {}  # global_word_idx → (rgb np.array, alpha np.array)
+        rendered = {}  # global_word_idx â†’ (rgb np.array, alpha np.array)
 
         for word_idx, (g_idx, l_idx) in word_to_group.items():
             group = groups[g_idx]
@@ -3102,8 +3206,8 @@ RULES:
                 return blank_alpha
             return rendered[idx][1]
 
-        clip = VideoClip(make_rgb, duration=audio_duration).set_fps(30)
-        mask = VideoClip(make_mask, duration=audio_duration, ismask=True).set_fps(30)
+        clip = VideoClip(make_rgb, duration=audio_duration).set_fps(fps)
+        mask = VideoClip(make_mask, duration=audio_duration, ismask=True).set_fps(fps)
         clip = clip.set_mask(mask)
         clip = clip.set_position(("center", 1300))
         return clip
@@ -3123,7 +3227,7 @@ RULES:
         """
         Append a music attribution line to the video description, idempotent.
         Called from combine()/combine_long() when a track requiring credit is
-        picked. Safe to call multiple times — duplicates are skipped.
+        picked. Safe to call multiple times â€” duplicates are skipped.
         """
         meta = getattr(self, "metadata", None)
         if not isinstance(meta, dict):
@@ -3132,6 +3236,84 @@ RULES:
         if line in desc:
             return
         meta["description"] = (desc.rstrip() + "\n\n" + line).lstrip()
+
+    @staticmethod
+    def _available_ffmpeg_encoders() -> set[str]:
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-encoders"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                check=False,
+            )
+        except Exception:
+            return set()
+        output = f"{result.stdout}\n{result.stderr}"
+        return {
+            codec
+            for codec in ("h264_nvenc", "h264_qsv", "h264_amf", "libx264")
+            if codec in output
+        }
+
+    def _render_codec_candidates(self) -> list[str]:
+        configured = get_render_codec().strip()
+        if configured.lower() != "auto":
+            return [configured or "libx264"]
+
+        available = self._available_ffmpeg_encoders()
+        candidates = [
+            codec
+            for codec in ("h264_nvenc", "h264_qsv", "h264_amf")
+            if codec in available
+        ]
+        candidates.append("libx264")
+        return candidates
+
+    def _write_videofile_with_fallback(self, clip, output_path: str, *, threads: int, fps: int) -> None:
+        candidates = self._render_codec_candidates()
+        configured_preset = get_render_preset()
+        bitrate = get_render_bitrate()
+        last_error = None
+
+        for idx, codec in enumerate(candidates):
+            preset = configured_preset
+            if not preset and codec == "libx264":
+                preset = "ultrafast"
+
+            kwargs = {
+                "threads": threads,
+                "fps": fps,
+                "codec": codec,
+                "audio_codec": "aac",
+                "audio": True,
+                "logger": "bar",
+            }
+            if preset:
+                kwargs["preset"] = preset
+            if bitrate:
+                kwargs["bitrate"] = bitrate
+
+            if get_verbose():
+                info(
+                    " => Render settings: "
+                    f"fps={fps}, codec={codec}, preset={preset or '(default)'}, "
+                    f"threads={threads}"
+                )
+
+            try:
+                clip.write_videofile(output_path, **kwargs)
+                return
+            except Exception as exc:
+                last_error = exc
+                if idx >= len(candidates) - 1:
+                    break
+                warning(
+                    f"Render failed with codec {codec}; "
+                    f"trying {candidates[idx + 1]} instead."
+                )
+
+        raise last_error
 
     def combine(self) -> str:
         """
@@ -3142,12 +3324,24 @@ RULES:
         """
         combined_image_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".mp4")
         threads = get_threads()
+        render_profile = get_short_render_profile()
+        render_fps = get_short_render_fps()
+        ken_burns_enabled = get_short_ken_burns_enabled()
+        karaoke_enabled = get_short_karaoke_subtitles_enabled()
+        crossfade = get_short_crossfade_seconds()
         tts_clip = AudioFileClip(self.tts_path)
         max_duration = tts_clip.duration
 
         print(colored("[+] Combining images...", "blue"))
+        if get_verbose():
+            info(
+                " => Short render profile: "
+                f"{render_profile} | fps={render_fps} | "
+                f"ken_burns={ken_burns_enabled} | "
+                f"karaoke={karaoke_enabled} | crossfade={crossfade:.2f}s"
+            )
 
-        # Verify all images exist BEFORE computing duration distribution —
+        # Verify all images exist BEFORE computing duration distribution â€”
         # stale paths would inflate n_imgs and shrink req_dur, leaving a
         # black tail where clips run out before the TTS does.
         valid_images = [p for p in self.images if os.path.exists(p)]
@@ -3159,8 +3353,7 @@ RULES:
                 warning(f"Missing {len(missing)} images, using {len(valid_images)} valid ones")
             self.images = valid_images
 
-        # Crossfade overlap between clips — compensate so the composed total == max_duration
-        crossfade = 0.4
+        # Crossfade overlap between clips â€” compensate so the composed total == max_duration
         n_imgs = len(self.images)
         total_overlap = crossfade * max(0, n_imgs - 1)
         req_dur = (max_duration + total_overlap) / n_imgs
@@ -3177,7 +3370,7 @@ RULES:
                 this_dur = req_dur
             if this_dur <= 0:
                 break
-            clip = ImageClip(image_path).set_duration(this_dur).set_fps(30)
+            clip = ImageClip(image_path).set_duration(this_dur).set_fps(render_fps)
 
             # Not all images are same size,
             # so we need to resize them
@@ -3203,25 +3396,22 @@ RULES:
                 )
             clip = clip.resize((1080, 1920))
 
-            # Ken Burns: subtle zoom (alternating in/out per image for variety).
-            # Pre-scale to 1.06x so zoom never reveals empty edges, then animate scale
-            # between 1.00 (fit) and ~1.06 (fill+zoom). We wrap in a fixed-size
-            # CompositeVideoClip so the output stays a deterministic 1080x1920 —
-            # this is critical: variable-size clips make concatenate_videoclips
-            # miscompute timing, which caused all images to play in the first half.
-            base = clip.resize(1.06).set_position("center")
-            if idx % 2 == 0:
-                # Zoom in: 0.943 → 1.000 (relative to the 1.06x base → 1.00 → 1.06 effective)
-                kb = base.resize(lambda t, d=this_dur: (1 / 1.06) + (1 - 1 / 1.06) * (t / d))
-            else:
-                # Zoom out: 1.000 → 0.943
-                kb = base.resize(lambda t, d=this_dur: 1 - (1 - 1 / 1.06) * (t / d))
-            kb = kb.set_position("center")
+            if ken_burns_enabled:
+                # Ken Burns: subtle zoom (alternating in/out per image for variety).
+                # Pre-scale to 1.06x so zoom never reveals empty edges, then animate scale
+                # between 1.00 (fit) and ~1.06 (fill+zoom). We wrap in a fixed-size
+                # CompositeVideoClip so the output stays a deterministic 1080x1920.
+                base = clip.resize(1.06).set_position("center")
+                if idx % 2 == 0:
+                    kb = base.resize(lambda t, d=this_dur: (1 / 1.06) + (1 - 1 / 1.06) * (t / d))
+                else:
+                    kb = base.resize(lambda t, d=this_dur: 1 - (1 - 1 / 1.06) * (t / d))
+                kb = kb.set_position("center")
 
-            clip = CompositeVideoClip([kb], size=(1080, 1920)).set_duration(this_dur)
+                clip = CompositeVideoClip([kb], size=(1080, 1920)).set_duration(this_dur)
 
             # Subtle crossfade in (except first clip) for smooth transitions
-            if idx > 0 and this_dur > crossfade:
+            if crossfade > 0 and idx > 0 and this_dur > crossfade:
                 clip = clip.crossfadein(crossfade)
 
             # Re-assert duration just in case
@@ -3233,8 +3423,9 @@ RULES:
         # Negative padding overlaps clips by `crossfade` seconds for smooth blending.
         # Duration was pre-compensated so composed total == max_duration (no black tail).
         padding = -crossfade if len(clips) > 1 else 0
-        final_clip = concatenate_videoclips(clips, padding=padding, method="compose")
-        final_clip = final_clip.set_fps(30)
+        concat_method = "compose" if padding else "chain"
+        final_clip = concatenate_videoclips(clips, padding=padding, method=concat_method)
+        final_clip = final_clip.set_fps(render_fps)
         # Trim any float drift so video matches TTS exactly
         if final_clip.duration > max_duration:
             final_clip = final_clip.subclip(0, max_duration)
@@ -3243,19 +3434,22 @@ RULES:
             self._append_music_attribution(MATYAS_ATTRIBUTION)
 
         subtitles = None
-        try:
-            print(colored("[+] Building karaoke subtitles...", "blue"), flush=True)
+        if karaoke_enabled:
+            try:
+                print(colored("[+] Building karaoke subtitles...", "blue"), flush=True)
 
-            # If TTS didn't provide word timestamps, estimate them
-            if not self.word_timestamps:
-                self.word_timestamps = self._estimate_word_timestamps(max_duration)
+                # If TTS didn't provide word timestamps, estimate them
+                if not self.word_timestamps:
+                    self.word_timestamps = self._estimate_word_timestamps(max_duration)
 
-            subtitles = self._build_karaoke_subtitles(max_duration)
+                subtitles = self._build_karaoke_subtitles(max_duration, fps=render_fps)
 
-            if subtitles is not None:
-                print(colored("[+] Karaoke subtitles ready.", "green"), flush=True)
-        except Exception as e:
-            warning(f"Failed to generate subtitles, continuing without subtitles: {e}")
+                if subtitles is not None:
+                    print(colored("[+] Karaoke subtitles ready.", "green"), flush=True)
+            except Exception as e:
+                warning(f"Failed to generate subtitles, continuing without subtitles: {e}")
+        elif get_verbose():
+            info(" => Skipping burned-in karaoke subtitles for faster rendering.")
 
         print(colored("[+] Mixing audio...", "blue"), flush=True)
         random_song_clip = AudioFileClip(random_song).set_fps(44100)
@@ -3283,19 +3477,41 @@ RULES:
             ).set_duration(max_duration)
 
         print(colored("[+] Rendering final video (this may take a minute)...", "blue"), flush=True)
-        final_clip.write_videofile(combined_image_path, threads=threads)
+        self._write_videofile_with_fallback(
+            final_clip,
+            combined_image_path,
+            threads=threads,
+            fps=render_fps,
+        )
 
         success(f'Wrote Video to "{combined_image_path}"')
 
         return combined_image_path
 
-    def generate_video(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai") -> str:
+    def generate_video(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai",
+                       preset_script: str = "") -> str:
         """
         Public entry point for the Shorts pipeline. Pins the LLM to the same
         cloud thinking model used by long videos (DeepSeek V4 Pro on Ollama
         Cloud by default, `think=high`), then delegates to the inner pipeline.
+
+        When the user picked a specific provider+model from the UI
+        (`is_user_override()`), the hardcoded force_provider call is skipped
+        so the user's choice is respected end-to-end.
+
+        `preset_script` skips the LLM script step â€” used by the "Vista previa"
+        flow so the user-approved (and possibly edited) script is rendered
+        as-is.
         """
-        from llm_provider import force_provider, warmup_ollama_model
+        from llm_provider import force_provider, warmup_ollama_model, is_user_override, get_active_provider, get_active_model
+        if is_user_override():
+            active = get_active_provider()
+            active_model = get_active_model() or "(default)"
+            info(f"\n  Short LLM: {active}/{active_model} (user override - no think pin)")
+            if active == "ollama" and active_model and active_model != "(default)":
+                warmup_ollama_model(active_model)
+            return self._generate_video_inner(tts_instance, custom_topic, image_mode, preset_script)
+
         long_models = get_long_video_llm_models()
         primary = long_models[0] if long_models else get_long_video_llm_model()
         info(f"\n  Short LLM: ollama/{primary}"
@@ -3303,9 +3519,10 @@ RULES:
         if primary:
             warmup_ollama_model(primary)
         with force_provider("ollama", long_models or primary):
-            return self._generate_video_inner(tts_instance, custom_topic, image_mode)
+            return self._generate_video_inner(tts_instance, custom_topic, image_mode, preset_script)
 
-    def _generate_video_inner(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai") -> str:
+    def _generate_video_inner(self, tts_instance: TTS, custom_topic: str = "", image_mode: str = "ai",
+                              preset_script: str = "") -> str:
         """
         Generates a YouTube Short based on the provided niche and language.
 
@@ -3314,6 +3531,10 @@ RULES:
             custom_topic (str): Optional user-provided topic. If given, skips auto topic generation.
             image_mode (str): "ai" (default) uses AI image generators first.
                               "photos" uses real photos (Wikimedia / Pexels / Pixabay) first.
+            preset_script (str): Optional pre-approved script body. When non-empty,
+                                 the LLM script-generation step is skipped â€” used by
+                                 the "Vista previa" flow so the user can review (and
+                                 even edit) the script before render starts.
 
         Returns:
             path (str): The path to the generated MP4 File, or empty string if cancelled.
@@ -3328,7 +3549,7 @@ RULES:
         self.tts_path = None
         self.subtitles_path = None
         self._used_stock_urls = set()
-        # Shorts upload fast — no need for the long-video patient wait.
+        # Shorts upload fast â€” no need for the long-video patient wait.
         self._is_long_video = False
 
         # Generate the Topic (or use the user-provided one)
@@ -3350,8 +3571,13 @@ RULES:
             self.video_path = ""
             return ""
 
-        # Generate the Script
-        self.generate_script()
+        # Generate the Script (unless the caller pre-approved one)
+        if preset_script and preset_script.strip():
+            self.script = preset_script.strip()
+            if get_verbose():
+                info(f" => Using pre-approved script ({len(self.script)} chars)")
+        else:
+            self.generate_script()
 
         # Generate the Metadata
         self.generate_metadata()
@@ -3397,12 +3623,30 @@ RULES:
         (~2700-3500 words at documentary narration speed).
 
         Two strategies, picked by active LLM provider:
-          - Gemini Flash 2.5/3 → SINGLE call (large output window handles 3000+ words).
+          - Gemini Flash 2.5/3 â†’ SINGLE call (large output window handles 3000+ words).
             Falls back to per-section if the single call returns too short.
-          - Ollama / others → ONE LLM CALL PER SECTION (12 calls)
+          - Ollama / others â†’ ONE LLM CALL PER SECTION (12 calls)
             because free / small models cap output around 400-700 words per call.
+
+        Both paths share the same narrative structure (cold-open hook from
+        HOOK_PROFILES, sections shaped by LONG_VIDEO_SECTION_THEMES) so the
+        video opening hooks the viewer regardless of provider.
         """
+        import random
+
         lang = self.language
+
+        # Pick ONE hook style per video so the cold open isn't generic. The
+        # picked (style, example) is forwarded into both single-call and
+        # sectional paths â€” keeps the opening varied across runs.
+        profile_name = (self._hook_profile or "").strip().lower() or "educational"
+        hook_styles = HOOK_PROFILES.get(profile_name) or HOOK_PROFILES["educational"]
+        if profile_name not in HOOK_PROFILES and self._hook_profile:
+            warning(f"Unknown hook_profile '{self._hook_profile}', falling back to 'educational'.")
+            profile_name = "educational"
+        hook_style, hook_example = random.choice(hook_styles)
+        if get_verbose():
+            info(f" => Long-video hook profile: {profile_name} | style: {hook_style}")
 
         # ---- FAST PATH: Gemini can produce the whole script in a single call ----
         try:
@@ -3413,11 +3657,11 @@ RULES:
 
         if active_provider == "gemini":
             SINGLE_CALL_ATTEMPTS = 3
-            info(f" [Script] Gemini detected — trying single-call fast path (up to {SINGLE_CALL_ATTEMPTS} attempts)...")
+            info(f" [Script] Gemini detected â€” trying single-call fast path (up to {SINGLE_CALL_ATTEMPTS} attempts)...")
             best_short = ""  # remember the longest under-2000-word draft in case all attempts come up short
             for attempt in range(1, SINGLE_CALL_ATTEMPTS + 1):
                 try:
-                    full = self._generate_long_script_single_call(lang)
+                    full = self._generate_long_script_single_call(lang, hook_style, hook_example)
                     word_count = len(full.split())
                     if word_count >= 2000:
                         full = self._postprocess_long_script(full)
@@ -3433,7 +3677,7 @@ RULES:
             warning("   All single-call attempts came up short or failed; falling back to per-section.")
 
         # ---- DEFAULT PATH: per-section for capped providers ----
-        full = self._generate_long_script_sectional(lang)
+        full = self._generate_long_script_sectional(lang, hook_style, hook_example)
         full = self._postprocess_long_script(full)
         self.script = full
         self._persist_long_script(full)
@@ -3443,7 +3687,7 @@ RULES:
         """
         Final sanity pass on a long script:
         - Strip any LLM preamble that survived per-call cleaning ("Por supuesto", "Claro,", etc).
-        - Cap total length to ~3700 words (≈ 22 min) to prevent 50-min runaways.
+        - Cap total length to ~3700 words (â‰ˆ 22 min) to prevent 50-min runaways.
         - Warn (not fail) if the first 200 words don't mention any topic keyword,
           which is a strong hint the LLM went off-topic.
         """
@@ -3451,8 +3695,8 @@ RULES:
 
         # Strip leading conversational preamble paragraphs the per-call cleaner can miss.
         preamble_starters = (
-            r"^\s*(¡?(por supuesto|claro|desde luego|con gusto|aquí (te|te lo|tienes|está|va)|"
-            r"a continuación|sure|of course|certainly|absolutely|here(?:'s| is)|i'?ll|let me))[^\n]*\n+"
+            r"^\s*(Â¡?(por supuesto|claro|desde luego|con gusto|aquÃ­ (te|te lo|tienes|estÃ¡|va)|"
+            r"a continuaciÃ³n|sure|of course|certainly|absolutely|here(?:'s| is)|i'?ll|let me))[^\n]*\n+"
         )
         for _ in range(3):  # peel up to 3 preamble lines if stacked
             new = re.sub(preamble_starters, "", text, count=1, flags=re.IGNORECASE)
@@ -3464,7 +3708,7 @@ RULES:
         WORD_CAP = 3700
         words = text.split()
         if len(words) > WORD_CAP:
-            warning(f"   Script {len(words)} words → capping to ~{WORD_CAP} words.")
+            warning(f"   Script {len(words)} words â†’ capping to ~{WORD_CAP} words.")
             cut_text = " ".join(words[:WORD_CAP])
             # Try to end on a sentence boundary so the cap doesn't sound abrupt.
             last_period = max(cut_text.rfind("."), cut_text.rfind("!"), cut_text.rfind("?"))
@@ -3472,7 +3716,7 @@ RULES:
                 cut_text = cut_text[: last_period + 1]
             text = cut_text
 
-        # Topic relevance — be strict. The script MUST mention significant tokens
+        # Topic relevance â€” be strict. The script MUST mention significant tokens
         # from self.subject. If not, abort: a wrong-topic script is worse than no video.
         def _norm(s: str) -> str:
             import unicodedata
@@ -3480,7 +3724,7 @@ RULES:
             return "".join(c for c in s if not unicodedata.combining(c))
 
         subj_tokens = {
-            _norm(t) for t in re.findall(r"[A-Za-zÀ-ÿ]+", self.subject or "")
+            _norm(t) for t in re.findall(r"[A-Za-zÃ€-Ã¿]+", self.subject or "")
             if len(t) > 4
         }
         if subj_tokens:
@@ -3489,7 +3733,7 @@ RULES:
             head_norm = _norm(" ".join(text.split()[:300]))
             head_mentions = sum(1 for tok in subj_tokens if tok in head_norm)
 
-            # If the topic appears NOWHERE in the entire script → off-topic, abort.
+            # If the topic appears NOWHERE in the entire script â†’ off-topic, abort.
             if mentions == 0:
                 raise RuntimeError(
                     f"Aborting: generated script never mentions any keyword from the topic "
@@ -3499,7 +3743,7 @@ RULES:
             # If the topic appears in <30% of expected places, warn loudly.
             if mentions < max(1, len(subj_tokens) // 3):
                 warning(
-                    f"   Topic only mentioned {mentions} of {len(subj_tokens)} keywords — "
+                    f"   Topic only mentioned {mentions} of {len(subj_tokens)} keywords â€” "
                     f"script may be partially off-topic. Inspect before publishing."
                 )
             # If the intro never mentions the topic, warn (intro should hook the topic).
@@ -3524,7 +3768,7 @@ RULES:
         except Exception as e:
             warning(f"   Could not persist script: {e}")
 
-    def _generate_long_script_single_call(self, lang: str) -> str:
+    def _generate_long_script_single_call(self, lang: str, hook_style: str, hook_example: str) -> str:
         """
         Ask the LLM for the entire 15-20 min script in one call.
         Designed for high-output-window providers (Gemini Flash 2.5/3).
@@ -3539,137 +3783,107 @@ RULES:
         if script_brief:
             info(f" => Using series narrative brief: {series.get('id', '')}")
 
-        if isinstance(series_themes, list) and len(series_themes) == 10:
-            # Build the SECTION block from the series-defined chronological themes.
-            sections_block = "\n\n".join(
-                f"[SECTION {i+1}: <título corto>]\n{theme} (10-14 oraciones, 250-350 palabras)."
-                for i, theme in enumerate(series_themes)
-            )
-        else:
-            # Default documentary structure.
-            sections_block = """[SECTION 1: <título corto>]
-Aspecto fundacional o más fascinante del tema (10-14 oraciones, 250-350 palabras).
-
-[SECTION 2: <título corto>]
-Ángulo distinto o construcción sobre la sección anterior, con anécdotas concretas (10-14 oraciones, 250-350 palabras).
-
-[SECTION 3: <título corto>]
-Conexiones sorprendentes o hechos poco conocidos (10-14 oraciones, 250-350 palabras).
-
-[SECTION 4: <título corto>]
-Profundización con datos concretos, fechas, lugares o personas reales (10-14 oraciones, 250-350 palabras).
-
-[SECTION 5: <título corto>]
-Clímax intermedio — momento más impactante hasta aquí (10-14 oraciones, 250-350 palabras).
-
-[SECTION 6: <título corto>]
-Nuevo ángulo o consecuencia que surge de lo anterior (10-14 oraciones, 250-350 palabras).
-
-[SECTION 7: <título corto>]
-Detalles narrativos profundos, anécdotas o testimonios (10-14 oraciones, 250-350 palabras).
-
-[SECTION 8: <título corto>]
-Conexión inesperada o paralelismo con otro ámbito (10-14 oraciones, 250-350 palabras).
-
-[SECTION 9: <título corto>]
-Clímax final — la revelación o giro más fuerte (10-14 oraciones, 250-350 palabras).
-
-[SECTION 10: <título corto>]
-Consecuencias, legado o impacto del tema en la actualidad (10-14 oraciones, 250-350 palabras)."""
+        themes = (
+            list(series_themes)
+            if isinstance(series_themes, list) and len(series_themes) == 10
+            else list(LONG_VIDEO_SECTION_THEMES)
+        )
+        sections_block = "\n\n".join(
+            f"[SECTION {i+1}: <tÃ­tulo corto descriptivo>]\n{theme}\n(10-14 oraciones, 250-350 palabras.)"
+            for i, theme in enumerate(themes)
+        )
 
         brief_block = (
-            f"\nDIRECTIVA NARRATIVA DE LA SERIE — OBLIGATORIA EN CADA PALABRA DE TU RESPUESTA:\n{script_brief}\n"
+            f"\nDIRECTIVA NARRATIVA DE LA SERIE â€” OBLIGATORIA EN CADA PALABRA DE TU RESPUESTA:\n{script_brief}\n"
             if script_brief else ""
         )
 
-        prompt = f"""Eres un narrador experto de documentales y guionista profesional.
-Escribe un GUION COMPLETO de narración cautivador de 15 a 20 minutos sobre el siguiente tema.
+        prompt = f"""Eres un narrador experto de documentales y guionista profesional especializado en RETENCIÃ“N: tu trabajo es que el espectador NO se vaya en los primeros 5 minutos y aguante hasta el final.
+Escribe un GUION COMPLETO de narraciÃ³n cautivador de 15 a 20 minutos sobre el siguiente tema.
 
 Tema: {self.subject}
 {brief_block}
+ARQUITECTURA DE RETENCIÃ“N â€” LEE ESTO ANTES DE EMPEZAR:
+- Los primeros 5 minutos (INTRO + SECTION 1 + SECTION 2) son un MOTOR DE GANCHO: cold open cinematogrÃ¡fico â†’ viÃ±eta inmersiva â†’ siembra del MISTERIO PRINCIPAL del video.
+- ESTÃ PROHIBIDO mencionar "me gusta" o "like" en el INTRO, en la SECTION 1 o en la SECTION 2. La invitaciÃ³n al like aparece SOLO al INICIO de la SECTION 3, cuando el espectador ya estÃ¡ enganchado.
+- El loop principal sembrado en la SECTION 2 NO se responde hasta la SECTION 9 (clÃ­max). Las secciones intermedias pueden abrir y cerrar loops secundarios mÃ¡s pequeÃ±os, pero el principal queda intacto.
+- Cada secciÃ³n debe ENGANCHAR a la siguiente: termina con una imagen, pregunta o tensiÃ³n que obligue a seguir.
+
 ESTRUCTURA OBLIGATORIA (usa estos marcadores EXACTOS):
 [INTRO]
-Gancho inicial poderoso seguido de una breve invitación al like (6-8 oraciones, 140-200 palabras). Estructura:
-1. Empieza con un dato impactante, pregunta provocadora o afirmación audaz que enganche al espectador.
-2. Desarrolla brevemente la promesa del video (qué van a descubrir).
-3. Antes de arrancar el tema, incluye 1-2 oraciones naturales y cálidas invitando al espectador a dar "me gusta" si disfruta este tipo de contenido, para apoyar a seguir creando videos así. Redáctalo de forma orgánica y humana, NO suene a publicidad ni a lista de instrucciones.
+Cold open de impacto (5-7 oraciones, 130-180 palabras). NO incluyas invitaciÃ³n al like aquÃ­. Estructura interna:
+1. PRIMERA ORACIÃ“N â€” gancho cinematogrÃ¡fico siguiendo EXACTAMENTE este estilo: {hook_style}.
+   Ejemplo del estilo (adapta a {lang} y al tema, no copies literal): {hook_example}
+   No defaultees a "SabÃ­as que..." ni a "Imagina que...". El estilo de arriba es obligatorio.
+2. ORACIONES 2-3 â€” promesa del video: quÃ© descubrirÃ¡ el espectador, expresada como apuesta narrativa, NO como Ã­ndice de contenidos.
+3. ORACIONES 4-6 â€” siembra 2-3 LOOPS ABIERTOS: preguntas, anomalÃ­as o contradicciones especÃ­ficas que NO respondes aquÃ­. Promete que las respuestas llegan mÃ¡s adelante. Ejemplos del tipo de frase a usar: "Pero hay un detalle que no encajaâ€¦", "Y aquÃ­ es donde la historia se vuelve imposibleâ€¦", "Lo que vinieron a descubrir nadie estaba preparado para contarlo."
+4. ÃšLTIMA ORACIÃ“N â€” corta y poderosa, que invite a quedarse. NO menciones suscripciÃ³n, NO menciones like.
 
 {sections_block}
 
 [CLOSING]
-Conclusión memorable (5-7 oraciones, 120-180 palabras). Termina con una reflexión que perdure.
+ConclusiÃ³n memorable (5-7 oraciones, 120-180 palabras). Termina con una reflexiÃ³n que perdure.
 
 [OUTRO]
-Despedida cálida y llamado a la acción para los últimos segundos del video, cuando aparecen las pantallas finales de YouTube (suscribirse, video recomendado). Dura 3-5 oraciones (60-100 palabras).
-DEBE incluir, redactado de forma natural y orgánica:
+Despedida cÃ¡lida y llamado a la acciÃ³n para los Ãºltimos segundos del video, cuando aparecen las pantallas finales de YouTube (suscribirse, video recomendado). Dura 3-5 oraciones (60-100 palabras).
+DEBE incluir, redactado de forma natural y orgÃ¡nica:
 1. Agradecer al espectador por haber visto el video.
-2. Pedir que dé "me gusta" si le gustó.
+2. Pedir que dÃ© "me gusta" si le gustÃ³.
 3. Pedir que se SUSCRIBA al canal y active la CAMPANITA para no perderse contenido similar.
-4. Una despedida cálida ("Hasta la próxima", "Hasta pronto", "Nos vemos en el siguiente video", o equivalente).
-NO uses bullets, NO suene robótico — escríbelo como si lo dijeras hablando, con calidez.
+4. Una despedida cÃ¡lida ("Hasta la prÃ³xima", "Hasta pronto", "Nos vemos en el siguiente video", o equivalente).
+NO uses bullets, NO suene robÃ³tico â€” escrÃ­belo como si lo dijeras hablando, con calidez.
 
 REGLAS DE ESTILO:
-- Escribe como un narrador apasionado, NO como un libro de texto. Lenguaje vívido y sensorial.
-- Cada oración fluye naturalmente hacia la siguiente.
-- Usa preguntas retóricas, comparaciones sorprendentes y ganchos emocionales.
-- Oraciones CORTAS (máximo 20 palabras cada una).
+- Escribe como un narrador apasionado, NO como un libro de texto. Lenguaje vÃ­vido y sensorial.
+- Cada oraciÃ³n fluye naturalmente hacia la siguiente.
+- Usa preguntas retÃ³ricas, comparaciones sorprendentes y ganchos emocionales.
+- Oraciones CORTAS (mÃ¡ximo 20 palabras cada una).
 - TOTAL OBLIGATORIO: entre 2700 y 3500 palabras.
-- Cada sección debe aportar material NUEVO, no repetir.
-- ESCRIBE TODO EN {lang}. NO uses inglés.
-- NO markdown, NO viñetas, NO listas numeradas.
+- Cada secciÃ³n debe aportar material NUEVO, no repetir.
+- ESCRIBE TODO EN {lang}. NO uses inglÃ©s.
+- NO markdown, NO viÃ±etas, NO listas numeradas.
 - NO URLs, enlaces, citas ni referencias.
-- ESTRICTAMENTE PROHIBIDO escribir acotaciones de cualquier tipo. Solo texto que un narrador diría EN VOZ ALTA. NUNCA escribas:
-    * "(imagen de ...)", "(imágenes de ...)", "[plano cerrado de ...]", "(escena ...)", "(secuencia ...)"
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones de cualquier tipo. Solo texto que un narrador dirÃ­a EN VOZ ALTA. NUNCA escribas:
+    * "(imagen de ...)", "(imÃ¡genes de ...)", "[plano cerrado de ...]", "(escena ...)", "(secuencia ...)"
     * "(B-roll: ...)", "(B/O ...)", "(voz en off)", "(narrador:)"
-    * "(música suave)", "(sonido de ...)", "(efectos)", "(silencio)"
-    * "(emoji ...)", "(emoticono ...)", "(símbolo ...)"
-    * "(transición)", "(fundido)", "(zoom)", "(corte)", "(cierre)"
-  Si crees que necesitas describir una imagen o un sonido, NO LO HAGAS — el video ya tiene imágenes y música. Solo narra.
-- NÚMEROS: escribe TODOS los números con palabras, no con dígitos. Ejemplos:
-    * "hace cuatro mil quinientos años" (no "hace 4.500 años")
-    * "el año mil cuatrocientos cincuenta y tres" (no "1453")
-    * "el siglo dieciséis" (no "el siglo XVI" ni "el siglo 16")
+    * "(mÃºsica suave)", "(sonido de ...)", "(efectos)", "(silencio)"
+    * "(emoji ...)", "(emoticono ...)", "(sÃ­mbolo ...)"
+    * "(transiciÃ³n)", "(fundido)", "(zoom)", "(corte)", "(cierre)"
+  Si crees que necesitas describir una imagen o un sonido, NO LO HAGAS â€” el video ya tiene imÃ¡genes y mÃºsica. Solo narra.
+- NÃšMEROS: escribe TODOS los nÃºmeros con palabras, no con dÃ­gitos. Ejemplos:
+    * "hace cuatro mil quinientos aÃ±os" (no "hace 4.500 aÃ±os")
+    * "el aÃ±o mil cuatrocientos cincuenta y tres" (no "1453")
+    * "el siglo diecisÃ©is" (no "el siglo XVI" ni "el siglo 16")
     * "tres coma uno cuatro" (no "3,14")
-- AÑO vs DURACIÓN — distínguelos siempre. Un AÑO es una FECHA del calendario; una DURACIÓN es el tiempo transcurrido. Son cosas distintas. Para citar un año, di "el año <año>". La fórmula "hace <N> años" expresa SOLO duración: <N> es la diferencia entre el año actual y el año del evento, NO es el año mismo. Ante la duda, nombra el año ("el año X") y NO uses la fórmula "hace X años".
-- SOLO devuelve el guion completo con los 12 marcadores arriba listados. Sin preámbulo.
+- AÃ‘O vs DURACIÃ“N â€” distÃ­nguelos siempre. Un AÃ‘O es una FECHA del calendario; una DURACIÃ“N es el tiempo transcurrido. Son cosas distintas. Para citar un aÃ±o, di "el aÃ±o <aÃ±o>". La fÃ³rmula "hace <N> aÃ±os" expresa SOLO duraciÃ³n: <N> es la diferencia entre el aÃ±o actual y el aÃ±o del evento, NO es el aÃ±o mismo. Ante la duda, nombra el aÃ±o ("el aÃ±o X") y NO uses la fÃ³rmula "hace X aÃ±os".
+- SOLO devuelve el guion completo con los 12 marcadores arriba listados. Sin preÃ¡mbulo.
 """
         completion = self._clean_llm_script(self.generate_response(prompt))
         return completion
 
-    def _generate_long_script_sectional(self, lang: str) -> str:
+    def _generate_long_script_sectional(self, lang: str, hook_style: str, hook_example: str) -> str:
         """Per-section generation (12 calls) for providers with low output caps."""
 
         # Series-aware: when a series brief / themes are configured, use them so
         # the script follows the series voice (e.g. immersive 2nd-person POV for
-        # "Un día en la historia") instead of the generic documentary structure.
+        # "Un dÃ­a en la historia") instead of the generic documentary structure.
         series = getattr(self, "active_series", None) or {}
         script_brief = (series.get("script_brief") or "").strip()
         series_themes = series.get("section_themes") or []
         if script_brief:
             info(f" => Using series narrative brief: {series.get('id', '')}")
 
-        # Per-section thematic guidance — what role each section plays in the narrative arc.
+        # Per-section thematic guidance â€” what role each section plays in the narrative arc.
         # Series-defined themes win when present and are exactly 10 entries.
         if isinstance(series_themes, list) and len(series_themes) == 10:
             section_themes = list(series_themes)
         else:
-            section_themes = [
-                "Aspecto fundacional o más fascinante del tema. Establece el contexto y captura la atención.",
-                "Ángulo distinto o construcción sobre la sección anterior, con anécdotas concretas o ejemplos.",
-                "Conexiones sorprendentes o hechos poco conocidos relacionados al tema.",
-                "Profundización con datos concretos, fechas, lugares o personas reales.",
-                "Clímax intermedio — el momento más impactante hasta este punto.",
-                "Consecuencia o nuevo ángulo que surge a partir de lo anterior.",
-                "Detalles narrativos profundos, anécdotas o testimonios.",
-                "Conexión inesperada o paralelismo con otro ámbito.",
-                "Clímax final — la revelación o giro más fuerte del tema.",
-                "Consecuencias, legado o impacto del tema en la actualidad.",
-            ]
+            section_themes = list(LONG_VIDEO_SECTION_THEMES)
 
         # Block of narrative directives prepended to every per-call prompt when
         # a series brief is active. Empty string in non-series mode (no-op).
         brief_block = (
-            f"\n\nDIRECTIVA NARRATIVA DE LA SERIE — OBLIGATORIA EN CADA PALABRA DE TU RESPUESTA:\n{script_brief}\n\n"
+            f"\n\nDIRECTIVA NARRATIVA DE LA SERIE â€” OBLIGATORIA EN CADA PALABRA DE TU RESPUESTA:\n{script_brief}\n\n"
             if script_brief else ""
         )
 
@@ -3700,50 +3914,91 @@ REGLAS DE ESTILO:
         parts: List[str] = []
         info(f" [Script] Building 15-20 min script section by section...")
 
-        # ---- INTRO ----
-        intro_prompt = f"""Eres un narrador experto de documentales. Escribe SOLO la INTRODUCCIÓN de un guion documental sobre: {self.subject}
+        # ---- INTRO â€” cold open + open loops (NO like-ask here) ----
+        intro_prompt = f"""Eres un narrador experto de documentales especializado en RETENCIÃ“N. Escribe SOLO la INTRODUCCIÃ“N de un guion documental sobre: {self.subject}
 {brief_block}
-REGLAS:
-- 6-8 oraciones (140-200 palabras).
-- Estructura de la intro:
-  1. Empieza con un gancho poderoso: dato impactante, pregunta provocadora o afirmación audaz.
-  2. Desarrolla brevemente la promesa del video (qué va a descubrir el espectador).
-  3. Antes de arrancar el tema, incluye 1-2 oraciones naturales y cálidas invitando al espectador a dar "me gusta" si disfruta este tipo de contenido, para apoyar a seguir creando videos así. Redáctalo de forma orgánica y humana, NO suene a publicidad ni a lista de instrucciones.
-- Lenguaje vívido y sensorial. Oraciones CORTAS (máximo 20 palabras).
-- ESCRIBE TODO EN {lang}. NO uses inglés.
-- NO uses markdown, viñetas, listas, URLs, ni meta-texto.
-- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
-- NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
-- AÑO vs DURACIÓN — distínguelos siempre. Un AÑO es una FECHA del calendario; una DURACIÓN es el tiempo transcurrido. Son cosas distintas. Para citar un año, di "el año <año>". La fórmula "hace <N> años" expresa SOLO duración: <N> es la diferencia entre el año actual y el año del evento, NO es el año mismo. Ante la duda, nombra el año ("el año X") y NO uses la fórmula "hace X años".
-- Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [INTRO]
+OBJETIVO DE LA INTRO: enganchar al espectador en los primeros 30 segundos para que aguante los 20 minutos. NO menciones "me gusta" ni "like" â€” esa invitaciÃ³n va en otra secciÃ³n posterior, NUNCA aquÃ­.
+
+ESTRUCTURA OBLIGATORIA (5-7 oraciones, 130-180 palabras):
+1. PRIMERA ORACIÃ“N â€” gancho cinematogrÃ¡fico que siga EXACTAMENTE este estilo: {hook_style}.
+   Ejemplo del estilo (adapta al tema y a {lang}, NO copies literal): {hook_example}
+   No defaultees a "SabÃ­as que..." ni a "Imagina que...". El estilo descrito es OBLIGATORIO.
+2. ORACIONES 2-3 â€” promesa del video: quÃ© descubrirÃ¡ el espectador. NO como Ã­ndice de contenidos, sino como apuesta narrativa con tono de "no te vas a creer lo que viene".
+3. ORACIONES 4-6 â€” SIEMBRA 2-3 LOOPS ABIERTOS: preguntas, anomalÃ­as o contradicciones especÃ­ficas que NO respondes aquÃ­. Que el espectador NO PUEDA irse sin saber la respuesta. Frases tipo: "Pero hay un detalle que no encajaâ€¦", "Y aquÃ­ es donde la historia se vuelve imposibleâ€¦", "Lo que descubrieron nadie esperaba contarlo." Promete que las respuestas llegan mÃ¡s adelante.
+4. ÃšLTIMA ORACIÃ“N â€” corta, poderosa, que invite a quedarse. NO menciones suscripciÃ³n, NO menciones like, NO digas "vamos a empezar".
+
+REGLAS DE ESTILO:
+- Lenguaje vÃ­vido y sensorial. Oraciones CORTAS (mÃ¡ximo 20 palabras).
+- ESCRIBE TODO EN {lang}. NO uses inglÃ©s.
+- NO uses markdown, viÃ±etas, listas, URLs, ni meta-texto.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(mÃºsica ...)", "(emoji ...)", "(transiciÃ³n)" etc. Solo texto hablado.
+- NÃšMEROS: escribe los nÃºmeros con palabras, no con dÃ­gitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
+- AÃ‘O vs DURACIÃ“N â€” distÃ­nguelos siempre. Un AÃ‘O es una FECHA del calendario; una DURACIÃ“N es el tiempo transcurrido. Para citar un aÃ±o, di "el aÃ±o <aÃ±o>". "Hace <N> aÃ±os" expresa SOLO duraciÃ³n. Ante la duda, nombra el aÃ±o.
+- Devuelve SOLO el texto, precedido EXACTAMENTE por la lÃ­nea: [INTRO]
 """
         intro = _ensure_marker(_ask_section(intro_prompt, min_words=80), "[INTRO]")
         parts.append(intro)
         info(f"   [Script] INTRO: {len(intro.split())} words")
 
         # ---- SECTIONS 1-10 ----
+        # `opening_context` snapshots the INTRO + S1 + S2 (the "first 5 min hook engine")
+        # so that sections 3-9 can see which loops were planted and respect them
+        # (the main mystery stays open until S9; the like-ask happens only at the
+        # opening of S3). Captured once S1 and S2 have been written.
+        opening_context = ""
         for i, theme in enumerate(section_themes, start=1):
             prior = "\n\n".join(parts)
             tail = " ".join(prior.split()[-250:]) if prior else ""
 
-            section_prompt = f"""Eres un narrador experto de documentales. Estás escribiendo la SECCIÓN {i} de 10 de un guion sobre: {self.subject}
-{brief_block}
-Esto es lo último que ya se narró (NO lo repitas, continúa el flujo natural):
+            # Snapshot the hook engine after S2 is in `parts` (i.e. when we're
+            # about to write S3 and onward). `parts` currently holds
+            # [INTRO, S1, ..., S(i-1)] â€” for i=3 that is exactly INTRO+S1+S2.
+            if i == 3:
+                opening_context = "\n\n".join(parts)
+
+            # Build the "open loops" reminder block prepended to S3+ prompts.
+            # - S1/S2: empty (these sections ARE the loop engine).
+            # - S3-S8: "main loop stays open, you may close small loops".
+            # - S9: "this is the climax â€” you MUST close the main loop now".
+            # - S10: post-climax, focus on legacy, do NOT reopen the loop.
+            if i >= 3 and opening_context:
+                if i == 9:
+                    loops_block = (
+                        "\n\nPRIMEROS 5 MINUTOS DEL VIDEO (los loops que sembraste â€” ahora hay que cerrar el principal):\n"
+                        f'"""\n{opening_context}\n"""\n'
+                        "ESTA SECCIÃ“N ES EL CLÃMAX. Debes responder de forma satisfactoria al MISTERIO PRINCIPAL sembrado en la secciÃ³n 2. NO dejes esa pregunta abierta.\n"
+                    )
+                elif i == 10:
+                    loops_block = (
+                        "\n\nNOTA NARRATIVA: el MISTERIO PRINCIPAL ya fue revelado en la secciÃ³n anterior (clÃ­max). Esta secciÃ³n es el cierre: no abras loops nuevos, asienta lo aprendido y prepara emocionalmente al espectador para la despedida.\n"
+                    )
+                else:
+                    loops_block = (
+                        "\n\nPRIMEROS 5 MINUTOS DEL VIDEO (referencia â€” respeta los loops abiertos aquÃ­):\n"
+                        f'"""\n{opening_context}\n"""\n'
+                        "REGLA DE LOOPS: el MISTERIO PRINCIPAL sembrado en la secciÃ³n 2 NO se responde todavÃ­a â€” se reserva para la secciÃ³n 9 (clÃ­max). Puedes cerrar loops secundarios pequeÃ±os y abrir nuevos segÃºn el rol de esta secciÃ³n.\n"
+                    )
+            else:
+                loops_block = ""
+
+            section_prompt = f"""Eres un narrador experto de documentales especializado en retenciÃ³n. EstÃ¡s escribiendo la SECCIÃ“N {i} de 10 de un guion sobre: {self.subject}
+{brief_block}{loops_block}
+Esto es lo Ãºltimo que ya se narrÃ³ (NO lo repitas, continÃºa el flujo natural):
 \"\"\"
 {tail}
 \"\"\"
 
-Escribe SOLO la SECCIÓN {i}:
-- Foco temático de esta sección: {theme}
+Escribe SOLO la SECCIÃ“N {i}:
+- ROL NARRATIVO de esta secciÃ³n: {theme}
 - 10-14 oraciones (250-350 palabras).
-- Lenguaje vívido y sensorial. Oraciones CORTAS (máximo 20 palabras).
+- Lenguaje vÃ­vido y sensorial. Oraciones CORTAS (mÃ¡ximo 20 palabras).
 - Aporta material NUEVO, no repitas ideas ya dichas.
-- ESCRIBE TODO EN {lang}. NO uses inglés.
-- NO uses markdown, viñetas, listas, URLs, ni meta-texto.
-- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
-- NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
-- AÑO vs DURACIÓN — distínguelos siempre. Un AÑO es una FECHA del calendario; una DURACIÓN es el tiempo transcurrido. Son cosas distintas. Para citar un año, di "el año <año>". La fórmula "hace <N> años" expresa SOLO duración: <N> es la diferencia entre el año actual y el año del evento, NO es el año mismo. Ante la duda, nombra el año ("el año X") y NO uses la fórmula "hace X años".
-- Devuelve SOLO el texto de la sección, precedido EXACTAMENTE por una línea con: [SECTION {i}: <título breve descriptivo>]
+- ESCRIBE TODO EN {lang}. NO uses inglÃ©s.
+- NO uses markdown, viÃ±etas, listas, URLs, ni meta-texto.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(mÃºsica ...)", "(emoji ...)", "(transiciÃ³n)" etc. Solo texto hablado.
+- NÃšMEROS: escribe los nÃºmeros con palabras, no con dÃ­gitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
+- AÃ‘O vs DURACIÃ“N â€” distÃ­nguelos siempre. Un AÃ‘O es una FECHA del calendario; una DURACIÃ“N es el tiempo transcurrido. Son cosas distintas. Para citar un aÃ±o, di "el aÃ±o <aÃ±o>". La fÃ³rmula "hace <N> aÃ±os" expresa SOLO duraciÃ³n: <N> es la diferencia entre el aÃ±o actual y el aÃ±o del evento, NO es el aÃ±o mismo. Ante la duda, nombra el aÃ±o ("el aÃ±o X") y NO uses la fÃ³rmula "hace X aÃ±os".
+- Devuelve SOLO el texto de la secciÃ³n, precedido EXACTAMENTE por una lÃ­nea con: [SECTION {i}: <tÃ­tulo breve descriptivo>]
 """
             section = _ensure_marker(_ask_section(section_prompt, min_words=180), f"[SECTION {i}: parte {i}]")
             parts.append(section)
@@ -3752,53 +4007,53 @@ Escribe SOLO la SECCIÓN {i}:
         # ---- CLOSING ----
         prior = "\n\n".join(parts)
         tail = " ".join(prior.split()[-300:])
-        closing_prompt = f"""Eres un narrador experto de documentales. Estás escribiendo el CIERRE de un guion sobre: {self.subject}
+        closing_prompt = f"""Eres un narrador experto de documentales. EstÃ¡s escribiendo el CIERRE de un guion sobre: {self.subject}
 {brief_block}
-Esto es lo último que se narró:
+Esto es lo Ãºltimo que se narrÃ³:
 \"\"\"
 {tail}
 \"\"\"
 
 Escribe SOLO el CIERRE:
 - 5-7 oraciones (120-180 palabras).
-- Conclusión memorable. Termina con una reflexión que se quede con el espectador.
-- Lenguaje vívido. Oraciones CORTAS (máximo 20 palabras).
-- ESCRIBE TODO EN {lang}. NO uses inglés.
-- NO uses markdown, viñetas, listas, URLs, ni meta-texto.
-- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
-- NÚMEROS: escribe los números con palabras, no con dígitos ("mil cuatrocientos cincuenta y tres", no "1453").
-- AÑO vs DURACIÓN — distínguelos siempre. Un AÑO es una FECHA del calendario; una DURACIÓN es el tiempo transcurrido. Son cosas distintas. Para citar un año, di "el año <año>". La fórmula "hace <N> años" expresa SOLO duración: <N> es la diferencia entre el año actual y el año del evento, NO es el año mismo. Ante la duda, nombra el año ("el año X") y NO uses la fórmula "hace X años".
-- Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [CLOSING]
+- ConclusiÃ³n memorable. Termina con una reflexiÃ³n que se quede con el espectador.
+- Lenguaje vÃ­vido. Oraciones CORTAS (mÃ¡ximo 20 palabras).
+- ESCRIBE TODO EN {lang}. NO uses inglÃ©s.
+- NO uses markdown, viÃ±etas, listas, URLs, ni meta-texto.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(mÃºsica ...)", "(emoji ...)", "(transiciÃ³n)" etc. Solo texto hablado.
+- NÃšMEROS: escribe los nÃºmeros con palabras, no con dÃ­gitos ("mil cuatrocientos cincuenta y tres", no "1453").
+- AÃ‘O vs DURACIÃ“N â€” distÃ­nguelos siempre. Un AÃ‘O es una FECHA del calendario; una DURACIÃ“N es el tiempo transcurrido. Son cosas distintas. Para citar un aÃ±o, di "el aÃ±o <aÃ±o>". La fÃ³rmula "hace <N> aÃ±os" expresa SOLO duraciÃ³n: <N> es la diferencia entre el aÃ±o actual y el aÃ±o del evento, NO es el aÃ±o mismo. Ante la duda, nombra el aÃ±o ("el aÃ±o X") y NO uses la fÃ³rmula "hace X aÃ±os".
+- Devuelve SOLO el texto, precedido EXACTAMENTE por la lÃ­nea: [CLOSING]
 """
         closing = _ensure_marker(_ask_section(closing_prompt, min_words=80), "[CLOSING]")
         parts.append(closing)
         info(f"   [Script] CLOSING: {len(closing.split())} words")
 
-        # ---- OUTRO (CTA + farewell — coincides with YouTube's end screen overlay) ----
+        # ---- OUTRO (CTA + farewell â€” coincides with YouTube's end screen overlay) ----
         prior = "\n\n".join(parts)
         tail = " ".join(prior.split()[-200:])
-        outro_prompt = f"""Eres un narrador experto de documentales. Estás escribiendo la DESPEDIDA FINAL de un guion sobre: {self.subject}
+        outro_prompt = f"""Eres un narrador experto de documentales. EstÃ¡s escribiendo la DESPEDIDA FINAL de un guion sobre: {self.subject}
 
-Esto es lo último que se narró:
+Esto es lo Ãºltimo que se narrÃ³:
 \"\"\"
 {tail}
 \"\"\"
 
-Escribe SOLO la DESPEDIDA, pensada para los últimos segundos del video cuando aparecen las pantallas finales de YouTube (suscribirse, video recomendado).
+Escribe SOLO la DESPEDIDA, pensada para los Ãºltimos segundos del video cuando aparecen las pantallas finales de YouTube (suscribirse, video recomendado).
 
-ESTRUCTURA OBLIGATORIA (3-5 oraciones, 60-100 palabras), redactada de forma natural y orgánica como si la dijeras hablando con calidez (NO bullets, NO suene robótico):
+ESTRUCTURA OBLIGATORIA (3-5 oraciones, 60-100 palabras), redactada de forma natural y orgÃ¡nica como si la dijeras hablando con calidez (NO bullets, NO suene robÃ³tico):
 1. Agradece al espectador por haber visto el video.
-2. Pídele que dé "me gusta" si le gustó.
-3. Pídele que se SUSCRIBA al canal y active la CAMPANITA para no perderse contenido similar.
-4. Despídete cálidamente ("Hasta la próxima", "Hasta pronto", "Nos vemos en el siguiente video", o equivalente).
+2. PÃ­dele que dÃ© "me gusta" si le gustÃ³.
+3. PÃ­dele que se SUSCRIBA al canal y active la CAMPANITA para no perderse contenido similar.
+4. DespÃ­dete cÃ¡lidamente ("Hasta la prÃ³xima", "Hasta pronto", "Nos vemos en el siguiente video", o equivalente).
 
 REGLAS:
-- ESCRIBE TODO EN {lang}. NO uses inglés.
-- Tono cálido, cercano, humano — como un amigo, no como una máquina.
-- Oraciones CORTAS (máximo 20 palabras).
-- NO uses markdown, viñetas, listas, URLs, hashtags ni meta-texto.
-- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(música ...)", "(emoji ...)", "(transición)" etc. Solo texto hablado.
-- Devuelve SOLO el texto, precedido EXACTAMENTE por la línea: [OUTRO]
+- ESCRIBE TODO EN {lang}. NO uses inglÃ©s.
+- Tono cÃ¡lido, cercano, humano â€” como un amigo, no como una mÃ¡quina.
+- Oraciones CORTAS (mÃ¡ximo 20 palabras).
+- NO uses markdown, viÃ±etas, listas, URLs, hashtags ni meta-texto.
+- ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(mÃºsica ...)", "(emoji ...)", "(transiciÃ³n)" etc. Solo texto hablado.
+- Devuelve SOLO el texto, precedido EXACTAMENTE por la lÃ­nea: [OUTRO]
 """
         outro = _ensure_marker(_ask_section(outro_prompt, min_words=40), "[OUTRO]")
         parts.append(outro)
@@ -3828,15 +4083,15 @@ REGLAS:
             if placeholders:
                 fields_desc = ", ".join(f'"{p}"' for p in placeholders)
                 raw = self.generate_response(
-                    f"Vas a producir los datos para el título de un video de la serie "
+                    f"Vas a producir los datos para el tÃ­tulo de un video de la serie "
                     f"\"{series.get('id', '')}\".\n"
                     f"TEMA DEL VIDEO: {self.subject}\n\n"
                     f"Devuelve SOLO un objeto JSON con estos campos exactos: {fields_desc}.\n"
-                    f"Cada valor debe ir en {self.language}, en MAYÚSCULAS, sin comillas, "
+                    f"Cada valor debe ir en {self.language}, en MAYÃšSCULAS, sin comillas, "
                     f"sin tildes invertidas, conciso (1-4 palabras por campo), y derivado "
-                    f"directamente del tema. Ejemplo de formato: {{\"rol\": \"SAMURÁI\", "
-                    f"\"lugar\": \"EL JAPÓN FEUDAL\"}}.\n"
-                    f"NO devuelvas markdown, NO devuelvas explicación, SOLO el JSON."
+                    f"directamente del tema. Ejemplo de formato: {{\"rol\": \"SAMURÃI\", "
+                    f"\"lugar\": \"EL JAPÃ“N FEUDAL\"}}.\n"
+                    f"NO devuelvas markdown, NO devuelvas explicaciÃ³n, SOLO el JSON."
                 )
                 raw = str(raw).replace("```json", "").replace("```", "").strip()
                 values = {}
@@ -3856,24 +4111,24 @@ REGLAS:
                           for p in placeholders}
                 title = title_template.format(**filled)
             else:
-                # Template has no placeholders → use it verbatim.
+                # Template has no placeholders â†’ use it verbatim.
                 title = title_template
         else:
             title = self.generate_response(
-                f"Genera un título para un video largo de YouTube sobre: {self.subject}.\n"
-                f"REQUISITOS DEL TÍTULO:\n"
-                f"- Máximo 70 caracteres.\n"
-                f"- Puede incluir opcionalmente 1 palabra en MAYÚSCULAS para énfasis, elegida según lo que "
-                f"mejor encaje con el tema específico del video. Ejemplos de palabras válidas según contexto: "
-                f"NUNCA, JAMÁS, NADIE, VERDAD, REAL, IMPOSIBLE, PROHIBIDO, INCREÍBLE, OLVIDADO, PERDIDO, "
-                f"OCULTO, BRUTAL, EXTREMO, DEFINITIVO, ÚNICO, ABSOLUTO, ÉPICO. "
-                f"PROHIBIDO usar SECRETO o SECRETOS — están sobreutilizados. Elige la palabra que mejor describa "
+                f"Genera un tÃ­tulo para un video largo de YouTube sobre: {self.subject}.\n"
+                f"REQUISITOS DEL TÃTULO:\n"
+                f"- MÃ¡ximo 70 caracteres.\n"
+                f"- Puede incluir opcionalmente 1 palabra en MAYÃšSCULAS para Ã©nfasis, elegida segÃºn lo que "
+                f"mejor encaje con el tema especÃ­fico del video. Ejemplos de palabras vÃ¡lidas segÃºn contexto: "
+                f"NUNCA, JAMÃS, NADIE, VERDAD, REAL, IMPOSIBLE, PROHIBIDO, INCREÃBLE, OLVIDADO, PERDIDO, "
+                f"OCULTO, BRUTAL, EXTREMO, DEFINITIVO, ÃšNICO, ABSOLUTO, Ã‰PICO. "
+                f"PROHIBIDO usar SECRETO o SECRETOS â€” estÃ¡n sobreutilizados. Elige la palabra que mejor describa "
                 f"el tono real del video, no la primera que se te ocurra.\n"
-                f"- Despierta curiosidad o promete una revelación basada en el tema real.\n"
-                f"- SIN signos de exclamación ni de interrogación.\n"
+                f"- Despierta curiosidad o promete una revelaciÃ³n basada en el tema real.\n"
+                f"- SIN signos de exclamaciÃ³n ni de interrogaciÃ³n.\n"
                 f"- SIN emojis, SIN comillas, SIN hashtags.\n"
                 f"- ESCRIBE EN {self.language}.\n"
-                f"Devuelve SOLO el título, sin explicación."
+                f"Devuelve SOLO el tÃ­tulo, sin explicaciÃ³n."
             )
 
         # Strip any quotes the LLM might add (regular, curly, single)
@@ -3887,17 +4142,17 @@ REGLAS:
             title = title[:100]
 
         description = self.generate_response(
-            f"""Genera una descripción de YouTube para un video largo con este guion:
+            f"""Genera una descripciÃ³n de YouTube para un video largo con este guion:
 
 {self.script[:2000]}
 
 Incluye:
 - Un resumen breve de 2 oraciones del video
 - 5-8 hashtags relevantes
-- Un llamado a la acción (suscribirse, dar like, comentar)
+- Un llamado a la acciÃ³n (suscribirse, dar like, comentar)
 
-NO pongas comillas alrededor de la descripción.
-ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
+NO pongas comillas alrededor de la descripciÃ³n.
+ESCRIBE TODO EN {self.language}. Solo devuelve la descripciÃ³n."""
         )
 
         # Strip any quotes the LLM might add (regular, curly, single)
@@ -3930,7 +4185,7 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
 
         # Build the set of allowed tokens (lowercased, accent-stripped) from title + topic.
         # Any LLM-generated overlay word must derive from this vocabulary or it gets rejected
-        # (this is what catches hallucinations like "TÁQUILAS SE HOJAN").
+        # (this is what catches hallucinations like "TÃQUILAS SE HOJAN").
         def _norm(s: str) -> str:
             import unicodedata
             s = unicodedata.normalize("NFKD", s.lower())
@@ -3938,7 +4193,7 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
 
         title_topic_text = f"{video_title} {self.subject}".lower()
         allowed_tokens = {
-            _norm(t) for t in re.findall(r"[A-Za-zÀ-ÿ]+", title_topic_text) if len(t) > 2
+            _norm(t) for t in re.findall(r"[A-Za-zÃ€-Ã¿]+", title_topic_text) if len(t) > 2
         }
 
         visual_prompt = ""
@@ -3946,7 +4201,7 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
 
         if series_overlay:
             overlay_words = series_overlay.upper()
-            # Ask the LLM for a visual prompt only (no overlay words) — keeps the
+            # Ask the LLM for a visual prompt only (no overlay words) â€” keeps the
             # series identity stable while letting the background still match the topic.
             visual_prompt = str(self.generate_response(
                 f"Write a SINGLE English image-generation prompt for a YouTube thumbnail "
@@ -3957,20 +4212,20 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripción."""
                 f"places, objects, era, clothing, architecture or symbols. Use proper nouns "
                 f"when relevant.\n"
                 f"- ONE single dramatic scene, not a list of unrelated elements.\n"
-                f"- Composition cues only — describe framing, lighting direction, depth, focus, "
+                f"- Composition cues only â€” describe framing, lighting direction, depth, focus, "
                 f"mood. Examples: 'dramatic side lighting', 'high contrast', 'shallow depth of "
                 f"field', 'low angle', 'intense expression on the subject'. Style-agnostic.\n"
                 f"- DO NOT mention rendering style, medium, or technique. NEVER write "
                 f"'photorealistic', 'cinematic film look', 'cartoon', 'anime', '3D render', "
                 f"'watercolor', '8K', 'photograph', 'illustration', or any similar word that "
-                f"locks in a visual style — the channel's art style is added separately.\n"
+                f"locks in a visual style â€” the channel's art style is added separately.\n"
                 f"- End with: no text, no letters, no logos, no watermark.\n"
                 f"- Return ONLY the prompt itself. No quotes, no preamble, no explanation."
             )).strip().strip('"\'`')
             info(f"Thumbnail: using series overlay '{overlay_words}'")
 
         # Step 1: ask LLM for the visual concept + overlay words.
-        # Skipped entirely in series mode — overlay is pinned and visual was
+        # Skipped entirely in series mode â€” overlay is pinned and visual was
         # built above without the JSON ceremony.
         if not series_overlay:
             llm_raw = str(self.generate_response(
@@ -3982,28 +4237,28 @@ TOPIC: {self.subject}
 Return ONLY a JSON object with two fields:
 
 - "visual": ENGLISH prompt (40-70 words) for an AI image generator. CRITICAL RULES:
-  * The image MUST be visually unmistakable as the topic — name the actual SPECIFIC people, places, objects, clothing, architecture, era, or symbols from the topic. Use proper nouns when relevant.
+  * The image MUST be visually unmistakable as the topic â€” name the actual SPECIFIC people, places, objects, clothing, architecture, era, or symbols from the topic. Use proper nouns when relevant.
   * Build ONE single dramatic scene, not a list of unrelated elements.
-  * Composition cues only — describe framing, lighting direction, depth, focus, mood. Examples: "dramatic side lighting", "high contrast", "shallow depth of field", "low angle", "intense expression on the subject". Style-agnostic.
-  * DO NOT mention rendering style, medium, or technique. NEVER write "photorealistic", "cinematic film look", "cartoon", "anime", "3D render", "watercolor", "8K", "photograph", "illustration", or any similar word that locks in a visual style — the channel's art style is added separately downstream.
+  * Composition cues only â€” describe framing, lighting direction, depth, focus, mood. Examples: "dramatic side lighting", "high contrast", "shallow depth of field", "low angle", "intense expression on the subject". Style-agnostic.
+  * DO NOT mention rendering style, medium, or technique. NEVER write "photorealistic", "cinematic film look", "cartoon", "anime", "3D render", "watercolor", "8K", "photograph", "illustration", or any similar word that locks in a visual style â€” the channel's art style is added separately downstream.
   * End the prompt with: "no text, no letters, no logos, no watermark".
-  * FORBIDDEN: generic phrases like "person looking", "mysterious figure", "abstract concept" — be SPECIFIC.
+  * FORBIDDEN: generic phrases like "person looking", "mysterious figure", "abstract concept" â€” be SPECIFIC.
 
 - "words": a CLICKBAIT TEASER PHRASE in {self.language}, ALL UPPERCASE, for the thumbnail overlay. ABSOLUTELY CRITICAL RULES:
   * Length: 3 to 6 words forming a COMPLETE PUNCHY PHRASE. NEVER return a single word.
-  * It must SOUND like a YouTube clickbait teaser — provoke curiosity, hint at a revelation, or pose a question fragment. It is NOT a label.
-  * It must be CLEARLY tied to the video's title or topic — pick the most charged, SPECIFIC words: proper names, places, dates, concrete actions, key objects.
+  * It must SOUND like a YouTube clickbait teaser â€” provoke curiosity, hint at a revelation, or pose a question fragment. It is NOT a label.
+  * It must be CLEARLY tied to the video's title or topic â€” pick the most charged, SPECIFIC words: proper names, places, dates, concrete actions, key objects.
   * EVERY WORD must already appear (literally or as a clear root form) in the VIDEO TITLE or TOPIC above. DO NOT INVENT WORDS. Each word must be a correctly-spelled real word in {self.language}.
-  * VARY THE ANGLE between videos — pick the most specific hook from THIS topic. Available patterns (use whichever fits the topic best):
-      - Proper-noun reveal: "ANUBIS Y EL JUICIO FINAL", "EL DIARIO DE TUTANKAMÓN".
+  * VARY THE ANGLE between videos â€” pick the most specific hook from THIS topic. Available patterns (use whichever fits the topic best):
+      - Proper-noun reveal: "ANUBIS Y EL JUICIO FINAL", "EL DIARIO DE TUTANKAMÃ“N".
       - Date/place anchor: "1959, EL PASO DYATLOV", "LA NOCHE DEL MARY CELESTE".
-      - Question fragment: "POR QUÉ DESAPARECIERON TODOS", "QUIÉN ENCONTRÓ EL CUERPO".
-      - Concrete action: "PLANTÓ UN BOSQUE POR ELLA", "CRUZARON LOS ANDES A PIE".
-      - Revelation hook: "LO QUE ENCONTRARON ALLÍ", "NADIE VOLVIÓ A VERLOS".
-      - Contrast/twist: "ERA UN ANCIANO CIEGO", "EL ÚLTIMO MENSAJE DE OLOF".
-  * ABSOLUTELY FORBIDDEN openings — never start the overlay with any of these, regardless of what the title says: "EL SECRETO", "SECRETO DE", "SECRETO QUE", "EL MISTERIO", "MISTERIO DE", "MISTERIO QUE". Even if the title contains those words, the thumbnail overlay MUST pick a different angle (a name, a place, a date, an action, a question fragment) from the patterns above. The title and the thumbnail overlay should NOT say the same thing — the overlay highlights a different specific hook.
-  * BAD examples: "SECRETO" (single word, no teaser), "NADIE LO SABE" (cliché), "INCREÍBLE" (generic), "EL SECRETO DE X" / "EL MISTERIO DE X" (forbidden openings — too generic).
-  * AVOID these overused clichés entirely: "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR", "INCREÍBLE", "JAMÁS LO CREERÁS".
+      - Question fragment: "POR QUÃ‰ DESAPARECIERON TODOS", "QUIÃ‰N ENCONTRÃ“ EL CUERPO".
+      - Concrete action: "PLANTÃ“ UN BOSQUE POR ELLA", "CRUZARON LOS ANDES A PIE".
+      - Revelation hook: "LO QUE ENCONTRARON ALLÃ", "NADIE VOLVIÃ“ A VERLOS".
+      - Contrast/twist: "ERA UN ANCIANO CIEGO", "EL ÃšLTIMO MENSAJE DE OLOF".
+  * ABSOLUTELY FORBIDDEN openings â€” never start the overlay with any of these, regardless of what the title says: "EL SECRETO", "SECRETO DE", "SECRETO QUE", "EL MISTERIO", "MISTERIO DE", "MISTERIO QUE". Even if the title contains those words, the thumbnail overlay MUST pick a different angle (a name, a place, a date, an action, a question fragment) from the patterns above. The title and the thumbnail overlay should NOT say the same thing â€” the overlay highlights a different specific hook.
+  * BAD examples: "SECRETO" (single word, no teaser), "NADIE LO SABE" (clichÃ©), "INCREÃBLE" (generic), "EL SECRETO DE X" / "EL MISTERIO DE X" (forbidden openings â€” too generic).
+  * AVOID these overused clichÃ©s entirely: "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR", "INCREÃBLE", "JAMÃS LO CREERÃS".
 
 Return ONLY the JSON. No markdown, no explanation."""
             )).replace("```json", "").replace("```", "").strip()
@@ -4024,11 +4279,11 @@ Return ONLY the JSON. No markdown, no explanation."""
 
             BANNED_OVERLAYS = {
                 "NADIE LO SABE", "NUNCA LO SABE", "TE VA A IMPACTAR",
-                "INCREÍBLE", "INCREIBLE", "JAMÁS LO CREERÁS", "JAMAS LO CREERAS",
+                "INCREÃBLE", "INCREIBLE", "JAMÃS LO CREERÃS", "JAMAS LO CREERAS",
             }
 
             # The LLM keeps defaulting to "EL SECRETO DE ..." / "EL MISTERIO DE ..."
-            # for almost every video. Reject those openings unconditionally —
+            # for almost every video. Reject those openings unconditionally â€”
             # the overlay must pick a more specific angle even when the title
             # itself uses those words.
             FORBIDDEN_OVERLAY_PREFIXES = (
@@ -4047,8 +4302,8 @@ Return ONLY the JSON. No markdown, no explanation."""
                     return False
                 STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
                         "que", "por", "para", "con", "en", "a", "su", "sus", "lo"}
-                words = [_norm(w) for w in re.findall(r"[A-Za-zÀ-ÿ]+", candidate)]
-                # Reject one-word overlays — clickbait needs a phrase.
+                words = [_norm(w) for w in re.findall(r"[A-Za-zÃ€-Ã¿]+", candidate)]
+                # Reject one-word overlays â€” clickbait needs a phrase.
                 if len(words) < 3:
                     return False
                 content_words = [w for w in words if w not in STOP]
@@ -4064,7 +4319,7 @@ Return ONLY the JSON. No markdown, no explanation."""
                 overlay_words = ""
 
         if not visual_prompt:
-            # Style-neutral fallback — composition cues only. The channel's art
+            # Style-neutral fallback â€” composition cues only. The channel's art
             # style is appended downstream by `_apply_channel_style`, so this
             # prompt MUST NOT lock in a rendering medium ("cinematic",
             # "photorealistic", etc.) that would fight cartoon/anime channels.
@@ -4074,34 +4329,34 @@ Return ONLY the JSON. No markdown, no explanation."""
                 f"dark moody background, high contrast, no text"
             )
 
-        # Deterministic fallback path (always coherent with title — never hallucinates).
-        # Helper used by every fallback path below — strips accents and matches
+        # Deterministic fallback path (always coherent with title â€” never hallucinates).
+        # Helper used by every fallback path below â€” strips accents and matches
         # SECRETO/SECRETOS/MISTERIO/MISTERIOS so we can drop those words wherever
         # they appear, regardless of source.
         def _is_secreto_misterio(word: str) -> bool:
             """True for SECRETO/SECRETOS/MISTERIO/MISTERIOS (any case, with or without accents)."""
-            w = re.sub(r"[ÁÉÍÓÚÜáéíóúü]", lambda m: {
-                "Á": "A", "É": "E", "Í": "I", "Ó": "O", "Ú": "U", "Ü": "U",
-                "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ü": "u",
+            w = re.sub(r"[ÃÃ‰ÃÃ“ÃšÃœÃ¡Ã©Ã­Ã³ÃºÃ¼]", lambda m: {
+                "Ã": "A", "Ã‰": "E", "Ã": "I", "Ã“": "O", "Ãš": "U", "Ãœ": "U",
+                "Ã¡": "a", "Ã©": "e", "Ã­": "i", "Ã³": "o", "Ãº": "u", "Ã¼": "u",
             }[m.group()], word).upper()
             return w in {"SECRETO", "MISTERIO", "SECRETOS", "MISTERIOS"}
 
         if not overlay_words and video_title:
-            clean_title = re.sub(r"[¿?¡!,.:;\"'“”‘’]", "", video_title).strip()
+            clean_title = re.sub(r"[Â¿?Â¡!,.:;\"'â€œâ€â€˜â€™]", "", video_title).strip()
             tw = clean_title.split()
             STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
-                    "que", "por", "qué", "para", "con", "en", "a", "su", "sus", "lo"}
+                    "que", "por", "quÃ©", "para", "con", "en", "a", "su", "sus", "lo"}
 
             # 1. Find UPPERCASE keyword (the title generator always puts 1-2 in caps) and
             #    grab a wider window around it for a proper teaser phrase (3-5 words).
             #    Skip SECRETO / MISTERIO so the overlay doesn't keep defaulting
-            #    to "EL SECRETO DE X" — pick the next caps word if there is one.
+            #    to "EL SECRETO DE X" â€” pick the next caps word if there is one.
             CAPS_SKIP = {"SECRETO", "MISTERIO", "SECRETOS", "MISTERIOS"}
             caps_idx = next(
                 (i for i, w in enumerate(tw)
-                 if re.match(r"^[A-ZÁÉÍÓÚÜÑ]{4,}$", w)
-                 and re.sub(r"[ÁÉÍÓÚÜ]", lambda m: {"Á": "A", "É": "E", "Í": "I",
-                                                    "Ó": "O", "Ú": "U", "Ü": "U"}[m.group()], w)
+                 if re.match(r"^[A-ZÃÃ‰ÃÃ“ÃšÃœÃ‘]{4,}$", w)
+                 and re.sub(r"[ÃÃ‰ÃÃ“ÃšÃœ]", lambda m: {"Ã": "A", "Ã‰": "E", "Ã": "I",
+                                                    "Ã“": "O", "Ãš": "U", "Ãœ": "U"}[m.group()], w)
                  not in CAPS_SKIP),
                 None,
             )
@@ -4110,7 +4365,7 @@ Return ONLY the JSON. No markdown, no explanation."""
                 start = max(0, caps_idx - 2)
                 end = min(len(tw), caps_idx + 4)
                 chunk = tw[start:end]
-                # Drop SECRETO/MISTERIO from the chunk — we never want them on a thumbnail.
+                # Drop SECRETO/MISTERIO from the chunk â€” we never want them on a thumbnail.
                 chunk = [w for w in chunk if not _is_secreto_misterio(w)]
                 while chunk and chunk[0].lower() in STOP:
                     chunk = chunk[1:]
@@ -4123,7 +4378,7 @@ Return ONLY the JSON. No markdown, no explanation."""
                 if len(chunk) >= 3:
                     overlay_words = " ".join(chunk).upper()
 
-            # 2. No usable caps window → take the first 4-5 meaningful words from the title.
+            # 2. No usable caps window â†’ take the first 4-5 meaningful words from the title.
             if not overlay_words:
                 meaningful = [
                     w for w in tw
@@ -4139,9 +4394,9 @@ Return ONLY the JSON. No markdown, no explanation."""
         # Absolute fallback so the thumbnail is never wordless.
         if not overlay_words:
             STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
-                    "que", "por", "qué", "para", "con", "en", "a"}
+                    "que", "por", "quÃ©", "para", "con", "en", "a"}
             topic_words = [
-                w for w in re.findall(r"[A-Za-zÀ-ÿ]+", self.subject or "")
+                w for w in re.findall(r"[A-Za-zÃ€-Ã¿]+", self.subject or "")
                 if w.lower() not in STOP and len(w) > 3
                 and not _is_secreto_misterio(w)
             ][:5]
@@ -4245,7 +4500,7 @@ Return ONLY the JSON. No markdown, no explanation."""
                     wrapped.append(" ".join(current))
                 return wrapped
 
-            # Pick the largest font size where the wrapped text fits in ≤3 lines.
+            # Pick the largest font size where the wrapped text fits in â‰¤3 lines.
             font_size = 130
             font = None
             lines = [overlay_words]
@@ -4286,16 +4541,89 @@ Return ONLY the JSON. No markdown, no explanation."""
         success(f" Thumbnail: {out_path}")
         return out_path
 
+    # Per-prompt diversity controls for `generate_long_prompts`. Indexed
+    # modulo the array length and offset so that consecutive prompts never
+    # share shot type AND lighting at the same time â€” image generators
+    # otherwise default to "wide dramatic vista in golden hour" for every
+    # frame, which is what made long videos look generic.
+    _LONG_SHOT_TYPES: list[str] = [
+        "tight close-up of a single face â€” visible emotion (eyes, jaw, brow), shallow background",
+        "medium shot of subject mid-action â€” hands and gesture clearly visible, environment partly framed",
+        "wide establishing shot â€” subject placed within the full setting, scale of the world visible",
+        "low-angle hero shot â€” subject filling the frame from below, sky or ceiling behind",
+        "over-the-shoulder POV â€” viewer sees what the subject is looking at, back of subject's head/shoulder in foreground",
+        "profile silhouette â€” subject lit from behind against a bright background, edge light defining the body",
+        "two-shot â€” two characters interacting tightly, eye contact or shared object between them",
+        "overhead / top-down â€” subject(s) seen from directly above, environment as a flat backdrop",
+    ]
+    _LONG_LIGHTING: list[str] = [
+        "golden hour â€” warm orange light, long shadows raking across the scene",
+        "stormy overcast â€” cold gray diffuse light, rain or fog visible, drained colors",
+        "candlelight or firelight â€” small warm pool of light, deep shadows, flicker",
+        "harsh midday sun â€” sharp high-contrast shadows, bleached highlights",
+        "single interior lamp or lantern â€” warm pool of light, surrounding darkness",
+        "dawn fog â€” cold blue-gray atmosphere, low visibility, silhouettes",
+        "twilight blue hour â€” deep blue sky, subjects lit by a secondary warm source",
+        "flat soft overcast â€” even illumination, no shadows, muted palette",
+    ]
+
+    @staticmethod
+    def _narrative_beat_for(index: int, total: int) -> tuple[str, str]:
+        """
+        Map a 0-indexed prompt position to a narrative beat + mood hint.
+        Drives emotional variation across the video: cold-open energy at the
+        front, climax peak ~85% in, contemplative legacy at the end.
+        """
+        pos = index / max(1, total)
+        if pos < 0.10:
+            return ("cold-open hook", "cinematic awe, dramatic lighting, faces locked in intense focus, EPIC scale, the moment that opens the video")
+        if pos < 0.20:
+            return ("immersive vignette", "sensorial â€” viewer is INSIDE the scene, vivid textures, dust/breath/sweat visible, intimate framing")
+        if pos < 0.30:
+            return ("mystery pivot", "ominous â€” something is off, faces showing doubt or unease, off-kilter framing, cold or dim light")
+        if pos < 0.42:
+            return ("first revelation + backstory", "discovery energy, hands uncovering or inspecting, warm light revealing a detail, character close-ups")
+        if pos < 0.55:
+            return ("escalation", "rising tension, motion blur, conflict, sweat / breath / urgency, faces showing strain")
+        if pos < 0.68:
+            return ("reversal", "shock or realization on faces, hard contrast, the moment the truth lands")
+        if pos < 0.78:
+            return ("human element", "intimate emotion â€” grief, joy, fear, awe â€” tight on a single face, vulnerable framing")
+        if pos < 0.90:
+            return ("climax â€” peak intensity", "MOST DRAMATIC of the video, peak intensity, the revelation moment, faces frozen in awe or horror, strongest composition")
+        return ("legacy / contemplation", "contemplative, quiet, soft warm lighting, a single subject, reflective stillness")
+
     def generate_long_prompts(self) -> List[str]:
         """
-        Generates ~30 image prompts for a long video, anchored to the script:
-        the script is split into N sections and each prompt MUST illustrate its
-        section literally, naming the people / places / objects from the topic.
+        Generates 30 image prompts for a long video, anchored to the script:
+        the script is split into N chunks and each prompt MUST illustrate its
+        chunk literally, naming the people / places / objects from the topic.
+
+        Anti-generic mechanisms (in order of impact):
+          1. Anchor noun rule â€” every prompt must contain â‰¥1 proper noun
+             from the chunk or the topic title.
+          2. Forbidden generic phrases â€” explicit blacklist of clichÃ©s
+             ("a figure", "ancient ruins", "dramatic landscape" â€¦).
+          3. Per-prompt shot type + lighting hints (rotated so consecutive
+             frames never share both axes).
+          4. Per-prompt narrative beat hint (cold-open / mystery / climax / â€¦)
+             so emotional energy tracks the script position.
+          5. 800-char chunk window (was 400) so the LLM has enough source
+             material to lift specific details instead of inventing them.
         """
         n_prompts = 30
 
-        # Split the script into N sections so each prompt maps 1:1 to a chunk
-        # of narration — this is what keeps the images on-topic.
+        # Extract proper-noun anchors from the topic title â€” these are the
+        # fallback names when a script chunk has no named entity of its own.
+        # Lowercased connectors filtered so we keep only meaningful tokens.
+        _topic_anchors = [
+            tok for tok in re.findall(r"[A-Za-zÃ€-Ã¿0-9'\-]+", self.subject or "")
+            if len(tok) > 2 and tok.lower() not in _PHOTO_STOPWORDS
+        ]
+        topic_anchor_str = ", ".join(_topic_anchors[:6]) or (self.subject or "the topic")
+
+        # Split the script into N chunks. 800-char window (up from 400) gives
+        # the LLM enough material to extract specific details, not just gist.
         sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', self.script) if s.strip()]
         sections = []
         if sentences:
@@ -4303,17 +4631,30 @@ Return ONLY the JSON. No markdown, no explanation."""
             for i in range(n_prompts):
                 start = i * per_section
                 end = start + per_section if i < n_prompts - 1 else len(sentences)
-                section_text = ' '.join(sentences[start:end])[:400]
+                section_text = ' '.join(sentences[start:end])[:800]
                 if section_text:
                     sections.append(section_text)
         while len(sections) < n_prompts:
             sections.append(self.subject)
 
-        sections_text = "".join(
-            f'\nSECTION {i+1}: "{sec}"\n' for i, sec in enumerate(sections)
-        )
+        # Per-prompt diversity assignments. Shot rotates 1-step, lighting
+        # rotates 3-step â†’ never sync, never repeat consecutively.
+        shot_idx = lambda i: i % len(self._LONG_SHOT_TYPES)
+        light_idx = lambda i: (i * 3) % len(self._LONG_LIGHTING)
 
-        # Setting anchor — names the world/era of THIS video inside the prompt
+        sections_text = ""
+        for i, sec in enumerate(sections):
+            beat_name, beat_mood = self._narrative_beat_for(i, n_prompts)
+            sections_text += (
+                f'\nSECTION {i+1}\n'
+                f'  Narrative beat: {beat_name}\n'
+                f'  Mood/emotion to convey: {beat_mood}\n'
+                f'  Shot type for this image: {self._LONG_SHOT_TYPES[shot_idx(i)]}\n'
+                f'  Lighting for this image: {self._LONG_LIGHTING[light_idx(i)]}\n'
+                f'  Script chunk to illustrate: "{sec}"\n'
+            )
+
+        # Setting anchor â€” names the world/era of THIS video inside the prompt
         # so the LLM doesn't drift into off-setting visuals on abstract script
         # lines. Niche-agnostic: works for history, modern, sports, food, tech,
         # etc. (see `_get_context_profile`).
@@ -4324,7 +4665,7 @@ Return ONLY the JSON. No markdown, no explanation."""
             anchors_line = ctx.get("visual_anchors") or "(infer from topic)"
             avoid_line = ctx.get("must_avoid") or "anything that breaks the setting's immersion"
             era_clause = (
-                f"\n\n=== SETTING — NON-NEGOTIABLE ===\n"
+                f"\n\n=== SETTING â€” NON-NEGOTIABLE ===\n"
                 f"This documentary is set in: **{setting_line}**.\n"
                 f"Visual anchors that should appear naturally when relevant: {anchors_line}.\n"
                 f"FORBIDDEN visual elements (anachronistic / off-setting): {avoid_line}.\n"
@@ -4332,8 +4673,6 @@ Return ONLY the JSON. No markdown, no explanation."""
                 f"=========================================="
             )
 
-        # Inline guidance string for the PERIOD ACCURACY rule below — kept
-        # short to avoid bloating the prompt.
         period_inline = (
             f"Setting is **{ctx['setting']}**. Every prompt with a person MUST name at least 2 specific clothing/prop items that belong to this setting, and AVOID: {ctx.get('must_avoid', '')}. "
             if (ctx and ctx.get("setting")) else ""
@@ -4341,32 +4680,54 @@ Return ONLY the JSON. No markdown, no explanation."""
 
         prompt = f"""Task: write {n_prompts} image prompts for a long-form video about "{self.subject}".{era_clause}
 
-You receive {n_prompts} script sections below. Each prompt MUST illustrate the LITERAL content of its matching section — the people, the action, the place, the moment that section describes. Do not invent new events. Do not summarize abstractly. If the section talks about "the team debating in the boardroom at noon", the image is exactly that.
+You receive {n_prompts} script chunks below, each tagged with a narrative beat, shot type and lighting. Each prompt MUST illustrate the LITERAL content of its chunk â€” the people, the action, the place, the moment that chunk describes. The shot type and lighting tags are NON-OPTIONAL: bake them into the prompt so the {n_prompts} images don't look identical.
 
 ABSOLUTE RULES (every prompt):
-1. ENGLISH ONLY — NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns naturally. NO Spanish words anywhere in the output.
-2. SCENE FIDELITY. Open with a concrete action (subject + verb) drawn from the section text. Whatever the section is talking about, that is what the image shows.
-3. NAMED CHARACTER IDENTITY. When the script names a real person, do NOT just write their name — describe them physically (age, hair, beard, build, clothing) so the image generator can render the correct person. The physical description MUST appear every time they're shown.
-4. SETTING ACCURACY — STRICT. {period_inline}If a person appears, describe their clothing exactly as it would look in the setting of this video (fabric, cut, color, footwear, headwear). Same for architecture, tools, vehicles and 2-3 supporting objects. If the section names a real person, place or event, use that proper noun.
-5. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world — same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing — but never the level of realism.
-6. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later — your job is content only.
-7. LENGTH. 40-70 English words per prompt. No camera or lens jargon.
+1. ENGLISH ONLY â€” NON-NEGOTIABLE. Write every prompt entirely in English, even if the script is in Spanish. Image generators are trained on English data and produce wrong subjects when given Spanish prompts. Translate proper nouns naturally. NO Spanish words anywhere in the output.
 
-Examples of GOOD scene-only prompts (the PATTERN matters — names and props will differ for your topic):
-- (Historical setting) "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces."
-- (Modern setting) "A young trader leans over three glowing monitors on the floor of the New York Stock Exchange, mouth open mid-shout, paper tickets crumpled on his keyboard, the index ticker spiking red overhead, colleagues running behind him."
-- (Sports setting) "A quarterback in a navy and red jersey throws a tight spiral over the defensive line under stadium floodlights, mud streaking his white pants, breath visible in cold air, tens of thousands of blurred fans behind the end zone."
-- (Domestic / present-day setting) "A father in a flannel shirt kneels beside an open dishwasher in a small kitchen at night, holding a flashlight, water pooling at his knees, his daughter watching from the hallway in pyjamas, single warm bulb above the sink."
+2. ANCHOR NOUN â€” STRICT. Every prompt MUST contain at least ONE specific proper noun: a real person's name, a specific place name, a specific object/artifact, a specific event, or a specific date drawn from the chunk text. If the chunk has none, lift one from the topic title: **{topic_anchor_str}**. NEVER write a prompt with only generic subjects.
 
-Examples of BAD prompts (DO NOT WRITE THESE):
-- "An ancient scene." (too vague, no action, no setting)
-- "Stylized cartoon of [subject] doing [action]." (forbidden art-style word)
-- "A historical illustration of [subject]." (forbidden art-style word, no action)
+3. NO GENERIC SUBJECTS. The following phrasings are FORBIDDEN and will cause the prompt to be discarded:
+   - "a person", "a figure", "someone", "a man", "a woman", "an individual" â€” alone, with no name AND no 3+ physical traits
+   - "a warrior", "a scientist", "a soldier", "a king", "a priest" â€” alone, without name AND specific period clothing
+   - "a person standing", "a figure looking", "a figure in the distance", "a silhouette"
+   - "ancient temple", "ancient ruins", "ancient city", "ancient civilization" â€” without naming WHICH
+   - "dramatic landscape", "epic scene", "mysterious place", "ancient times", "a historical moment"
+   - "a moment in history", "a turning point", "a key event", "a fateful day"
+   - "symbolic", "metaphorical", "conceptual" visuals â€” only describe LITERAL scenes.
+
+4. SCENE FIDELITY. Open with a concrete action (subject + verb) drawn from the chunk text. If the chunk says "Galileo demonstrates his telescope to the cardinals at night", the image is exactly that â€” not "an astronomer in a robe".
+
+5. NAMED CHARACTER IDENTITY. When the script names a real person, do NOT just write their name â€” describe them physically (age, hair, beard, build, clothing) so the image generator can render the correct person. The physical description MUST appear every time they're shown.
+
+6. SETTING ACCURACY â€” STRICT. {period_inline}If a person appears, describe their clothing exactly as it would look in the setting (fabric, cut, color, footwear, headwear). Same for architecture, tools, vehicles and 2-3 supporting objects.
+
+7. SHOT + LIGHTING â€” USE THE TAGS. Each chunk below has a "Shot type" and "Lighting" tag. The prompt must clearly reflect that shot type and that lighting. If chunk 5 says "tight close-up of a single face" with "candlelight", chunk 6 must NOT also be a close-up under candlelight.
+
+8. NARRATIVE BEAT â€” USE THE MOOD TAG. Each chunk has a "Mood/emotion to convey" tag tied to its position in the video. A prompt for the "cold-open hook" beat must read cinematic and high-impact; a prompt for the "human element" beat must read intimate and emotional; a prompt for the "climax" beat must be the MOST DRAMATIC of all.
+
+9. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world â€” same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing â€” but never the level of realism.
+
+10. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later â€” your job is content only.
+
+11. LENGTH. 55-90 English words per prompt. No camera or lens jargon ("close-up" as written text is fine; "85mm f/1.4" is not).
+
+Examples of GOOD scene-only prompts (the PATTERN matters â€” names and props will differ for your topic):
+- (Historical setting) "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces, low-angle hero composition, golden hour."
+- (Modern setting) "A young trader leans over three glowing monitors on the floor of the New York Stock Exchange, mouth open mid-shout, paper tickets crumpled on his keyboard, the index ticker spiking red overhead, colleagues running behind him, tight medium shot, harsh fluorescent overhead light."
+- (Sports setting) "A quarterback in a navy and red jersey throws a tight spiral over the defensive line under stadium floodlights, mud streaking his white pants, breath visible in cold air, tens of thousands of blurred fans behind the end zone, low-angle hero shot, sodium floodlight."
+- (Science / probe) "The Voyager 1 probe, gold-foiled and antenna-extended, drifts past the dark crescent of Saturn's rings, faint sunlight glancing off its main dish, the rings casting a black band across the planet, profile silhouette composition, harsh sunlight from the right."
+
+Examples of BAD prompts (DO NOT WRITE THESE â€” they will be rejected):
+- "An ancient scene at sunset." (vague, no name, no action)
+- "A historical illustration of [subject]." (forbidden art-style word, generic)
 - "Symbolic image of [subject]'s power." (no concrete moment)
+- "A warrior standing in ancient ruins." (forbidden generics: 'a warrior' + 'ancient ruins')
+- "A figure looking at the horizon at golden hour." (forbidden generic 'a figure')
 
 {sections_text}
-Forbidden words (art-style / camera jargon): cinematic, photograph, camera, shot, lens, close-up, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, sketch.
-Forbidden words (multi-image triggers — these make image generators output collages instead of one image): series, sequence, scenes (plural), panels, panel, storyboard, comic strip, montage, collage, grid, split screen, frames, multiple, diptych, triptych, before-and-after, side by side.
+Forbidden art-style words: cinematic, photograph, camera, shot, lens, close-up jargon, 4K, 8K, HD, render, abstract, concept, metaphor, symbolic, visualization, painting, illustration, cartoon, drawing, anime, fresco, engraving, comic, vector, sketch.
+Forbidden multi-image triggers: series, sequence, scenes (plural), panels, panel, storyboard, comic strip, montage, collage, grid, split screen, frames, multiple, diptych, triptych, before-and-after, side by side.
 Also forbidden unless the topic itself demands it: medieval/ancient-civilization imagery, fantasy creatures, magic/sorcery effects, cartoon stylization.
 
 Return ONLY a JSON array of {n_prompts} strings (one prompt per section, in order). Example format:
@@ -4408,29 +4769,34 @@ No markdown. No explanation. Just the JSON array."""
                 except Exception:
                     pass
 
-        # Fallback: build a topic-anchored prompt per section so images stay on-topic
-        # even when the LLM fails to produce a parseable JSON array.
+        # Fallback: build a specific, anchored prompt per chunk so images stay
+        # both on-topic AND varied even when the LLM fails to return JSON.
+        # Uses the same shot/lighting/beat rotation as the LLM path so the
+        # video still feels visually intentional, not random.
         if not image_prompts or len(image_prompts) < 4:
             if get_verbose():
-                warning("Failed to parse long video prompts, using section-anchored fallback")
-            fallback_styles = [
-                "wide vista with key subjects centered, dramatic atmosphere",
-                "detail of the central object or person, period-accurate textures",
-                "low-angle hero composition, epic scale",
-                "atmospheric scene with depth and moody shadows",
-                "intimate framing of figures interacting in period-accurate context",
-                "establishing view of the era's setting, painterly mood",
-                "overcast atmosphere, period-accurate detail",
-                "warm interior scene, period-accurate furnishings and dress",
-            ]
-            image_prompts = [
-                (
-                    f"Scene from \"{sections[i] if i < len(sections) else self.subject}\" "
-                    f"in the context of {self.subject}, {fallback_styles[i % len(fallback_styles)]}, "
-                    f"period-accurate, 16:9 landscape"
+                warning("Failed to parse long video prompts, using anchored fallback")
+            setting_str = (ctx or {}).get("setting", "") or self.subject
+            avoid_str = (ctx or {}).get("must_avoid", "")
+            image_prompts = []
+            for i in range(n_prompts):
+                chunk = sections[i] if i < len(sections) else self.subject
+                # Pick a named entity from the chunk if any, else fall back to topic anchors
+                chunk_nouns = [
+                    tok for tok in re.findall(r"[A-Z][A-Za-zÃ€-Ã¿0-9'\-]{2,}", chunk)
+                    if tok.lower() not in _PHOTO_STOPWORDS
+                ]
+                anchor = chunk_nouns[0] if chunk_nouns else (_topic_anchors[0] if _topic_anchors else self.subject)
+                beat_name, beat_mood = self._narrative_beat_for(i, n_prompts)
+                shot = self._LONG_SHOT_TYPES[shot_idx(i)]
+                light = self._LONG_LIGHTING[light_idx(i)]
+                image_prompts.append(
+                    f"{anchor} in a concrete scene from {setting_str}: {chunk[:220]}. "
+                    f"Shot: {shot}. Lighting: {light}. Mood: {beat_mood}. "
+                    f"Period-accurate clothing, props and architecture. "
+                    f"Avoid: {avoid_str or 'generic landscape, symbolic imagery, cartoon stylization'}. "
+                    f"16:9 landscape."
                 )
-                for i in range(n_prompts)
-            ]
 
         image_prompts = image_prompts[:n_prompts]
         self.image_prompts = image_prompts
@@ -4502,7 +4868,7 @@ No markdown. No explanation. Just the JSON array."""
     def generate_long_images(self, prompts: List[str]) -> None:
         """
         Generate images for long video in 16:9 landscape format (1920x1080).
-        Cascade: Leonardo AI → HuggingFace → Pillow fallback.
+        Cascade: Leonardo AI â†’ HuggingFace â†’ Pillow fallback.
         """
         print(colored(f"\n  [Long Video] Generating {len(prompts)} images (1920x1080)...", "blue"))
 
@@ -4654,8 +5020,8 @@ No markdown. No explanation. Just the JSON array."""
         text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
         # Strip LLM preamble lines.
         text = re.sub(
-            r'^\s*(Here\'s|Here is|Sure[!,.]?\s*here|Of course|Aquí (está|tienes|te presento)|'
-            r'¡?(Por supuesto|Claro|Desde luego|Con gusto)|A continuación)[^\n]*\n',
+            r'^\s*(Here\'s|Here is|Sure[!,.]?\s*here|Of course|AquÃ­ (estÃ¡|tienes|te presento)|'
+            r'Â¡?(Por supuesto|Claro|Desde luego|Con gusto)|A continuaciÃ³n)[^\n]*\n',
             '', text, flags=re.IGNORECASE
         )
         # Strip trailing notes.
@@ -4675,17 +5041,17 @@ No markdown. No explanation. Just the JSON array."""
         text = script
 
         # Strip stage-direction artifacts the LLM leaks ("(imagen de ...)",
-        # "[B-roll: ...]", "Música: ...") BEFORE the section-marker pass so
+        # "[B-roll: ...]", "MÃºsica: ...") BEFORE the section-marker pass so
         # nothing falls through.
         text = strip_stage_directions(text)
 
         # Strip section markers in any language / case.
-        text = re.sub(r'\[(INTRO|INTRODUCCIÓN|INTRODUCCION|CLOSING|CIERRE|OUTRO|DESPEDIDA)\]', '', text, flags=re.IGNORECASE)
-        text = re.sub(r'\[(SECTION|SECCIÓN|SECCION)\s*\d+\s*:?[^\]]*\]', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\[(INTRO|INTRODUCCIÃ“N|INTRODUCCION|CLOSING|CIERRE|OUTRO|DESPEDIDA)\]', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\[(SECTION|SECCIÃ“N|SECCION)\s*\d+\s*:?[^\]]*\]', '', text, flags=re.IGNORECASE)
 
-        # Some LLMs write the markers WITHOUT brackets — strip those too.
-        text = re.sub(r'^\s*(INTRO|INTRODUCCIÓN|INTRODUCCION|CLOSING|CIERRE|OUTRO|DESPEDIDA)\s*:?\s*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
-        text = re.sub(r'^\s*(SECTION|SECCIÓN|SECCION)\s*\d+\s*:[^\n]*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
+        # Some LLMs write the markers WITHOUT brackets â€” strip those too.
+        text = re.sub(r'^\s*(INTRO|INTRODUCCIÃ“N|INTRODUCCION|CLOSING|CIERRE|OUTRO|DESPEDIDA)\s*:?\s*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
+        text = re.sub(r'^\s*(SECTION|SECCIÃ“N|SECCION)\s*\d+\s*:[^\n]*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
 
         # Strip JSON / code artifacts.
         text = re.sub(r'"role"\s*:\s*"[^"]*"', '', text)
@@ -4786,7 +5152,7 @@ No markdown. No explanation. Just the JSON array."""
                     img_clip = img_clip.resize(width=1920)
                     img_clip = crop(img_clip, x_center=960, y_center=img_clip.h / 2, width=1920, height=1080)
 
-                # Ken Burns: gentle slow zoom (1.0x → 1.08x over clip duration)
+                # Ken Burns: gentle slow zoom (1.0x â†’ 1.08x over clip duration)
                 # Use default arg to capture clip_dur in the closure
                 img_clip = img_clip.resize(lambda t, d=clip_dur: 1 + 0.08 * (t / d))
 
@@ -4850,7 +5216,7 @@ No markdown. No explanation. Just the JSON array."""
 
         comp_audio = CompositeAudioClip([tts_clip.set_fps(44100), music_clip])
 
-        # Set audio THEN duration — order matters for MoviePy
+        # Set audio THEN duration â€” order matters for MoviePy
         final_clip = final_clip.set_duration(total_dur)
         final_clip = final_clip.set_audio(comp_audio)
         print(colored(f"    [Audio] mixed in {time.time() - t_phase:.1f}s", "green"), flush=True)
@@ -4876,11 +5242,18 @@ No markdown. No explanation. Just the JSON array."""
     def generate_long_video(self, tts_instance: TTS, custom_topic: str = "") -> str:
         """
         Public entry point for the long-video pipeline. Pins the LLM to the
-        long-video model (DeepSeek V4 Pro on Ollama Cloud by default) at max
-        thinking depth, then delegates to `_generate_long_video_inner`.
-        Shorts and other features keep using the configured default provider.
+        configured long-video model chain unless the user picked a provider
+        and model explicitly from the UI.
         """
-        from llm_provider import force_provider, warmup_ollama_model
+        from llm_provider import force_provider, warmup_ollama_model, is_user_override, get_active_provider, get_active_model
+        if is_user_override():
+            active = get_active_provider()
+            active_model = get_active_model() or "(default)"
+            info(f"\n  Long-video LLM: {active}/{active_model} (user override - no think pin)")
+            if active == "ollama" and active_model and active_model != "(default)":
+                warmup_ollama_model(active_model)
+            return self._generate_long_video_inner(tts_instance, custom_topic)
+
         long_models = get_long_video_llm_models()
         primary = long_models[0] if long_models else get_long_video_llm_model()
         info(f"\n  Long-video LLM: ollama/{primary}"
@@ -5109,7 +5482,7 @@ No markdown. No explanation. Just the JSON array."""
 
         Strategy (most reliable first):
           1. Find every `input[type=file]` and pick the one whose `accept` attribute
-             names an image type — that filters out the video upload input itself.
+             names an image type â€” that filters out the video upload input itself.
           2. Fall back to known CSS selectors for older YT Studio versions.
         Returns the WebElement or None.
         """
@@ -5178,7 +5551,7 @@ No markdown. No explanation. Just the JSON array."""
         (the user has Firefox open, or a previous run left lock files behind).
         Kill any running firefox.exe / geckodriver.exe and remove stale profile
         locks so the upcoming `webdriver.Firefox(...)` call gets a clean slate.
-        Best-effort: never raise — if killing fails, Selenium will surface the
+        Best-effort: never raise â€” if killing fails, Selenium will surface the
         usual "Process unexpectedly closed with status 0".
         """
         import os
@@ -5198,7 +5571,7 @@ No markdown. No explanation. Just the JSON array."""
                         ["taskkill", "/F", "/IM", proc_name, "/T"],
                         capture_output=True, text=True, timeout=10,
                     )
-                    # taskkill returns 128 if no such process — treat as success.
+                    # taskkill returns 128 if no such process â€” treat as success.
                     if result.returncode == 0:
                         killed_any = True
                 else:
@@ -5206,7 +5579,7 @@ No markdown. No explanation. Just the JSON array."""
             except Exception:
                 pass
         if killed_any:
-            info(" => Cerré Firefox abierto para liberar el perfil.")
+            info(" => CerrÃ© Firefox abierto para liberar el perfil.")
             time.sleep(1.5)  # let Windows release file handles
 
         # 2) Remove stale lock files in the configured profile directory.
@@ -5334,12 +5707,13 @@ No markdown. No explanation. Just the JSON array."""
         info("\t   (polling in a SEPARATE tab so the upload tab is never disturbed)")
 
         deadline = time.time() + max_wait_s
-        listing_url = (
-    f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
-    if listing_tab == "short"
-    else f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
-    f'?d=ud&filter=%5B%5D&sort=%7B%22columnType%22%3A%22date%22%2C%22sortOrder%22%3A%22DESCENDING%22%7D'
-)
+        if listing_tab == "short":
+            listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/short"
+        else:
+            listing_url = (
+                f"https://studio.youtube.com/channel/{self.channel_id}/videos"
+                f'?filter=%5B%5D&sort=%7B%22columnType%22%3A%22date%22%2C%22sortOrder%22%3A%22DESCENDING%22%7D'
+            )
         target_title = (self.metadata.get("title") or "").strip()
         target_match = target_title[:50] if target_title else ""
 
@@ -5357,13 +5731,13 @@ No markdown. No explanation. Just the JSON array."""
             "carga interrumpida",
             "upload interrupted",
         )
-        # YT Studio "Oops, something went wrong" / "Algo salió mal" page.
-        # When this shows up, the listing tab is broken — refresh() alone
+        # YT Studio "Oops, something went wrong" / "Algo saliÃ³ mal" page.
+        # When this shows up, the listing tab is broken â€” refresh() alone
         # often can't recover, so we re-navigate to the URL.
         studio_error_markers = (
             "oops, something went wrong",
             "something went wrong",
-            "algo salió mal",
+            "algo saliÃ³ mal",
             "algo salio mal",
             "ha ocurrido un error",
             "se produjo un error",
@@ -5377,7 +5751,7 @@ No markdown. No explanation. Just the JSON array."""
         original_handle = driver.current_window_handle
         status_handle = None
         try:
-            # Retry opening the status tab a few times — window.open() can
+            # Retry opening the status tab a few times â€” window.open() can
             # transiently fail while YouTube is busy parsing the just-uploaded
             # file. We do NOT switch away from the upload tab during retries.
             new_handles: List[str] = []
@@ -5395,7 +5769,7 @@ No markdown. No explanation. Just the JSON array."""
 
             if not new_handles:
                 # We genuinely couldn't open a side tab. DO NOT touch the
-                # upload tab — just sleep in place and return False so the
+                # upload tab â€” just sleep in place and return False so the
                 # caller knows the upload was not verified. Returning True
                 # here would make the caller try to resolve the URL on the
                 # upload tab, cancelling the upload mid-transfer.
@@ -5408,14 +5782,15 @@ No markdown. No explanation. Just the JSON array."""
                 # generous 60 min so we don't sleep forever) so the upload
                 # has time to actually finish in the background.
                 idle_wait = min(max_wait_s, 3600)
-                info(f"\t=> Idle-waiting {idle_wait // 60} min in place — DO NOT navigate or close the upload tab.")
+                info(f"\t=> Idle-waiting {idle_wait // 60} min in place â€” DO NOT navigate or close the upload tab.")
                 time.sleep(idle_wait)
                 return False
             status_handle = new_handles[0]
             driver.switch_to.window(status_handle)
 
             try:
-                time.sleep(8)
+                driver.get(listing_url)
+                time.sleep(12)
             except Exception as e:
                 warning(f"\t=> Could not navigate status tab to listing: {e}")
                 return False
@@ -5451,7 +5826,7 @@ No markdown. No explanation. Just the JSON array."""
                     row_text = ""
 
                 # Detect YT Studio's generic error page (no rows + "oops" text in body).
-                # When it shows up, plain refresh() often can't rescue it — re-navigate.
+                # When it shows up, plain refresh() often can't rescue it â€” re-navigate.
                 if rows_found == 0:
                     page_text = ""
                     try:
@@ -5464,7 +5839,7 @@ No markdown. No explanation. Just the JSON array."""
                             warning(
                                 f"\t=> YT Studio listing keeps showing an error page after "
                                 f"{max_studio_error_retries} retries. Giving up on the polling "
-                                "tab — the upload tab itself is untouched and likely fine. "
+                                "tab â€” the upload tab itself is untouched and likely fine. "
                                 "Verify manually in Studio."
                             )
                             return False
@@ -5515,7 +5890,7 @@ No markdown. No explanation. Just the JSON array."""
                             current_status = "pending"
                         now = time.time()
                         if current_status != last_status or (now - last_announce) > 60:
-                            info(f"\t=> {kind_label} status: {current_status} — still waiting (upload tab untouched)...")
+                            info(f"\t=> {kind_label} status: {current_status} â€” still waiting (upload tab untouched)...")
                             last_status = current_status
                             last_announce = now
                 else:
@@ -5525,15 +5900,15 @@ No markdown. No explanation. Just the JSON array."""
                     if (now - last_announce) > 60:
                         info(f"\t=> Waiting for {kind_label} to appear in listing...")
                         last_announce = now
-                    # If many polls in a row return zero rows (no error text either —
+                    # If many polls in a row return zero rows (no error text either â€”
                     # could be a slow render, ghost spinner, or a blank Studio page),
                     # force a hard re-navigation rather than waiting for the next refresh.
-                    if consecutive_empty_polls >= 8:
+                    if consecutive_empty_polls >= 12:
                         studio_error_retries += 1
                         if studio_error_retries > max_studio_error_retries:
                             warning(
                                 "\t=> Polling tab never showed any rows after multiple "
-                                "re-navigations. Giving up — verify manually in Studio."
+                                "re-navigations. Giving up â€” verify manually in Studio."
                             )
                             return False
                         warning(
@@ -5542,7 +5917,7 @@ No markdown. No explanation. Just the JSON array."""
                         )
                         try:
                             driver.get(listing_url)
-                            time.sleep(8)
+                            time.sleep(15)
                             last_refresh = time.time()
                         except Exception as e:
                             warning(f"\t=> Re-navigation failed: {e}")
@@ -5563,7 +5938,7 @@ No markdown. No explanation. Just the JSON array."""
 
             warning(
                 f"\t=> Hit total wait cap of {max_wait_s // 60} min for {kind_label}. "
-                "Firefox will stay open so YT can keep processing — close it manually when done."
+                "Firefox will stay open so YT can keep processing â€” close it manually when done."
             )
             return False
         finally:
@@ -5589,19 +5964,20 @@ No markdown. No explanation. Just the JSON array."""
         """
         if not getattr(self, "channel_id", None):
             return ""
-        listing_url = (
-    f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
-    if listing_tab == "short"
-    else f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
-    f'?d=ud&filter=%5B%5D&sort=%7B%22columnType%22%3A%22date%22%2C%22sortOrder%22%3A%22DESCENDING%22%7D'
-)
+        if listing_tab == "short":
+            listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/short"
+        else:
+            listing_url = (
+                f"https://studio.youtube.com/channel/{self.channel_id}/videos"
+                f'?filter=%5B%5D&sort=%7B%22columnType%22%3A%22date%22%2C%22sortOrder%22%3A%22DESCENDING%22%7D'
+            )
         target_title = (self.metadata.get("title") or "").strip()
         target_match = target_title[:50] if target_title else ""
 
         studio_error_markers = (
             "oops, something went wrong",
             "something went wrong",
-            "algo salió mal",
+            "algo saliÃ³ mal",
             "algo salio mal",
             "ha ocurrido un error",
             "se produjo un error",
@@ -5615,14 +5991,13 @@ No markdown. No explanation. Just the JSON array."""
         status_handle = None
         try:
             existing = set(driver.window_handles)
-            driver.execute_script(f"window.open('{listing_url}', '_blank');")
-            time.sleep(5)
+            driver.execute_script("window.open('about:blank', '_blank');")
+            time.sleep(3)
             new_handles = [h for h in driver.window_handles if h not in existing]
             if not new_handles:
                 return ""
             status_handle = new_handles[0]
             driver.switch_to.window(status_handle)
-            time.sleep(6)
 
             # Retry the navigation if YT Studio greets us with the "Oops"
             # error page or with an empty listing. Up to 5 attempts, each
@@ -5635,7 +6010,7 @@ No markdown. No explanation. Just the JSON array."""
                     warning(f"URL-resolve navigation failed (attempt {attempt}): {e}")
                     time.sleep(3)
                     continue
-                time.sleep(6 if attempt == 1 else 10)
+                time.sleep(12 if attempt == 1 else 15)
 
                 try:
                     videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
@@ -5656,7 +6031,7 @@ No markdown. No explanation. Just the JSON array."""
                     )
                     time.sleep(8)
                     continue
-                # No rows, no error — listing might just be slow. Retry anyway.
+                # No rows, no error â€” listing might just be slow. Retry anyway.
                 time.sleep(5)
 
             chosen_href = None
@@ -5702,11 +6077,11 @@ No markdown. No explanation. Just the JSON array."""
         Click an element in YouTube Studio in a way that survives the two
         failure modes we keep seeing:
 
-          (a) ElementClickInterceptedException — another node (hashtag tooltip,
+          (a) ElementClickInterceptedException â€” another node (hashtag tooltip,
               tutorial overlay, sticky header) sits on top of the target. The
               standard `.click()` aims at the visual coordinates and hits the
               overlay instead.
-          (b) ElementNotInteractableException — the element is in the DOM but
+          (b) ElementNotInteractableException â€” the element is in the DOM but
               hasn't been scrolled into view yet (long Details panel, the
               visibility radios live way below the fold).
 
@@ -5822,7 +6197,7 @@ No markdown. No explanation. Just the JSON array."""
             # YouTube auto-fills the title with the file's UUID basename when
             # the .mp4 is selected. Without clearing first, our title gets
             # APPENDED to that UUID and the resulting title is "<uuid> <real
-            # title>" — uglier and over the 100-char limit. Select-all + Delete
+            # title>" â€” uglier and over the 100-char limit. Select-all + Delete
             # wipes the prefilled value before typing.
             title_el.send_keys(Keys.CONTROL, "a")
             time.sleep(0.2)
@@ -5883,7 +6258,7 @@ No markdown. No explanation. Just the JSON array."""
             except Exception as e:
                 warning(f"Could not set kids option: {e}")
 
-            # Step 6.5: Upload custom thumbnail (long videos only — set by generate_thumbnail()).
+            # Step 6.5: Upload custom thumbnail (long videos only â€” set by generate_thumbnail()).
             # Strategy: send_keys() returning without exception is NOT proof that YouTube
             # accepted the file. Empirically, the file can fail to register (busy uploader
             # widget, oversized file, channel not verified, stale input element) while
@@ -5989,7 +6364,7 @@ No markdown. No explanation. Just the JSON array."""
                         f"Thumbnail upload failed: visual verification never succeeded after {MAX_ATTEMPTS} attempts. "
                         f"The thumbnail file is preserved at:\n    {abs_thumb}\n"
                         "Common causes: channel not verified for custom thumbnails, file > 2 MB, "
-                        "or YT Studio DOM changed. Open YouTube Studio → your video → Edit → upload it manually."
+                        "or YT Studio DOM changed. Open YouTube Studio â†’ your video â†’ Edit â†’ upload it manually."
                     )
                     try:
                         debug_path = os.path.join(
@@ -6003,7 +6378,7 @@ No markdown. No explanation. Just the JSON array."""
             elif thumb_path:
                 warning(f"\t=> Thumbnail file not found on disk: {thumb_path} (skipping)")
 
-            # Step 7: Click Next 3 times (Details → Video elements → Checks → Visibility)
+            # Step 7: Click Next 3 times (Details â†’ Video elements â†’ Checks â†’ Visibility)
             for step_num in range(3):
                 if verbose:
                     info(f"\t=> Clicking Next (step {step_num + 1}/3)...")
@@ -6050,7 +6425,7 @@ No markdown. No explanation. Just the JSON array."""
             # Lock in the upload-tab handle the moment Done is clicked.
             # From this point on, NOTHING is allowed to navigate, refresh,
             # or close this tab until the upload + processing is verified
-            # done — doing so cancels the in-flight HTTP transfer.
+            # done â€” doing so cancels the in-flight HTTP transfer.
             try:
                 self._upload_tab_handle = driver.current_window_handle
             except Exception:
@@ -6093,10 +6468,10 @@ No markdown. No explanation. Just the JSON array."""
 
             if is_long_video:
                 if verbose:
-                    info("\t=> Long video — polling listing page in a separate tab...")
+                    info("\t=> Long video â€” polling listing page in a separate tab...")
                 upload_finished = self._wait_for_listing_settled(
                     driver,
-                    listing_tab="upload",
+                    listing_tab="long",
                     kind_label="long video",
                     max_wait_s=10800,        # 3h total cap (HD 30+ min videos can take a while to encode)
                     poll_interval_s=15,
@@ -6104,7 +6479,7 @@ No markdown. No explanation. Just the JSON array."""
                 )
             else:
                 if verbose:
-                    info("\t=> Short video — polling listing page in a separate tab...")
+                    info("\t=> Short video â€” polling listing page in a separate tab...")
                 upload_finished = self._wait_for_listing_settled(
                     driver,
                     listing_tab="short",
@@ -6115,20 +6490,20 @@ No markdown. No explanation. Just the JSON array."""
                 )
 
             # Step 10: Get the video URL.
-            # For long videos we ALWAYS resolve via a separate tab — even when
+            # For long videos we ALWAYS resolve via a separate tab â€” even when
             # the wait succeeded, navigating the original tab is risky if any
             # background processing is still in flight, and the user has asked
             # that the upload tab never be touched programmatically.
             if verbose:
                 info("\t=> Getting video URL...")
 
-            listing_tab = "upload_video" if is_long_video else "short"
+            listing_tab = "long" if is_long_video else "short"
             url = None
 
             if is_long_video:
                 # Only attempt URL resolution if the upload genuinely finished.
                 # If wait_for_listing_settled timed out or fell back, the upload
-                # may still be in flight — opening another tab is safe but
+                # may still be in flight â€” opening another tab is safe but
                 # adds noise. Skip silently and let the user verify manually.
                 if upload_finished:
                     url = self._resolve_video_url_safe(driver, listing_tab) or None
@@ -6139,7 +6514,7 @@ No markdown. No explanation. Just the JSON array."""
                         "so any in-flight transfer can complete."
                     )
             else:
-                # Shorts: original behavior (navigate the same tab — Firefox is
+                # Shorts: original behavior (navigate the same tab â€” Firefox is
                 # about to be closed anyway when the short upload is confirmed).
                 try:
                     driver.get(
@@ -6187,7 +6562,7 @@ No markdown. No explanation. Just the JSON array."""
                     warning(f"Could not update cache URL: {e}")
             else:
                 self.uploaded_video_url = "https://studio.youtube.com"
-                warning(" => Could not retrieve video URL — check YouTube Studio manually. "
+                warning(" => Could not retrieve video URL â€” check YouTube Studio manually. "
                         "Cache entry has placeholder URL.")
 
             # CRITICAL: never auto-close Firefox for long videos. The user has explicitly
@@ -6196,7 +6571,7 @@ No markdown. No explanation. Just the JSON array."""
             #
             # For shorts: only close Firefox if we BOTH (a) saw the wait-for-upload
             # finish cleanly AND (b) successfully retrieved the public URL. Otherwise
-            # leave it open so the user can confirm manually — same philosophy as long
+            # leave it open so the user can confirm manually â€” same philosophy as long
             # videos, just less verbose.
             if is_long_video:
                 info("=" * 60)
@@ -6205,10 +6580,10 @@ No markdown. No explanation. Just the JSON array."""
                 else:
                     warning(" Long video upload was NOT confirmed within the wait window.")
                     warning(" Firefox is staying OPEN so any in-flight upload can finish.")
-                info(" → DO NOT close Firefox or change the upload tab until")
+                info(" â†’ DO NOT close Firefox or change the upload tab until")
                 info("   YouTube Studio shows the video as Public/Unlisted")
                 info("   (NOT 'Subiendo', 'Procesando' or 'Pendiente').")
-                info(" → Once verified, close Firefox manually.")
+                info(" â†’ Once verified, close Firefox manually.")
                 info("=" * 60)
             else:
                 short_confirmed = bool(upload_finished) and bool(url)
@@ -6221,10 +6596,10 @@ No markdown. No explanation. Just the JSON array."""
                     warning("=" * 60)
                     warning(" Short upload could NOT be fully confirmed. Firefox is staying OPEN.")
                     if not upload_finished:
-                        warning(" → Wait-for-upload did not complete cleanly within the timeout.")
+                        warning(" â†’ Wait-for-upload did not complete cleanly within the timeout.")
                     if not url:
-                        warning(" → Could not retrieve the public video URL.")
-                    warning(" → Verify in YouTube Studio that the short shows as Public/Unlisted,")
+                        warning(" â†’ Could not retrieve the public video URL.")
+                    warning(" â†’ Verify in YouTube Studio that the short shows as Public/Unlisted,")
                     warning("   then close Firefox manually.")
                     warning("=" * 60)
 
@@ -6243,7 +6618,7 @@ No markdown. No explanation. Just the JSON array."""
             import traceback
             error(f"Upload failed: {e}")
             traceback.print_exc()
-            # DO NOT quit the driver on exception — the upload may still be in flight
+            # DO NOT quit the driver on exception â€” the upload may still be in flight
             # in the background and closing Firefox would abort it. Keep the browser
             # open in BOTH long-video and short modes so the user can confirm what
             # actually made it to YouTube before closing manually.
@@ -6254,17 +6629,18 @@ No markdown. No explanation. Just the JSON array."""
     def _update_last_video_url(self, date_marker: str, new_url: str) -> None:
         """Update the URL field of the cache entry that matches `date_marker`."""
         cache = get_youtube_cache_path()
-        with open(cache, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        for account in data.get("accounts", []):
-            if account.get("id") != self._account_uuid:
-                continue
-            for video in account.get("videos", []):
-                if video.get("date") == date_marker and video.get("url") in ("uploading...", "", None):
-                    video["url"] = new_url
-                    break
-        with open(cache, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
+        with json_write_lock(cache):
+            with open(cache, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for account in data.get("accounts", []):
+                if account.get("id") != self._account_uuid:
+                    continue
+                for video in account.get("videos", []):
+                    if video.get("date") == date_marker and video.get("url") in ("uploading...", "", None):
+                        video["url"] = new_url
+                        break
+            with open(cache, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
 
     def get_videos(self) -> List[dict]:
         """

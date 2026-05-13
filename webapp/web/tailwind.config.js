@@ -11,6 +11,7 @@ export default {
     extend: {
       fontFamily: {
         sans: [
+          "Sora",
           "Inter",
           "ui-sans-serif",
           "system-ui",
@@ -30,6 +31,9 @@ export default {
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
+        "bg-raised": "hsl(var(--bg-raised))",
+        surface: "hsl(var(--surface))",
+        "surface-up": "hsl(var(--surface-up))",
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
@@ -70,6 +74,12 @@ export default {
           DEFAULT: "hsl(var(--gold))",
           foreground: "hsl(var(--gold-foreground))",
         },
+        lima: {
+          DEFAULT: "hsl(var(--lima))",
+        },
+        violeta: {
+          DEFAULT: "hsl(var(--violeta))",
+        },
         rose: {
           DEFAULT: "hsl(var(--rose))",
         },
@@ -99,18 +109,23 @@ export default {
           "0%": { backgroundPosition: "-200% 0" },
           "100%": { backgroundPosition: "200% 0" },
         },
+        "mpl-pulse": {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: ".4" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         "fade-in": "fade-in 0.3s ease-out",
         shimmer: "shimmer 2.5s linear infinite",
+        "mpl-pulse": "mpl-pulse 1.4s infinite ease-in-out",
       },
       backgroundImage: {
         "brand-gradient":
-          "linear-gradient(120deg, hsl(var(--brand-start)) 0%, hsl(var(--brand-mid)) 45%, hsl(var(--brand-end)) 100%)",
+          "linear-gradient(120deg, hsl(var(--brand-start)) 0%, hsl(var(--brand-mid)) 55%, hsl(var(--brand-end)) 100%)",
         "brand-gradient-deep":
-          "linear-gradient(135deg, hsl(var(--brand-mid)) 0%, hsl(var(--brand-end)) 55%, hsl(var(--brand-deep)) 100%)",
+          "linear-gradient(120deg, hsl(var(--brand-start)) 0%, hsl(var(--brand-mid)) 45%, hsl(var(--brand-end)) 75%, hsl(var(--brand-deep)) 100%)",
       },
     },
   },

@@ -49,7 +49,7 @@ const NAV: NavGroup[] = [
     items: [
       { to: "/affiliate", label: "Affiliate Marketing", icon: ShoppingBag },
       { to: "/outreach", label: "Outreach Local", icon: Mail },
-      { to: "/storage", label: "Archivos de video", icon: Film },
+      { to: "/storage", label: "Archivos de vídeo", icon: Film },
       { to: "/thumbnails", label: "Thumbnails", icon: ImageIcon },
     ],
   },
@@ -64,22 +64,34 @@ const NAV: NavGroup[] = [
 
 export function Sidebar() {
   return (
-    <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-border/70 bg-card/55 backdrop-blur-xl">
-      <NavLink
-        to="/"
-        end
-        className="h-16 px-5 flex items-center border-b border-border/70 hover:bg-muted/40 transition-colors"
-        aria-label="Ir al Dashboard"
+    <aside
+      className="hidden lg:flex w-64 shrink-0 flex-col bg-bg-raised relative z-10"
+      style={{ borderRight: "1px solid hsl(var(--border) / .07)" }}
+    >
+      {/* Brand */}
+      <div
+        className="h-16 px-[18px] flex items-center"
+        style={{ borderBottom: "1px solid hsl(var(--border) / .07)" }}
       >
-        <WordMark />
-      </NavLink>
-      <nav className="flex-1 overflow-y-auto scrollbar-thin px-3 py-4 space-y-5">
+        <NavLink to="/" end aria-label="Ir al Dashboard" className="flex items-center min-w-0">
+          <WordMark />
+        </NavLink>
+      </div>
+
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto scrollbar-thin px-2.5 py-3.5 flex flex-col gap-3.5">
         {NAV.map((group) => (
           <div key={group.section}>
-            <div className="px-3 mb-2 eyebrow text-muted-foreground/70">
+            <div
+              className="px-2.5 pb-2 pt-1 font-mono uppercase font-semibold text-[9.5px]"
+              style={{
+                letterSpacing: "0.20em",
+                color: "hsl(var(--muted-foreground) / .65)",
+              }}
+            >
               {group.section}
             </div>
-            <ul className="space-y-0.5">
+            <ul className="flex flex-col gap-px">
               {group.items.map(({ to, label, icon: Icon, end }) => (
                 <li key={to}>
                   <NavLink
@@ -87,10 +99,10 @@ export function Sidebar() {
                     end={end ?? false}
                     className={({ isActive }) =>
                       cn(
-                        "group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all",
+                        "group relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-normal transition-all",
                         isActive
-                          ? "bg-gradient-to-r from-primary/15 via-primary/8 to-transparent text-foreground shadow-[inset_0_0_0_1px_hsl(var(--primary)/.2)]"
-                          : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                          ? "bg-surface text-foreground font-medium"
+                          : "text-muted-foreground hover:bg-surface hover:text-foreground"
                       )
                     }
                   >
@@ -99,19 +111,20 @@ export function Sidebar() {
                         <span
                           aria-hidden
                           className={cn(
-                            "absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full transition-all",
+                            "absolute left-[-10px] top-1.5 bottom-1.5 w-[3px] rounded-r transition-all",
                             isActive
-                              ? "bg-primary opacity-100 shadow-[0_0_12px_hsl(var(--primary)/.6)]"
-                              : "bg-primary opacity-0 group-hover:opacity-40"
+                              ? "opacity-100 bg-brand-gradient shadow-[0_0_12px_hsl(var(--primary)/.55)]"
+                              : "opacity-0"
                           )}
                         />
                         <Icon
                           className={cn(
                             "h-4 w-4 shrink-0 transition-colors",
-                            isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground"
+                            isActive ? "text-primary" : "text-current"
                           )}
+                          strokeWidth={1.5}
                         />
-                        <span className="truncate">{label}</span>
+                        <span className="truncate flex-1">{label}</span>
                       </>
                     )}
                   </NavLink>
@@ -121,13 +134,30 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
-      <div className="px-4 py-4 border-t border-border/70 text-[11px] text-muted-foreground space-y-1.5">
-        <div className="flex items-center justify-between">
-          <span className="font-mono tracking-[0.24em]">v1.0.0</span>
-          <span className="font-mono tracking-[0.32em] text-primary/80">MPL</span>
+
+      {/* Footer */}
+      <div
+        className="px-[18px] py-3.5 flex flex-col gap-1.5"
+        style={{ borderTop: "1px solid hsl(var(--border) / .07)" }}
+      >
+        <div className="font-display text-[12px] font-medium leading-snug tracking-tight">
+          <span className="brand-text">Imprime largo,</span>
+          <span className="text-muted-foreground"> edita poco.</span>
         </div>
-        <div className="brand-text font-display font-semibold tracking-tight">
-          Imprime largo, edita poco.
+        <div className="flex items-center gap-1.5">
+          <span
+            className="font-mono text-[9.5px] font-semibold px-1.5 py-px rounded border"
+            style={{
+              borderColor: "hsl(var(--border) / .12)",
+              background: "hsl(var(--surface))",
+              color: "hsl(var(--muted-foreground))",
+            }}
+          >
+            MPL
+          </span>
+          <span className="font-mono text-[10px] text-muted-foreground tracking-wider">
+            v1.0.0
+          </span>
         </div>
       </div>
     </aside>

@@ -1,9 +1,10 @@
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
+import { BackgroundJobsBar } from "../BackgroundJobs";
 
 export function AppShell() {
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="min-h-screen flex bg-background text-foreground">
       <Sidebar />
       <div className="flex-1 min-w-0 flex flex-col">
         <Outlet />
@@ -12,10 +13,19 @@ export function AppShell() {
   );
 }
 
+/**
+ * PageShell — main scroll container under the header. The jobs bar slots
+ * between the page header (rendered by each page) and the scrollable
+ * content. We render it inside PageShell so every page automatically
+ * inherits it without each one having to import it.
+ */
 export function PageShell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="flex-1 px-6 py-6 lg:px-8 lg:py-8 mesh-bg overflow-auto scrollbar-thin animate-fade-in">
-      <div className="max-w-[96rem] mx-auto space-y-6">{children}</div>
-    </main>
+    <>
+      <BackgroundJobsBar />
+      <main className="flex-1 px-7 py-7 mesh-bg overflow-auto scrollbar-thin animate-fade-in">
+        <div className="max-w-[90rem] mx-auto space-y-4">{children}</div>
+      </main>
+    </>
   );
 }

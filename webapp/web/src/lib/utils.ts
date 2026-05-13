@@ -67,3 +67,18 @@ export function formatCount(n?: number) {
   if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0)}M`;
   return `${(n / 1_000_000_000).toFixed(1)}B`;
 }
+
+// Compact integer formatter (12.3K, 1.2M). null → em-dash so the table can
+// distinguish "never synced" from a real zero. Used for subscriber counts
+// where we want aggressive rounding (e.g. 1.5M vs 1500000).
+export function formatCompact(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (!Number.isFinite(n) || n < 0) return "—";
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) {
+    const k = n / 1000;
+    return `${k >= 100 ? k.toFixed(0) : k.toFixed(1).replace(/\.0$/, "")}K`;
+  }
+  const m = n / 1_000_000;
+  return `${m >= 100 ? m.toFixed(0) : m.toFixed(1).replace(/\.0$/, "")}M`;
+}
