@@ -1,16 +1,47 @@
 import { useEffect, useMemo, useState } from "react";
-import { Save, Eye, EyeOff, Settings as SettingsIcon, Loader2 } from "lucide-react";
+import {
+  Save,
+  Eye,
+  Lock,
+  Loader2,
+  Settings as SettingsIcon,
+  Sparkles,
+  Image as ImageIcon,
+  Mic,
+  Twitter,
+  Clock,
+  RefreshCw,
+  type LucideIcon,
+} from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import { api, type ConfigField } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { AutoSyncPanel } from "@/components/AutoSyncPanel";
 import { toast } from "sonner";
+
+// Map an API config group label to a design icon. Anything we don't know
+// falls back to the generic settings cog so new groups still render.
+const GROUP_ICONS: Record<string, LucideIcon> = {
+  Core: SettingsIcon,
+  LLM: Sparkles,
+  Image: ImageIcon,
+  Imagen: ImageIcon,
+  Audio: Mic,
+  Twitter: Twitter,
+  Cron: Clock,
+};
+
+const GROUP_DESCRIPTIONS: Record<string, string> = {
+  Core: "Workspace, scratch, defaults",
+  LLM: "Provider, modelo, host",
+  Image: "Backend, resolución, claves de API",
+  Audio: "TTS, voces, transcripción",
+  Twitter: "Idioma y comportamiento",
+};
 
 export function Settings() {
   const [fields, setFields] = useState<ConfigField[]>([]);
@@ -19,6 +50,7 @@ export function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showSecrets, setShowSecrets] = useState(false);
+  const [section, setSection] = useState<string>("");
 
   const load = async () => {
     setLoading(true);
@@ -40,26 +72,30 @@ export function Settings() {
 
   const grouped = useMemo(() => {
     const by: Record<string, ConfigField[]> = {};
-    for (const f of fields) {
-      (by[f.group] ||= []).push(f);
-    }
+    for (const f of fields) (by[f.group] ||= []).push(f);
     return by;
   }, [fields]);
 
-  const dirty = useMemo(() => {
-    return fields.some((f) => values[f.key] !== original[f.key]);
-  }, [fields, values, original]);
+  // Auto-select first section when fields arrive.
+  useEffect(() => {
+    if (!section && Object.keys(grouped).length) {
+      setSection(Object.keys(grouped)[0]);
+    }
+  }, [grouped, section]);
 
-  const set = (k: string, v: unknown) => setValues((p) => ({ ...p, [k]: v }));
+  const dirty = useMemo(
+    () => fields.some((f) => values[f.key] !== original[f.key]),
+    [fields, values, original],
+  );
+
+  const setVal = (k: string, v: unknown) => setValues((p) => ({ ...p, [k]: v }));
 
   const save = async () => {
     setSaving(true);
     try {
       const patch: Record<string, unknown> = {};
       for (const f of fields) {
-        if (values[f.key] !== original[f.key]) {
-          patch[f.key] = values[f.key];
-        }
+        if (values[f.key] !== original[f.key]) patch[f.key] = values[f.key];
       }
       const res = await api.updateConfig(patch);
       setOriginal(res.raw);
@@ -72,21 +108,45 @@ export function Settings() {
     }
   };
 
+  const sections = Object.keys(grouped);
+  const fieldCount = fields.length;
+  const currentFields = grouped[section] || [];
+  const currentDesc = GROUP_DESCRIPTIONS[section] || "";
+
   return (
     <>
       <Header
+        eyebrow="· sistema"
         title="Configuración"
-        description="Edita config.json desde aquí — los cambios se aplican en cada nueva ejecución."
-        actions={
-          <div className="flex items-center gap-2">
+        description="config.json visual editor"
+      />
+
+      <PageShell>
+        {/* Hero strip */}
+        <div className="flex items-end justify-between gap-3.5 flex-wrap">
+          <div>
+            <span className="eyebrow block mb-1.5">· config.json · editor visual</span>
+            <h1 className="font-display text-[36px] font-semibold tracking-[-0.02em] text-foreground leading-tight">
+              Configuración
+            </h1>
+            <p className="text-[13px] text-muted-foreground mt-1.5">
+              ~/MoneyPrinterLargo/config.json · {fieldCount} campos
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-[12.5px] text-muted-foreground cursor-pointer">
+              <span>Mostrar secrets</span>
+              <Switch checked={showSecrets} onCheckedChange={setShowSecrets} />
+            </label>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setShowSecrets((v) => !v)}
+              onClick={load}
               className="gap-2"
+              disabled={loading}
             >
-              {showSecrets ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              {showSecrets ? "Ocultar secrets" : "Mostrar secrets"}
+              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+              Recargar
             </Button>
             <Button
               variant="brand"
@@ -95,70 +155,173 @@ export function Settings() {
               disabled={!dirty || saving}
               className="gap-2"
             >
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {saving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
               Guardar cambios
             </Button>
           </div>
-        }
-      />
+        </div>
 
-      <PageShell>
         {dirty && (
-          <div className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm flex items-center justify-between">
-            <span className="text-warning-foreground">
-              Tienes cambios sin guardar.
+          <div
+            className="rounded-lg px-4 py-2.5 text-[12.5px] flex items-center justify-between"
+            style={{
+              border: "1px solid hsl(var(--warning) / .35)",
+              background: "hsl(var(--warning) / .10)",
+              color: "hsl(var(--foreground))",
+            }}
+          >
+            <span>
+              <span style={{ color: "hsl(var(--warning))" }}>●</span> Tienes cambios sin
+              guardar.
             </span>
-            <Button size="sm" variant="ghost" onClick={() => setValues(original)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setValues(original)}
+              className="h-7"
+            >
               Descartar
             </Button>
           </div>
         )}
 
-        {loading ? (
-          <div className="space-y-4">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-[200px]" />
-            ))}
-          </div>
+        {/* Auto-sync lives in its own dedicated panel because it has its
+            own concept of "running" state and per-tier controls — wrapping
+            it in the generic key/value editor below would lose half the UX. */}
+        <AutoSyncPanel />
+
+        {loading || !section ? (
+          <Skeleton className="h-[540px]" />
         ) : (
-          Object.entries(grouped).map(([group, items]) => (
-            <Card key={group}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="flex items-center gap-2">
-                      <SettingsIcon className="h-4 w-4 text-primary" />
-                      {group}
-                    </CardTitle>
-                    <CardDescription>
-                      {items.length} ajuste{items.length !== 1 ? "s" : ""}
-                    </CardDescription>
-                  </div>
-                  <Badge variant="outline">{group}</Badge>
+          <div
+            className="studio-surface overflow-hidden"
+            style={{ background: "hsl(var(--card))" }}
+          >
+            <div
+              className="grid"
+              style={{
+                gridTemplateColumns: "240px 1fr",
+                minHeight: 540,
+              }}
+            >
+              {/* Left column — section nav */}
+              <div
+                className="px-2.5 py-3.5 flex flex-col gap-0.5"
+                style={{
+                  borderRight: "1px solid hsl(var(--border) / .07)",
+                  background: "hsl(var(--bg-raised))",
+                }}
+              >
+                {sections.map((s) => {
+                  const active = s === section;
+                  const Icon = GROUP_ICONS[s] || SettingsIcon;
+                  return (
+                    <button
+                      key={s}
+                      onClick={() => setSection(s)}
+                      className={cn(
+                        "group relative flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer text-left transition-colors",
+                        active
+                          ? "bg-surface text-foreground"
+                          : "text-muted-foreground hover:bg-surface hover:text-foreground",
+                      )}
+                    >
+                      {active && (
+                        <span
+                          aria-hidden
+                          className="absolute left-[-10px] top-1.5 bottom-1.5 w-[3px] rounded-r bg-brand-gradient"
+                          style={{
+                            boxShadow: "0 0 12px hsl(var(--primary) / .55)",
+                          }}
+                        />
+                      )}
+                      <span
+                        className="w-7 h-7 rounded-md flex items-center justify-center shrink-0"
+                        style={{
+                          background: active
+                            ? "hsl(var(--primary) / .15)"
+                            : "hsl(var(--background))",
+                          border: `1px solid ${
+                            active
+                              ? "hsl(var(--primary) / .35)"
+                              : "hsl(var(--border) / .07)"
+                          }`,
+                        }}
+                      >
+                        <Icon
+                          className={cn(
+                            "h-3.5 w-3.5",
+                            active ? "text-primary" : "text-muted-foreground",
+                          )}
+                          strokeWidth={1.5}
+                        />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div
+                          className={cn(
+                            "text-[13px] tracking-tight truncate",
+                            active ? "font-medium" : "font-normal",
+                          )}
+                        >
+                          {s}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground truncate mt-px">
+                          {GROUP_DESCRIPTIONS[s] || `${grouped[s].length} campos`}
+                        </div>
+                      </div>
+                      <span
+                        className="font-mono px-1.5 py-px rounded text-[9.5px]"
+                        style={{
+                          border: "1px solid hsl(var(--border) / .12)",
+                          color: "hsl(var(--muted-foreground))",
+                        }}
+                      >
+                        {grouped[s].length}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Right column — field editor */}
+              <div className="px-7 py-6">
+                <div className="mb-[18px] flex items-center gap-2.5">
+                  <span className="eyebrow">· {section.toLowerCase()}</span>
+                  <span className="font-display text-[18px] font-semibold tracking-[-0.02em] text-foreground">
+                    {section}
+                  </span>
+                  {currentDesc && (
+                    <span className="text-[12px] text-muted-foreground">
+                      {currentDesc}
+                    </span>
+                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {items.map((f) => (
-                    <FieldRow
-                      key={f.key}
-                      field={f}
-                      value={values[f.key]}
-                      onChange={(v) => set(f.key, v)}
-                      showSecrets={showSecrets}
-                    />
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          ))
+                {currentFields.map((f) => (
+                  <ConfigFieldRow
+                    key={f.key}
+                    field={f}
+                    value={values[f.key]}
+                    onChange={(v) => setVal(f.key, v)}
+                    showSecrets={showSecrets}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
         )}
       </PageShell>
     </>
   );
 }
 
-function FieldRow({
+// ─────────────────────────────────────────────────────────────────────────────
+// ConfigFieldRow — 200px label / value, hairline divider beneath each row.
+// ─────────────────────────────────────────────────────────────────────────────
+function ConfigFieldRow({
   field,
   value,
   onChange,
@@ -171,43 +334,103 @@ function FieldRow({
 }) {
   if (field.type === "bool") {
     return (
-      <div className="flex items-center justify-between rounded-lg border border-border p-3">
-        <div className="min-w-0 mr-3">
-          <Label className="font-medium">{field.label}</Label>
-          <p className="text-xs text-muted-foreground font-mono mt-0.5 truncate">{field.key}</p>
+      <div
+        className="flex items-start justify-between gap-3.5 py-3"
+        style={{ borderBottom: "1px solid hsl(var(--border) / .04)" }}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] text-foreground font-medium">{field.label}</div>
+          <div className="text-[11.5px] text-muted-foreground mt-0.5 font-mono">
+            {field.key}
+          </div>
         </div>
         <Switch checked={Boolean(value)} onCheckedChange={onChange} />
       </div>
     );
   }
-  if (field.type === "int") {
-    return (
-      <div className="space-y-1.5">
-        <Label>
-          {field.label}{" "}
-          <span className="text-muted-foreground font-mono text-xs">{field.key}</span>
-        </Label>
-        <Input
-          type="number"
-          value={(value as number) ?? 0}
-          onChange={(e) => onChange(parseInt(e.target.value, 10) || 0)}
-        />
-      </div>
-    );
-  }
+
   return (
-    <div className="space-y-1.5">
-      <Label>
-        {field.label}{" "}
-        <span className="text-muted-foreground font-mono text-xs">{field.key}</span>
-      </Label>
-      <Input
-        type={field.type === "secret" && !showSecrets ? "password" : "text"}
-        value={(value as string) ?? ""}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={field.type === "secret" ? "(no configurado)" : ""}
-        className={field.type === "secret" ? "font-mono" : ""}
-      />
+    <div
+      className="grid items-center gap-[18px] py-3"
+      style={{
+        gridTemplateColumns: "200px 1fr",
+        borderBottom: "1px solid hsl(var(--border) / .04)",
+      }}
+    >
+      <div>
+        <div className="text-[13px] text-foreground font-medium">{field.label}</div>
+        <div className="text-[11px] text-muted-foreground mt-0.5 font-mono truncate">
+          {field.key}
+        </div>
+      </div>
+      <div className="flex items-stretch gap-1.5 relative">
+        {field.type === "int" ? (
+          <ConfigInput
+            type="number"
+            value={String((value as number) ?? 0)}
+            onChange={(v) => onChange(parseInt(v, 10) || 0)}
+          />
+        ) : field.type === "secret" ? (
+          <>
+            <ConfigInput
+              type={showSecrets ? "text" : "password"}
+              placeholder="(no configurado)"
+              value={(value as string) ?? ""}
+              onChange={onChange}
+            />
+            <button
+              type="button"
+              className="w-[34px] shrink-0 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+              style={{
+                background: "hsl(var(--background))",
+                border: "1px solid hsl(var(--border) / .07)",
+              }}
+              onClick={() => onChange(value)}
+              aria-label={showSecrets ? "Ocultar" : "Mostrar"}
+              tabIndex={-1}
+            >
+              {showSecrets ? <Eye className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
+            </button>
+          </>
+        ) : (
+          <ConfigInput
+            type="text"
+            value={(value as string) ?? ""}
+            onChange={onChange}
+          />
+        )}
+      </div>
     </div>
+  );
+}
+
+function ConfigInput({
+  type,
+  value,
+  onChange,
+  placeholder,
+}: {
+  type: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <input
+      type={type}
+      value={value}
+      placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value)}
+      className="flex-1 h-[34px] px-3 rounded-lg outline-none text-foreground"
+      style={{
+        background: "hsl(var(--background))",
+        border: "1px solid hsl(var(--border) / .07)",
+        fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+        fontSize: 12,
+        transition: "border-color 120ms ease",
+      }}
+      onFocus={(e) => (e.target.style.borderColor = "hsl(var(--primary) / .35)")}
+      onBlur={(e) => (e.target.style.borderColor = "hsl(var(--border) / .07)")}
+    />
   );
 }

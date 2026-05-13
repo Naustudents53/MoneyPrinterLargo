@@ -1,46 +1,29 @@
-import { type LucideIcon } from "lucide-react";
+import { type LucideIcon, ArrowUp, ArrowDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+type AccentName = "primary" | "accent" | "gold" | "success" | "lima" | "violeta";
 
 interface StatCardProps {
   label: string;
   value: string | number;
   hint?: string;
   icon?: LucideIcon;
-  trend?: "up" | "down" | "flat";
-  accent?: "primary" | "accent" | "gold" | "success";
+  /** Array of numeric samples — renders an inline sparkline if provided. */
+  series?: number[];
+  /** Visible delta label, e.g. "+33%". */
+  delta?: string;
+  deltaDir?: "up" | "down";
+  accent?: AccentName;
   className?: string;
 }
 
-const accentStyles: Record<NonNullable<StatCardProps["accent"]>, {
-  rule: string;
-  iconBg: string;
-  iconColor: string;
-  wash: string;
-}> = {
-  primary: {
-    rule: "bg-primary",
-    iconBg: "bg-primary/10",
-    iconColor: "text-primary",
-    wash: "from-primary/8 to-transparent",
-  },
-  accent: {
-    rule: "bg-accent",
-    iconBg: "bg-accent/10",
-    iconColor: "text-accent",
-    wash: "from-accent/8 to-transparent",
-  },
-  gold: {
-    rule: "bg-gold",
-    iconBg: "bg-gold/15",
-    iconColor: "text-gold",
-    wash: "from-gold/10 to-transparent",
-  },
-  success: {
-    rule: "bg-success",
-    iconBg: "bg-success/10",
-    iconColor: "text-success",
-    wash: "from-success/8 to-transparent",
-  },
+const ACCENT_VAR: Record<AccentName, string> = {
+  primary: "var(--primary)",
+  accent: "var(--accent)",
+  gold: "var(--gold)",
+  success: "var(--success)",
+  lima: "var(--lima)",
+  violeta: "var(--violeta)",
 };
 
 export function StatCard({
@@ -48,40 +31,117 @@ export function StatCard({
   value,
   hint,
   icon: Icon,
+  series,
+  delta,
+  deltaDir,
   accent = "primary",
   className,
 }: StatCardProps) {
-  const a = accentStyles[accent];
+  const accentVar = ACCENT_VAR[accent];
+  const deltaPositive = deltaDir === "up";
+  const deltaColor = deltaPositive ? "hsl(var(--success))" : "hsl(var(--destructive))";
+
   return (
     <div
       className={cn(
-        "group relative overflow-hidden rounded-lg p-5 studio-surface studio-hover",
-        className
+        "group relative overflow-hidden studio-surface studio-hover px-[18px] pt-[18px] pb-4",
+        className,
       )}
     >
-      {/* studio top rule — semantic accent */}
-      <span aria-hidden className={cn("absolute left-5 top-0 h-[3px] w-12 rounded-b-full", a.rule)} />
-      {/* soft corner wash */}
-      <div
-        className={cn(
-          "absolute -top-16 -right-16 h-40 w-40 rounded-full bg-gradient-to-br blur-2xl opacity-80 transition-opacity duration-300 group-hover:opacity-100",
-          a.wash
-        )}
+      {/* Top accent stripe */}
+      <span
+        aria-hidden
+        className="absolute top-0 left-0 right-0 h-[3px]"
+        style={{ background: `hsl(${accentVar})`, opacity: 0.85 }}
       />
-      <div className="relative flex items-start justify-between pt-3">
-        <div className="space-y-1.5">
-          <div className="eyebrow">{label}</div>
-          <div className="font-display text-3xl font-bold tracking-tight tabular-nums">
-            {value}
-          </div>
-          {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
-        </div>
-        {Icon && (
-          <div className={cn("rounded-lg p-2.5 ring-1 ring-inset ring-foreground/5", a.iconBg, a.iconColor)}>
-            <Icon className="h-5 w-5" strokeWidth={1.75} />
-          </div>
+      {/* Soft corner glow */}
+      <div
+        aria-hidden
+        className="absolute -top-8 -right-8 w-36 h-36 pointer-events-none"
+        style={{
+          background: `radial-gradient(circle, hsl(${accentVar} / .18), transparent 70%)`,
+        }}
+      />
+
+      <div className="relative flex items-start justify-between mb-2">
+        <span
+          className="font-mono uppercase font-semibold text-[10px] tracking-[0.24em]"
+          style={{ color: `hsl(${accentVar})` }}
+        >
+          {label}
+        </span>
+        {Icon && <Icon className="h-4 w-4 text-muted-foreground" strokeWidth={1.5} />}
+      </div>
+
+      <div className="relative flex items-baseline gap-2">
+        <span className="font-display font-semibold text-[34px] leading-none tabular-nums tracking-tight text-foreground">
+          {value}
+        </span>
+        {delta && (
+          <span
+            className="inline-flex items-center gap-0.5 font-mono text-[11.5px] font-medium"
+            style={{ color: deltaColor }}
+          >
+            {deltaPositive ? (
+              <ArrowUp className="h-3 w-3" strokeWidth={2} />
+            ) : (
+              <ArrowDown className="h-3 w-3" strokeWidth={2} />
+            )}
+            {delta}
+          </span>
+        )}
+      </div>
+
+      <div className="relative flex items-end justify-between mt-1.5 min-h-[26px]">
+        {hint && (
+          <span className="font-mono text-[11px] text-muted-foreground">{hint}</span>
+        )}
+        {series && series.length > 1 && (
+          <Sparkline data={series} colorVar={accentVar} w={84} h={26} />
         )}
       </div>
     </div>
+  );
+}
+
+/** Inline SVG sparkline with subtle area fill + last-point dot. */
+export function Sparkline({
+  data,
+  colorVar,
+  w = 80,
+  h = 24,
+  strokeW = 1.4,
+}: {
+  data: number[];
+  colorVar: string;
+  w?: number;
+  h?: number;
+  strokeW?: number;
+}) {
+  if (!data || data.length < 2) return null;
+  const max = Math.max(...data);
+  const min = Math.min(...data);
+  const range = max - min || 1;
+  const step = w / (data.length - 1);
+  const pts = data.map((v, i) => [i * step, h - ((v - min) / range) * (h - 3) - 1.5] as const);
+  const d = pts
+    .map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`)
+    .join(" ");
+  const fillD = `${d} L${w},${h} L0,${h} Z`;
+  const last = pts[pts.length - 1];
+
+  return (
+    <svg width={w} height={h} style={{ display: "block", overflow: "visible" }}>
+      <path d={fillD} fill={`hsl(${colorVar})`} opacity="0.12" />
+      <path
+        d={d}
+        fill="none"
+        stroke={`hsl(${colorVar})`}
+        strokeWidth={strokeW}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx={last[0]} cy={last[1]} r={2.2} fill={`hsl(${colorVar})`} />
+    </svg>
   );
 }

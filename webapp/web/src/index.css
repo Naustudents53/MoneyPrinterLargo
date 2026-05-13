@@ -2,107 +2,128 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ──────────────────────────────────────────────────────────────────────────
+   MoneyPrinter Largo · Claude design tokens
+   Exact transcription of the design's oklch palette into HSL channels.
+   Each value below was calibrated against the matching design hex (e.g.
+   bg #0B0F14, primary ≈ #61b6cd, accent ≈ #df9077, gold ≈ #d8b15d,
+   lima ≈ #a3cb83, violeta ≈ #847cb6) so Tailwind's `hsl(var(--token))`
+   pipeline reproduces the design 1:1.
+   ────────────────────────────────────────────────────────────────────────── */
+
 @layer base {
   :root {
-    /* Creator studio light theme: warm canvas, crisp ink, mixed signal accents */
-    --background: 42 43% 96%;
-    --foreground: 222 31% 13%;
+    /* Light theme — warm canvas, ink fg, muted brand */
+    --background: 40 33% 94%;          /* #F6F2EA */
+    --foreground: 225 13% 11%;         /* #181A20 */
+
+    --bg-raised: 38 42% 96%;           /* #FAF7F1 */
+    --surface: 38 28% 90%;             /* #F1ECE3 */
+    --surface-up: 36 28% 84%;          /* #EAE3D6 */
 
     --card: 0 0% 100%;
-    --card-foreground: 222 31% 13%;
+    --card-foreground: 225 13% 11%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222 31% 13%;
+    --popover-foreground: 225 13% 11%;
 
-    --primary: 183 82% 36%;
-    --primary-foreground: 42 43% 98%;
+    --primary: 193 41% 42%;            /* teal — oklch(0.55 0.10 205) */
+    --primary-foreground: 213 27% 6%;
+    --primary-soft: 193 41% 42%;
 
-    --secondary: 220 20% 91%;
-    --secondary-foreground: 222 31% 13%;
+    --secondary: 38 28% 90%;
+    --secondary-foreground: 225 13% 11%;
 
-    --muted: 220 18% 91%;
-    --muted-foreground: 222 13% 42%;
+    --muted: 38 28% 90%;
+    --muted-foreground: 225 8% 35%;
 
-    --accent: 14 88% 58%;
-    --accent-foreground: 42 43% 98%;
+    --accent: 13 67% 56%;              /* coral — oklch(0.62 0.14 35) */
+    --accent-foreground: 0 0% 100%;
 
-    --destructive: 0 78% 55%;
-    --destructive-foreground: 0 0% 100%;
+    --gold: 41 65% 50%;                /* oklch(0.68 0.13 80) */
+    --gold-foreground: 213 27% 6%;
 
-    --success: 149 70% 34%;
+    --lima: 96 38% 45%;                /* oklch(0.62 0.12 130) */
+    --violeta: 247 30% 50%;            /* oklch(0.50 0.12 290) */
+
+    --success: 149 41% 39%;            /* oklch(0.55 0.12 150) */
     --success-foreground: 0 0% 100%;
+    --warning: 41 65% 50%;
+    --warning-foreground: 213 27% 6%;
+    --destructive: 13 65% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --rose: 337 65% 58%;
+    --ink: 213 38% 9%;
 
-    --warning: 39 92% 52%;
-    --warning-foreground: 222 31% 13%;
+    --border: 225 13% 11%;
+    --input: 225 13% 80%;
+    --ring: 193 41% 42%;
 
-    --gold: 43 91% 50%;
-    --gold-foreground: 222 31% 13%;
-
-    --rose: 337 78% 62%;
-    --ink: 224 35% 12%;
-
-    --border: 220 18% 83%;
-    --input: 220 18% 83%;
-    --ring: 183 82% 36%;
-
-    --brand-start: 183 90% 42%;
-    --brand-mid: 14 92% 60%;
-    --brand-end: 75 86% 44%;
-    --brand-deep: 252 58% 38%;
+    /* Brand gradient stops — teal → coral → lima */
+    --brand-start: 193 50% 50%;
+    --brand-mid: 13 67% 60%;
+    --brand-end: 96 42% 55%;
+    --brand-deep: 247 30% 50%;
 
     --radius: 0.625rem;
   }
 
   .dark {
-    /* Creator studio dark theme: deep ink, electric accents, readable contrast */
-    --background: 224 39% 6%;
-    --foreground: 43 32% 94%;
+    /* Dark studio surface — exact transcription of design hex values */
+    --background: 213 27% 6%;          /* #0B0F14 */
+    --foreground: 43 25% 89%;          /* #EAE7DD */
 
-    --card: 224 34% 10%;
-    --card-foreground: 43 32% 94%;
+    --bg-raised: 213 30% 8%;           /* #0E141B */
+    --surface: 216 28% 12%;            /* #161D28 */
+    --surface-up: 216 28% 15%;         /* #1B2330 */
 
-    --popover: 224 38% 8%;
-    --popover-foreground: 43 32% 94%;
+    --card: 216 31% 10%;               /* #121822 */
+    --card-foreground: 43 25% 89%;
 
-    --primary: 181 92% 50%;
-    --primary-foreground: 224 39% 6%;
+    --popover: 216 31% 10%;
+    --popover-foreground: 43 25% 89%;
 
-    --secondary: 225 26% 15%;
-    --secondary-foreground: 43 32% 94%;
+    --primary: 193 50% 59%;            /* #61B6CD — oklch(0.72 0.10 205) */
+    --primary-foreground: 213 27% 6%;
+    --primary-soft: 193 50% 59%;
 
-    --muted: 225 24% 16%;
-    --muted-foreground: 42 17% 68%;
+    --secondary: 216 28% 12%;
+    --secondary-foreground: 43 25% 89%;
 
-    --accent: 14 94% 66%;
-    --accent-foreground: 224 39% 6%;
+    --muted: 216 28% 12%;
+    --muted-foreground: 218 14% 65%;
 
-    --destructive: 0 78% 62%;
+    --accent: 13 64% 67%;              /* #DF9077 — oklch(0.72 0.13 35) */
+    --accent-foreground: 213 27% 6%;
+
+    --gold: 40 60% 60%;                /* #D8B15D — oklch(0.78 0.13 80) */
+    --gold-foreground: 213 27% 6%;
+
+    --lima: 96 41% 65%;                /* #A3CB83 — oklch(0.78 0.11 130) */
+    --violeta: 247 27% 60%;            /* #847CB6 — oklch(0.62 0.11 290) */
+
+    --success: 149 38% 59%;            /* #6CBF95 — oklch(0.70 0.12 150) */
+    --success-foreground: 213 27% 6%;
+    --warning: 40 60% 60%;             /* same as gold */
+    --warning-foreground: 213 27% 6%;
+    --destructive: 13 64% 60%;         /* #D97456 — oklch(0.65 0.16 25) */
     --destructive-foreground: 0 0% 100%;
+    --rose: 337 70% 65%;
+    --ink: 213 30% 5%;
 
-    --success: 151 72% 47%;
-    --success-foreground: 224 39% 6%;
+    --border: 0 0% 100%;               /* hairline base — alpha applied per-use */
+    --input: 216 22% 22%;
+    --ring: 193 50% 59%;
 
-    --warning: 41 96% 58%;
-    --warning-foreground: 224 39% 6%;
-
-    --gold: 43 96% 60%;
-    --gold-foreground: 224 39% 6%;
-
-    --rose: 337 86% 68%;
-    --ink: 224 38% 7%;
-
-    --border: 224 20% 22%;
-    --input: 224 20% 22%;
-    --ring: 181 92% 50%;
-
-    --brand-start: 181 92% 52%;
-    --brand-mid: 14 94% 66%;
-    --brand-end: 76 90% 62%;
-    --brand-deep: 255 62% 52%;
+    /* Brand gradient — vivid teal → coral → lima for readable stops */
+    --brand-start: 193 50% 59%;
+    --brand-mid: 13 64% 67%;
+    --brand-end: 96 41% 65%;
+    --brand-deep: 247 27% 60%;
   }
 
   * {
-    @apply border-border;
+    border-color: hsl(var(--border) / .07);
   }
 
   html,
@@ -113,23 +134,25 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    background:
-      linear-gradient(135deg, hsl(var(--brand-deep) / .13), transparent 34%),
-      linear-gradient(315deg, hsl(var(--accent) / .10), transparent 32%),
-      hsl(var(--background));
-    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    font-family: 'Sora', 'Inter', ui-sans-serif, system-ui, sans-serif;
     font-feature-settings: "cv11", "ss01";
   }
 
   ::selection {
-    background: hsl(var(--primary) / .28);
+    background: hsl(var(--accent) / .30);
     color: hsl(var(--foreground));
   }
+
+  /* Scrollbars — subtle */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: hsl(var(--foreground) / .15); border-radius: 6px; }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--foreground) / .25); }
 }
 
 @layer components {
   .brand-text {
-    background: linear-gradient(
+    background-image: linear-gradient(
       120deg,
       hsl(var(--brand-start)),
       hsl(var(--brand-mid)) 55%,
@@ -142,10 +165,11 @@
   }
 
   .brand-text-deep {
-    background: linear-gradient(
+    background-image: linear-gradient(
       120deg,
-      hsl(var(--brand-mid)),
-      hsl(var(--brand-end)) 60%,
+      hsl(var(--brand-start)),
+      hsl(var(--brand-mid)) 45%,
+      hsl(var(--brand-end)) 75%,
       hsl(var(--brand-deep))
     );
     -webkit-background-clip: text;
@@ -155,42 +179,48 @@
   }
 
   .glass {
-    @apply bg-card/75 backdrop-blur-xl border border-border/70;
-  }
-
-  .glow-ring {
-    box-shadow:
-      0 0 0 1px hsl(var(--primary) / .18),
-      0 18px 44px -28px hsl(var(--primary) / .55),
-      0 10px 28px -24px hsl(var(--accent) / .45);
+    @apply bg-card/75 backdrop-blur-xl;
+    border: 1px solid hsl(var(--border) / .07);
   }
 
   .studio-surface {
-    @apply border border-border/70 bg-card/80 backdrop-blur-xl shadow-[0_18px_60px_-44px_hsl(var(--foreground)/.45)];
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border) / .07);
+    border-radius: 12px;
+    transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
   }
 
   .studio-hover {
-    @apply transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-[0_18px_46px_-34px_hsl(var(--primary)/.65)];
+    @apply transition-all duration-200;
+  }
+  .studio-hover:hover {
+    transform: translateY(-1px);
+    border-color: hsl(var(--primary) / .32);
   }
 
   .eyebrow {
-    @apply font-mono text-[10px] font-semibold uppercase tracking-[0.24em] text-primary;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: hsl(var(--primary));
   }
 
   .editorial-divider {
     background-image: linear-gradient(
       90deg,
       transparent 0%,
-      hsl(var(--border)) 18%,
-      hsl(var(--border)) 82%,
+      hsl(var(--border) / .12) 18%,
+      hsl(var(--border) / .12) 82%,
       transparent 100%
     );
     height: 1px;
   }
 
   .scrollbar-thin::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
   }
 
   .scrollbar-thin::-webkit-scrollbar-track {
@@ -198,44 +228,54 @@
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: hsl(var(--border));
+    background: hsl(var(--foreground) / .15);
     border-radius: 9999px;
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground) / .4);
+    background: hsl(var(--foreground) / .3);
+  }
+
+  .hairline {
+    border-color: hsl(var(--border) / .07);
+  }
+
+  .hairline-strong {
+    border-color: hsl(var(--border) / .12);
   }
 }
 
-/* Studio background: subtle grid + diagonal light, no layout noise */
+/* Studio mesh background — primary/accent radial washes + 42px grid.
+   Slightly stronger washes than tailwind defaults so the studio mood
+   reads at a glance, matching the design's hero canvas. */
 .mesh-bg {
   background-image:
-    linear-gradient(135deg, hsl(var(--primary) / .08), transparent 28%),
-    linear-gradient(315deg, hsl(var(--accent) / .07), transparent 30%),
-    linear-gradient(hsl(var(--foreground) / .045) 1px, transparent 1px),
-    linear-gradient(90deg, hsl(var(--foreground) / .035) 1px, transparent 1px);
-  background-position: center, center, -1px -1px, -1px -1px;
+    radial-gradient(ellipse 60% 40% at 15% 0%, hsl(var(--primary) / .18), transparent 60%),
+    radial-gradient(ellipse 50% 35% at 85% 8%, hsl(var(--accent) / .18), transparent 60%),
+    linear-gradient(hsl(var(--border) / .04) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--border) / .04) 1px, transparent 1px);
   background-size: auto, auto, 42px 42px, 42px 42px;
 }
 
-/* Subtle grain overlay for texture */
-.grain {
-  position: relative;
+@keyframes mpl-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .4; }
 }
 
-.grain::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.03;
-  mix-blend-mode: overlay;
-  background-image:
-    radial-gradient(hsl(var(--foreground)) 1px, transparent 1px);
-  background-size: 3px 3px;
+@keyframes mpl-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 
-/* Shimmer skeleton */
+@keyframes mpl-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes mpl-spin {
+  to { transform: rotate(360deg); }
+}
+
 .shimmer {
   background: linear-gradient(
     90deg,
@@ -244,5 +284,5 @@
     hsl(var(--muted)) 100%
   );
   background-size: 200% 100%;
-  animation: shimmer 2.5s linear infinite;
+  animation: mpl-shimmer 2.5s linear infinite;
 }

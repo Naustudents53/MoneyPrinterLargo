@@ -1,14 +1,25 @@
-import json as _json
+﻿import json as _json
 import os as _os
 import time as _time
 import requests
 from contextlib import contextmanager
 
-from config import get_ollama_base_url, get_llm_provider, get_gemini_api_key, get_gemini_model, get_gemini_models
-
+from config import (
+    get_ollama_base_url,
+    get_llm_provider,
+    get_pollinations_text_model,
+    get_gemini_api_key,
+    get_gemini_model,
+    get_gemini_models,
+    get_ollama_models,
+    get_openai_api_key,
+    get_openai_base_url,
+    get_openai_models,
+    get_openai_reasoning_effort,
+)
 
 # ---------------------------------------------------------------------------
-# Cost logging (writes to <ROOT>/.mp/cost_log.jsonl). Best-effort — the LLM
+# Cost logging (writes to <ROOT>/.mp/cost_log.jsonl). Best-effort â€” the LLM
 # call must NEVER fail because we couldn't write a log line.
 # ---------------------------------------------------------------------------
 
@@ -19,6 +30,10 @@ _GEMINI_PRICING = {
     "gemini-1.5-flash":      {"in": 0.075, "out": 0.30},
     "gemini-1.5-pro":        {"in": 1.25, "out": 5.00},
     "gemini-2.0-flash":      {"in": 0.10, "out": 0.40},
+}
+
+_OPENAI_PRICING = {
+    "gpt-5.5": {"in": 5.00, "out": 30.00},
 }
 
 
@@ -34,6 +49,18 @@ def _estimate_gemini_cost(model: str, in_tokens: int, out_tokens: int) -> float:
     return (in_tokens / 1_000_000) * p["in"] + (out_tokens / 1_000_000) * p["out"]
 
 
+def _estimate_openai_cost(model: str, in_tokens: int, out_tokens: int) -> float:
+    p = _OPENAI_PRICING.get(model)
+    if not p:
+        for k, v in _OPENAI_PRICING.items():
+            if model.startswith(k):
+                p = v
+                break
+    if not p:
+        return 0.0
+    return (in_tokens / 1_000_000) * p["in"] + (out_tokens / 1_000_000) * p["out"]
+
+
 def _log_cost(provider: str, model: str, in_tokens: int, out_tokens: int,
               cost_usd: float | None = None) -> None:
     try:
@@ -42,6 +69,8 @@ def _log_cost(provider: str, model: str, in_tokens: int, out_tokens: int,
         return
     if cost_usd is None and provider == "gemini":
         cost_usd = _estimate_gemini_cost(model, in_tokens, out_tokens)
+    if cost_usd is None and provider == "openai":
+        cost_usd = _estimate_openai_cost(model, in_tokens, out_tokens)
     entry = {
         "ts": _time.time(),
         "provider": provider,
@@ -59,12 +88,19 @@ def _log_cost(provider: str, model: str, in_tokens: int, out_tokens: int,
     except Exception:
         pass
 
-_selected_model: str | None = None
+
+# `_selected_model` may be either a single model name (str) or an ordered
+# list of model names that the Ollama provider will try in sequence.
+_selected_model: "str | list[str] | None" = None
 _llm_provider: str | None = None
 _disabled_providers: set = set()
 _last_used_provider: str | None = None
 _disabled_gemini_models: set = set()
 _disabled_ollama_models: set = set()
+_disabled_openai_models: set = set()
+# When the user explicitly chose a provider+model from the UI, the long-video
+# pipeline must respect that choice and skip its hardcoded force_provider call.
+_user_override: bool = False
 
 # Ordered fallback chain for Ollama. Tried in order when no explicit model is
 # selected via config (`ollama_model`) or `select_model()`. If every entry
@@ -76,7 +112,65 @@ _OLLAMA_FALLBACK_CHAIN: list[str] = [
     "kimi-k2.6:cloud",
     "glm-5.1:cloud",
 ]
-# Ollama "thinking" budget for the current call. Set via `force_provider` —
+
+# Curated catalog shown by the interactive selector even when the model
+# isn't installed locally yet. The user can pick any of these â€” Ollama
+# auto-pulls on first run (see `warmup_ollama_model`). Cloud entries
+# (suffixed `:cloud`) require an Ollama Cloud account but no disk space.
+# Each entry is (model_id, short_label) â€” keep the label under ~55 chars
+# so the menu reads cleanly in a normal terminal.
+#
+# Ranking sources (verified May 2026):
+#   - LMArena open-weights leaderboard
+#   - GPQA Diamond, MMLU, IFEval, MATH-500
+#   - SWE-bench Verified, HumanEval, LiveCodeBench
+#   - Official cloud catalog: https://ollama.com/search?c=cloud
+RECOMMENDED_OLLAMA_MODELS: list[tuple[str, str]] = [
+    # --- Cloud â€” frontier (paid usage, zero disk) ---
+    ("kimi-k2.6:cloud",           "Moonshot Kimi K2.6 â€” #1 open-weights (GPQA 90.5)"),
+    ("deepseek-v4-pro:cloud",     "DeepSeek V4 Pro â€” 1M ctx, 3 reasoning modes"),
+    ("glm-4.7:cloud",             "Z.ai GLM 4.7 â€” 94.2 HumanEval, practical king"),
+    ("glm-5.1:cloud",             "Z.ai GLM 5.1 â€” newest, top agentic coding"),
+    ("minimax-m2.5:cloud",        "MiniMax M2.5 â€” SWE-bench leader (80.2)"),
+    ("minimax-m2.7:cloud",        "MiniMax M2.7 â€” coding + agentic workflows"),
+    ("gemma4:cloud",              "Google Gemma 4 â€” frontier multilingual"),
+    ("qwen3.5:cloud",             "Qwen 3.5 â€” multimodal, strong Spanish"),
+    ("deepseek-v4-flash:cloud",   "DeepSeek V4 Flash â€” fast MoE, 1M ctx"),
+    ("nemotron-3-super:cloud",    "NVIDIA Nemotron 3 Super 120B MoE"),
+    # --- Local â€” large (48GB+ RAM / 24GB+ VRAM) ---
+    ("qwen3:235b",                "Alibaba Qwen 3 235B MoE â€” frontier local"),
+    ("gpt-oss:120b",              "OpenAI gpt-oss 120B â€” top local reasoning"),
+    ("llama3.3:70b",              "Meta Llama 3.3 70B â€” flagship dense"),
+    ("deepseek-r1:70b",           "DeepSeek R1 70B â€” local reasoning"),
+    # --- Local â€” medium (16-24GB RAM) ---
+    ("gemma3:27b",                "Google Gemma 3 27B â€” multilingual practical"),
+    ("qwen3:32b",                 "Qwen 3 32B â€” balanced quality / speed"),
+    ("qwen2.5-coder:32b",         "Qwen2.5 Coder 32B â€” top local code / JSON"),
+    # --- Local â€” small / fast (4-8GB VRAM or CPU) ---
+    ("phi4:14b",                  "Microsoft Phi-4 14B â€” reasoning per-param king"),
+]
+
+
+# Curated Gemini text-generation models, ranked by current benchmarks
+# (May 2026). Image / TTS / video / embedding / robotics variants are
+# excluded â€” only models suitable for the documentary text-gen pipeline.
+#
+# Sources (verified May 2026):
+#   - Official model list: https://ai.google.dev/gemini-api/docs/models
+#   - LMArena (Gemini 3 Pro tops with 1501 Elo)
+#   - ARC-AGI-2 (Gemini 3.1 Pro: 77.1%)
+#   - GPQA Diamond / SWE-bench (Gemini 3 Flash: 90.4% / 78%)
+RECOMMENDED_GEMINI_MODELS: list[tuple[str, str]] = [
+    ("gemini-3.1-pro-preview",       "Gemini 3.1 Pro â€” flagship (ARC-AGI-2 77.1)"),
+    ("gemini-3-flash-preview",       "Gemini 3 Flash â€” frontier fast (GPQA 90.4)"),
+    ("gemini-3.1-flash-lite",        "Gemini 3.1 Flash-Lite â€” efficient frontier"),
+    ("gemini-3.1-flash-lite-preview","Gemini 3.1 Flash-Lite preview"),
+    ("gemini-2.5-pro",               "Gemini 2.5 Pro â€” older flagship, solid"),
+    ("gemini-2.5-flash",             "Gemini 2.5 Flash â€” fast, cheap reasoning"),
+    ("gemini-2.5-flash-lite",        "Gemini 2.5 Flash-Lite â€” fastest budget"),
+    ("gemini-2.0-flash",             "Gemini 2.0 Flash â€” legacy compatibility"),
+]
+# Ollama "thinking" budget for the current call. Set via `force_provider` â€”
 # the long-video pipeline pins it to "high" so DeepSeek V4 Pro Cloud reasons
 # at full depth. None means: don't pass the kwarg at all.
 _ollama_think: str | bool | None = None
@@ -88,7 +182,7 @@ _ollama_autostart_done: bool = False
 def _ensure_ollama_serve() -> None:
     """
     Make sure an `ollama serve` daemon is running before we open a client.
-    Idempotent — only spawns once per process. Used as a safety net for any
+    Idempotent â€” only spawns once per process. Used as a safety net for any
     code path that didn't go through `warmup_ollama_model` first.
     """
     global _ollama_autostart_done
@@ -109,7 +203,7 @@ def _ensure_ollama_serve() -> None:
     import shutil as _shutil
 
     if not _shutil.which("ollama"):
-        print("  [!] `ollama` CLI not found on PATH — cannot auto-start daemon")
+        print("  [!] `ollama` CLI not found on PATH â€” cannot auto-start daemon")
         return
 
     print("  [+] Starting `ollama serve` (auto)")
@@ -144,11 +238,35 @@ def _ollama_client():
 
 
 def list_models() -> list[str]:
+    provider = _llm_provider or get_llm_provider()
+    if provider == "pollinations":
+        return _list_pollinations_models()
+    if provider == "openai":
+        return get_openai_models()
     response = _ollama_client().list()
     return sorted(m.model for m in response.models)
 
 
-def select_model(model: str) -> None:
+def _list_pollinations_models() -> list[str]:
+    try:
+        resp = requests.get("https://text.pollinations.ai/models", timeout=15)
+        resp.raise_for_status()
+        models_data = resp.json()
+        return sorted(
+            m.get("name", m.get("id", "unknown"))
+            for m in models_data
+            if isinstance(m, dict)
+        )
+    except Exception:
+        return [
+            "openai", "openai-large", "openai-reasoning",
+            "qwen-coder", "llama", "mistral",
+            "deepseek", "deepseek-r1", "gemini",
+        ]
+
+
+def select_model(model) -> None:
+    """Pin the Ollama model (or ordered chain) used by subsequent calls."""
     global _selected_model
     _selected_model = model
 
@@ -167,11 +285,24 @@ def get_active_provider() -> str:
     return _llm_provider or get_llm_provider() or "ollama"
 
 
+def set_user_override(value: bool) -> None:
+    """Mark the current session as having a user-chosen provider+model.
+    When set, the long-video pipeline skips its hardcoded force_provider call
+    so the user's choice (e.g. Gemini Flash) is actually respected.
+    """
+    global _user_override
+    _user_override = bool(value)
+
+
+def is_user_override() -> bool:
+    return _user_override
+
+
 def warmup_ollama_model(model: str) -> None:
     """
     Make sure the Ollama daemon is up and the requested model is preloaded
     via `ollama run <model>`. On Windows, the first CLI call also bootstraps
-    the desktop app — but it exits before the HTTP server is listening, so
+    the desktop app â€” but it exits before the HTTP server is listening, so
     we poll `/api/tags` until reachable before issuing the actual warmup.
     For cloud models (`:cloud` suffix) the warmup also forces the auth
     handshake. Failures are logged, never raised.
@@ -190,7 +321,7 @@ def warmup_ollama_model(model: str) -> None:
 
     # Step 1: if the server is down, start `ollama serve` as a detached
     # background process. Using `ollama run X hi` to bootstrap is unreliable
-    # on Windows — it spawns a transient daemon that dies when the run exits,
+    # on Windows â€” it spawns a transient daemon that dies when the run exits,
     # leaving subsequent HTTP calls with no server to talk to.
     if not _server_up():
         print(f"  [+] Bootstrapping Ollama daemon (ollama serve)")
@@ -203,12 +334,12 @@ def warmup_ollama_model(model: str) -> None:
                 close_fds=True,
             )
             if _sys.platform == "win32":
-                # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — survives this
+                # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP â€” survives this
                 # Python process so the daemon stays up across runs.
                 popen_kwargs["creationflags"] = 0x00000008 | 0x00000200
             subprocess.Popen(["ollama", "serve"], **popen_kwargs)
         except FileNotFoundError:
-            print(f"  [!] `ollama` CLI not found on PATH — skipping warmup for {model}")
+            print(f"  [!] `ollama` CLI not found on PATH â€” skipping warmup for {model}")
             return
         except Exception as e:
             print(f"  [!] failed to launch `ollama serve`: {e}")
@@ -220,10 +351,10 @@ def warmup_ollama_model(model: str) -> None:
                 break
             time.sleep(1)
         else:
-            print(f"  [!] Ollama daemon not reachable at {base} after 60s — skipping warmup")
+            print(f"  [!] Ollama daemon not reachable at {base} after 60s â€” skipping warmup")
             return
 
-    # Step 2: server is up — preload the model with a synchronous one-shot.
+    # Step 2: server is up â€” preload the model with a synchronous one-shot.
     print(f"  [+] ollama run {model}")
     try:
         result = subprocess.run(
@@ -238,7 +369,7 @@ def warmup_ollama_model(model: str) -> None:
             err = (result.stderr or result.stdout or "").strip()
             print(f"  [!] ollama run {model} exited {result.returncode}: {err[:200]}")
     except FileNotFoundError:
-        print(f"  [!] `ollama` CLI not found on PATH — skipping warmup for {model}")
+        print(f"  [!] `ollama` CLI not found on PATH â€” skipping warmup for {model}")
     except subprocess.TimeoutExpired:
         print(f"  [!] ollama run {model} timed out during warmup (continuing)")
     except Exception as e:
@@ -246,12 +377,18 @@ def warmup_ollama_model(model: str) -> None:
 
 
 @contextmanager
-def force_provider(provider: str, model: str | None = None, think: str | bool | None = None):
+def force_provider(provider: str, model=None, think: str | bool | None = None):
     """
     Temporarily override the active LLM provider (and optionally model + Ollama
     thinking budget) for a specific block of work. Restores prior values on
     exit, even on error. Used by the long-video pipeline to pin generation to
-    a specific Ollama Cloud model without affecting Shorts or the user's config.
+    a specific Ollama Cloud model â€” or an ordered chain of fallback models â€”
+    without affecting Shorts or the user's config.
+
+    ``model`` accepts either a single model name (str) or an ordered list of
+    model names. When a list is provided, ``_generate_text_ollama`` will try
+    each entry in turn before raising and letting the cross-provider fallback
+    fire (e.g. fall through to Gemini).
     """
     global _llm_provider, _selected_model, _ollama_think
     prev_provider, prev_model, prev_think = _llm_provider, _selected_model, _ollama_think
@@ -278,19 +415,56 @@ _SYSTEM_PROMPT = (
 )
 
 
-def generate_text(prompt: str, model_name: str = None) -> str:
-    provider = _llm_provider or get_llm_provider()
+def generate_text(prompt: str, model_name: str = None, temperature: float = 0.7) -> str:
+    provider = (_llm_provider or get_llm_provider() or "").lower()
 
-    # Build ordered list: primary first, then fallbacks
-    if provider == "gemini":
+    # When the user explicitly chose a provider from the UI, do NOT cross-
+    # fallback to the other one. Pick Gemini â†’ only Gemini; pick OpenAI â†’ only
+    # OpenAI; pick Ollama â†’ only Ollama (its internal model cascade still
+    # applies). The auto path keeps the historical cross-provider safety net.
+    if _user_override:
+        if provider == "gemini":
+            # Pin to the model the user explicitly chose; if none, fall back
+            # to the configured cascade (mirrors Ollama's behaviour).
+            providers = [
+                ("gemini", lambda: _generate_text_gemini(
+                    prompt,
+                    model=model_name or _selected_model or None,
+                    temperature=temperature,
+                )),
+            ]
+        elif provider == "openai":
+            providers = [("openai", lambda: _generate_text_openai(prompt, model_name or _selected_model, temperature=temperature))]
+        elif provider == "pollinations":
+            providers = [("pollinations", lambda: _generate_text_pollinations(prompt, model_name or _selected_model))]
+        else:
+            providers = [
+                ("ollama", lambda: _generate_text_ollama(prompt, model_name or _selected_model)),
+            ]
+    elif provider == "openai":
         providers = [
-            ("gemini", lambda: _generate_text_gemini(prompt)),
+            ("openai", lambda: _generate_text_openai(prompt, model_name or _selected_model, temperature=temperature)),
+            ("gemini", lambda: _generate_text_gemini(prompt, temperature=temperature)),
+            ("ollama", lambda: _generate_text_ollama(prompt, None)),
+            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
+        ]
+    elif provider == "gemini":
+        providers = [
+            ("gemini", lambda: _generate_text_gemini(prompt, temperature=temperature)),
+            ("ollama", lambda: _generate_text_ollama(prompt, None)),
+            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
+        ]
+    elif provider == "pollinations":
+        providers = [
+            ("pollinations", lambda: _generate_text_pollinations(prompt, model_name)),
+            ("gemini", lambda: _generate_text_gemini(prompt, temperature=temperature)),
             ("ollama", lambda: _generate_text_ollama(prompt, None)),
         ]
     else:
         providers = [
             ("ollama", lambda: _generate_text_ollama(prompt, model_name or _selected_model)),
-            ("gemini", lambda: _generate_text_gemini(prompt)),
+            ("gemini", lambda: _generate_text_gemini(prompt, temperature=temperature)),
+            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
         ]
 
     last_error = None
@@ -303,7 +477,7 @@ def generate_text(prompt: str, model_name: str = None) -> str:
                 raise RuntimeError(f"LLM returned a conversational/garbage response: {result[:80]}")
             global _last_used_provider
             if name != _last_used_provider:
-                print(f"  [✓] Switched to LLM provider: {name}")
+                print(f"  [âœ“] Switched to LLM provider: {name}")
                 _last_used_provider = name
             return result
         except Exception as e:
@@ -311,13 +485,15 @@ def generate_text(prompt: str, model_name: str = None) -> str:
             # Only disable a provider for the session when the error indicates
             # something that won't fix itself: missing API key, or all of its
             # models exhausted by per-model disabling. A single 503/timeout
-            # from one model must NOT poison the whole provider — try the next
+            # from one model must NOT poison the whole provider â€” try the next
             # provider this call, but keep this one available next call so a
             # transient outage doesn't break the rest of the session.
             msg = str(e).lower()
             permanent = (
                 "no gemini api key" in msg
+                or "no openai api key" in msg
                 or "all gemini models" in msg
+                or "all openai models" in msg
                 or "all ollama fallback models" in msg
             )
             if permanent:
@@ -344,7 +520,149 @@ def _is_garbage_response(text: str) -> bool:
     return any(phrase in start for phrase in garbage_phrases)
 
 
-def _ollama_chat_once(client, model: str, messages: list) -> str:
+def _extract_openai_text(data: dict) -> str:
+    text = data.get("output_text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+
+    chunks: list[str] = []
+    for item in data.get("output", []) or []:
+        if not isinstance(item, dict):
+            continue
+        for part in item.get("content", []) or []:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") in {"output_text", "text"} and part.get("text"):
+                chunks.append(str(part["text"]))
+
+    if chunks:
+        return "\n".join(chunks).strip()
+
+    try:
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return ""
+
+
+def _is_openai_reasoning_model(model: str) -> bool:
+    m = (model or "").lower()
+    return m.startswith("gpt-5") or m.startswith("o")
+
+
+def _openai_error_message(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+        err = payload.get("error") or {}
+        if isinstance(err, dict):
+            return str(err.get("message") or payload)
+        return str(err or payload)
+    except Exception:
+        return response.text[:500]
+
+
+def _generate_text_openai(prompt: str, model: str = None, temperature: float = 0.7) -> str:
+    """Generate text using the OpenAI Responses API, cascading through models."""
+    api_key = get_openai_api_key()
+    if not api_key:
+        raise RuntimeError("No OpenAI API key configured")
+
+    chain: list[str] = []
+    if model:
+        chain.append(model)
+    for m in get_openai_models():
+        if m not in chain:
+            chain.append(m)
+
+    candidates = [m for m in chain if m not in _disabled_openai_models]
+    if not candidates:
+        raise RuntimeError("All OpenAI models have been disabled this session")
+
+    effort = get_openai_reasoning_effort().lower()
+    if effort not in {"none", "low", "medium", "high", "xhigh"}:
+        effort = "medium"
+
+    url = f"{get_openai_base_url().rstrip('/')}/responses"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    last_error = None
+    for candidate in candidates:
+        payload = {
+            "model": candidate,
+            "instructions": _SYSTEM_PROMPT,
+            "input": prompt,
+            "store": False,
+        }
+        if _is_openai_reasoning_model(candidate):
+            payload["reasoning"] = {"effort": effort}
+        else:
+            payload["temperature"] = temperature
+
+        try:
+            print(f"  [OpenAI] Trying model: {candidate}")
+            response = requests.post(url, headers=headers, json=payload, timeout=180)
+            if response.status_code >= 400:
+                raise RuntimeError(f"HTTP {response.status_code}: {_openai_error_message(response)}")
+
+            data = response.json()
+            text = _extract_openai_text(data)
+            if not text:
+                raise RuntimeError(f"OpenAI returned empty text: {data}")
+
+            usage = data.get("usage") or {}
+            _log_cost(
+                "openai", candidate,
+                int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0),
+                int(usage.get("output_tokens") or usage.get("completion_tokens") or 0),
+            )
+            print(f"  [OpenAI] Using model: {candidate}")
+            return text
+        except Exception as e:
+            err_msg = str(e).lower()
+            print(f"  [OpenAI] Model '{candidate}' failed: {e}")
+            model_error_markers = (
+                "model", "not found", "does not exist", "unsupported",
+                "not available", "permission",
+            )
+            transient_markers = (
+                "429", "rate limit", "timeout", "timed out", "temporarily",
+                "503", "504", "overloaded",
+            )
+            if (
+                any(t in err_msg for t in model_error_markers)
+                and not any(t in err_msg for t in transient_markers)
+            ):
+                _disabled_openai_models.add(candidate)
+            last_error = e
+
+    raise RuntimeError(f"All OpenAI models failed. Last error: {last_error}")
+
+
+def _resolve_ollama_model_chain(model) -> list[str]:
+    """
+    Normalize the caller's model argument into an ordered list of model names
+    to try. Falls back to the configured ``ollama_models`` chain when no
+    explicit model is forced.
+    """
+    if isinstance(model, list):
+        chain = [m for m in model if m]
+    elif isinstance(model, str) and model:
+        chain = [model]
+    else:
+        chain = list(get_ollama_models())
+    # Drop models we already burned this session, while preserving order.
+    return [m for m in chain if m not in _disabled_ollama_models]
+
+
+def _ollama_chat_once(client, model: str, messages: list[dict]) -> str:
+    """
+    Single Ollama chat round-trip with the empty-content retry that reasoning
+    models occasionally need. Raises on transport errors so the caller can
+    cascade to the next model.
+    """
+    started = _time.time()
     if _ollama_think is not None:
         try:
             response = client.chat(model=model, messages=messages, think=_ollama_think)
@@ -364,72 +682,79 @@ def _ollama_chat_once(client, model: str, messages: list) -> str:
             content = (response["message"]["content"] or "").strip()
         except TypeError:
             pass
-    return content
+
+    def _stat(key):
+        try:
+            v = response.get(key) if hasattr(response, "get") else getattr(response, key, 0)
+        except Exception:
+            v = 0
+        return int(v or 0)
+
+    prompt_tok = _stat("prompt_eval_count")
+    out_tok = _stat("eval_count")
+    elapsed = _time.time() - started
+    return content, prompt_tok, out_tok, elapsed
 
 
-def _generate_text_ollama(prompt: str, model: str = None) -> str:
+def _generate_text_ollama(prompt: str, model=None) -> str:
+    """Generate text with Ollama, trying the configured model chain in order."""
+    chain = _resolve_ollama_model_chain(model)
+    if not chain:
+        raise RuntimeError("No Ollama model configured")
+
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": prompt},
     ]
     client = _ollama_client()
 
-    # Build the cascade: explicit model (this call's preference) → configured
-    # `ollama_model` → hard-coded fallback chain. An explicit model is the
-    # *head* of the cascade, not a bypass — so a transient 503 on the caller's
-    # preferred model still falls through to the rest of the chain instead of
-    # killing the whole Ollama provider for the session.
-    from config import get_ollama_model
-    configured = get_ollama_model()
-    chain: list[str] = []
-    if model:
-        chain.append(model)
-    if configured and configured not in chain:
-        chain.append(configured)
-    for m in _OLLAMA_FALLBACK_CHAIN:
-        if m not in chain:
-            chain.append(m)
-
-    candidates = [m for m in chain if m not in _disabled_ollama_models]
-    if not candidates:
-        raise RuntimeError("All Ollama fallback models have been disabled this session")
-
-    last_error = None
-    for candidate in candidates:
+    last_error: Exception | None = None
+    for idx, candidate in enumerate(chain):
         try:
-            print(f"  [Ollama] Trying model: {candidate}")
-            content = _ollama_chat_once(client, candidate, messages)
+            if idx > 0:
+                print(f"  [Ollama] Falling back to {candidate}")
+            content, in_tok, out_tok, elapsed = _ollama_chat_once(client, candidate, messages)
             if not content:
                 raise RuntimeError("empty response")
-            print(f"  [Ollama] Using model: {candidate}")
+            chars = len(content)
+            words = len(content.split())
+            tok_part = f"{in_tok}->{out_tok} tok" if (in_tok or out_tok) else f"~{words} words"
+            print(f"  [Ollama] {candidate} - {elapsed:.1f}s - {tok_part} - {chars} chars")
+            _log_cost("ollama", candidate, in_tok, out_tok, 0.0)
             return content
         except Exception as e:
-            err_msg = str(e).lower()
             print(f"  [Ollama] Model '{candidate}' failed: {e}")
-            # Transient server-side errors (5xx, overloaded, timeout, rate
-            # limit) — the model is fine, the cloud is just busy. Don't burn
-            # it for the session; just move on this call so the next call can
-            # retry it. Persistent errors (model not found, auth, "all
-            # disabled") earn the per-session ban.
             transient_markers = (
                 "503", "504", "overloaded", "timeout", "timed out",
                 "temporarily", "rate limit", "429", "try again",
             )
-            is_transient = any(t in err_msg for t in transient_markers)
-            if not is_transient:
+            if not any(t in str(e).lower() for t in transient_markers):
                 _disabled_ollama_models.add(candidate)
             last_error = e
 
-    raise RuntimeError(f"All Ollama fallback models failed. Last error: {last_error}")
+    raise RuntimeError(f"All Ollama models failed. Last error: {last_error}")
 
 
-def _generate_text_gemini(prompt: str) -> str:
-    """Generate text using Google Gemini API (free tier), cascading through models."""
+def _generate_text_gemini(
+    prompt: str,
+    model: str | None = None,
+    temperature: float = 0.7,
+) -> str:
+    """Generate text using Google Gemini API, optionally pinned to one model.
+
+    When the user picked a specific Gemini model from the UI (via
+    `select_model()` + `set_user_override(True)`), `model` is passed in
+    explicitly and we call ONLY that model â€” no fallback cascade through
+    `config.json`. Otherwise, fall back to the configured cascade.
+    """
     api_key = get_gemini_api_key()
     if not api_key:
         raise RuntimeError("No Gemini API key configured")
 
-    models = get_gemini_models()
+    if model:
+        models = [model]
+    else:
+        models = get_gemini_models()
 
     payload = {
         "system_instruction": {
@@ -439,7 +764,7 @@ def _generate_text_gemini(prompt: str) -> str:
             {"role": "user", "parts": [{"text": prompt}]}
         ],
         "generationConfig": {
-            "temperature": 0.7,
+            "temperature": temperature,
         },
     }
 
@@ -448,12 +773,16 @@ def _generate_text_gemini(prompt: str) -> str:
         raise RuntimeError("All Gemini models have been rate-limited this session")
 
     last_error = None
-    for model in available_models:
+    for idx, model in enumerate(available_models):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         try:
+            if idx > 0:
+                print(f"  [Gemini] Falling back to {model}")
+            started = _time.time()
             response = requests.post(url, json=payload, timeout=120)
             response.raise_for_status()
             data = response.json()
+            elapsed = _time.time() - started
 
             candidates = data.get("candidates", [])
             if not candidates:
@@ -465,15 +794,15 @@ def _generate_text_gemini(prompt: str) -> str:
 
             text = parts[0].get("text", "").strip()
             if text:
-                # Best-effort cost tracking — usageMetadata is included in v1beta
+                # Best-effort cost tracking â€” usageMetadata is included in v1beta
                 # responses but the field is not guaranteed.
                 usage = data.get("usageMetadata") or {}
-                _log_cost(
-                    "gemini", model,
-                    int(usage.get("promptTokenCount") or 0),
-                    int(usage.get("candidatesTokenCount") or 0),
-                )
-                print(f"  [Gemini] Using model: {model}")
+                in_tok = int(usage.get("promptTokenCount") or 0)
+                out_tok = int(usage.get("candidatesTokenCount") or 0)
+                _log_cost("gemini", model, in_tok, out_tok)
+                chars = len(text)
+                tok_part = f"{in_tok}â†’{out_tok} tok" if (in_tok or out_tok) else f"~{len(text.split())} words"
+                print(f"  [Gemini] {model} Â· {elapsed:.1f}s Â· {tok_part} Â· {chars} chars")
                 return text
             raise RuntimeError("Gemini returned empty text")
         except Exception as e:
@@ -485,3 +814,70 @@ def _generate_text_gemini(prompt: str) -> str:
             last_error = e
 
     raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
+
+
+def _generate_text_pollinations(prompt: str, model: str = None) -> str:
+    """Generate text using the free text.pollinations.ai endpoint.
+
+    Tries the OpenAI-compatible POST first, then falls back to the simple
+    GET endpoint. Retries up to 3 times with progressive backoff because the
+    free tier can rate-limit aggressively.
+    """
+    import time as _time
+    import random as _random
+
+    model = model or get_pollinations_text_model() or "openai"
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        "stream": False,
+        "seed": _random.randint(1, 999999),
+        "cache": False,
+    }
+
+    last_error: Exception | None = None
+    for attempt in range(3):
+        if attempt > 0:
+            wait = 10 * attempt
+            print(f"  [Pollinations] Retry {attempt}/2, waiting {wait}s...")
+            _time.sleep(wait)
+
+        try:
+            response = requests.post(
+                "https://text.pollinations.ai/openai",
+                json=payload,
+                timeout=120,
+            )
+            response.raise_for_status()
+            data = response.json()
+            text = data["choices"][0]["message"]["content"].strip()
+            if text:
+                print(f"  [Pollinations] Using model: {model}")
+                return text
+            raise RuntimeError("Pollinations returned empty text")
+        except Exception as e:
+            last_error = e
+
+        try:
+            import urllib.parse
+            encoded = urllib.parse.quote(prompt[:500])
+            seed = _random.randint(1, 999999)
+            resp = requests.get(
+                f"https://text.pollinations.ai/{encoded}?model={model}&seed={seed}&noCache=true",
+                timeout=120,
+            )
+            resp.raise_for_status()
+            text = resp.text.strip()
+            if text:
+                print(f"  [Pollinations] Using model: {model} (GET fallback)")
+                return text
+        except Exception as e2:
+            last_error = e2
+
+    raise RuntimeError(
+        f"Pollinations text generation failed after 3 attempts: {last_error}"
+    )
