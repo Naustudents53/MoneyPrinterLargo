@@ -155,19 +155,29 @@ export function Thumbnails() {
 
       <PageShell>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Generator form */}
-          <Card className="lg:col-span-1">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Wand2 className="h-5 w-5 text-primary" /> Crear thumbnail
-              </CardTitle>
-              <CardDescription>
+          {/* Generator form — sticky on desktop, accent stripe */}
+          <Card className="lg:col-span-1 lg:sticky lg:top-24 self-start overflow-hidden">
+            <span
+              aria-hidden
+              className="block h-[3px] w-full"
+              style={{
+                background: "linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)))",
+              }}
+            />
+            <CardHeader className="pb-4">
+              <span className="eyebrow flex items-center gap-1.5">
+                <Wand2 className="h-3 w-3" /> Generador
+              </span>
+              <CardTitle className="text-lg mt-1">Crear thumbnail</CardTitle>
+              <CardDescription className="text-[12px]">
                 Leonardo XL para el fondo + overlay de texto. Tarda ~30–90s.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="topic">Tema del video</Label>
+                <Label htmlFor="topic" className="text-[11px] uppercase tracking-wider font-mono text-muted-foreground">
+                  Tema del video
+                </Label>
                 <Input
                   id="topic"
                   value={topic}
@@ -176,20 +186,23 @@ export function Thumbnails() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="text">Texto overlay</Label>
+                <Label htmlFor="text" className="text-[11px] uppercase tracking-wider font-mono text-muted-foreground">
+                  Texto overlay
+                </Label>
                 <Input
                   id="text"
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   placeholder="EL PATRON OCULTO"
+                  className="font-display tracking-tight"
                 />
                 <p className="text-[11px] text-muted-foreground">
                   Se convierte a mayúsculas. Máx ~3 líneas con auto-shrink.
                 </p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="visual">
-                  Prompt visual <span className="text-muted-foreground">(opcional)</span>
+                <Label htmlFor="visual" className="text-[11px] uppercase tracking-wider font-mono text-muted-foreground">
+                  Prompt visual <span className="lowercase tracking-normal opacity-70">(opcional)</span>
                 </Label>
                 <Textarea
                   id="visual"
@@ -197,6 +210,7 @@ export function Thumbnails() {
                   value={visual}
                   onChange={(e) => setVisual(e.target.value)}
                   placeholder="Si lo dejas vacío, el LLM escribe uno desde el tema."
+                  className="resize-none"
                 />
               </div>
               <Button
@@ -208,25 +222,37 @@ export function Thumbnails() {
               >
                 <Sparkles className="h-4 w-4" /> Generar thumbnail
               </Button>
+              <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground pt-2 border-t border-border/30">
+                <span>1280 × 720</span>
+                <span>JPEG · ~120 KB</span>
+              </div>
             </CardContent>
           </Card>
 
           {/* Gallery */}
           <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ImageIcon className="h-4 w-4 text-primary" />
-                Galería ({items.length})
-                <Badge variant="outline" className="ml-2 font-mono">
-                  {(totalKb / 1024).toFixed(1)} MB
-                </Badge>
-              </CardTitle>
+            <CardHeader className="pb-3">
+              <div className="flex items-baseline justify-between flex-wrap gap-2">
+                <div className="flex flex-col gap-0.5">
+                  <span className="eyebrow flex items-center gap-1.5">
+                    <ImageIcon className="h-3 w-3" /> Galería
+                  </span>
+                  <CardTitle className="text-lg">
+                    {items.length} {items.length === 1 ? "miniatura" : "miniaturas"}
+                  </CardTitle>
+                </div>
+                {items.length > 0 && (
+                  <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+                    {(totalKb / 1024).toFixed(1)} MB total
+                  </span>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                   {Array.from({ length: 6 }).map((_, i) => (
-                    <Skeleton key={i} className="aspect-video" />
+                    <Skeleton key={i} className="aspect-video rounded-lg" />
                   ))}
                 </div>
               ) : items.length === 0 ? (
@@ -333,42 +359,51 @@ function ThumbCard({
   onDelete: () => void;
 }) {
   return (
-    <div className="group rounded-lg border border-border/60 overflow-hidden bg-card hover:border-primary/40 transition-colors">
+    <div className="group relative rounded-lg border border-border/40 overflow-hidden bg-card hover:border-primary/40 hover:shadow-[0_18px_55px_-46px_hsl(var(--foreground)/.55)] transition-all">
       <button
         type="button"
         onClick={onPreview}
-        className="block w-full aspect-video bg-black/40 overflow-hidden"
+        className="block w-full aspect-video bg-black/40 overflow-hidden relative"
       >
         <img
           src={api.thumbnailRawUrl(item.name)}
           alt={item.name}
           loading="lazy"
-          className="h-full w-full object-cover group-hover:scale-[1.02] transition-transform"
+          className="h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
         />
+        {/* Hover overlay with quick-preview affordance */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-start p-3">
+          <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-white/90">
+            <Eye className="h-3 w-3" /> Ver
+          </span>
+        </div>
       </button>
-      <div className="p-3 space-y-2">
-        <div className="text-xs font-mono truncate" title={item.name}>
+      <div className="px-3 pt-2.5 pb-2 space-y-2">
+        <div className="text-[11px] font-mono truncate text-foreground/80" title={item.name}>
           {item.name}
         </div>
-        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+        <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono tabular-nums">
           <span>{relativeTime(item.mtime)}</span>
-          <span>{item.size_kb} KB · {formatDate(item.mtime)}</span>
+          <span>{item.size_kb} KB</span>
         </div>
-        <div className="flex items-center gap-1 pt-1">
-          <Button variant="ghost" size="icon" onClick={onPreview} className="h-8 w-8" title="Ver">
+        <div className="flex items-center gap-0.5 pt-1.5 border-t border-border/30 -mx-1">
+          <Button variant="ghost" size="icon" onClick={onPreview} className="h-7 w-7" title="Ver">
             <Eye className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="ghost" size="icon" onClick={onCopy} className="h-8 w-8" title="Copiar">
+          <Button variant="ghost" size="icon" onClick={onCopy} className="h-7 w-7" title="Copiar">
             <Copy className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="ghost" size="icon" onClick={onDownload} className="h-8 w-8" title="Descargar">
+          <Button variant="ghost" size="icon" onClick={onDownload} className="h-7 w-7" title="Descargar">
             <Download className="h-3.5 w-3.5" />
           </Button>
+          <span className="ml-auto text-[9px] font-mono uppercase tracking-wider text-muted-foreground/70 pr-1">
+            {formatDate(item.mtime)}
+          </span>
           <Button
             variant="ghost"
             size="icon"
             onClick={onDelete}
-            className="h-8 w-8 ml-auto text-muted-foreground hover:text-destructive"
+            className="h-7 w-7 text-muted-foreground hover:text-destructive"
             title="Eliminar"
           >
             <Trash2 className="h-3.5 w-3.5" />

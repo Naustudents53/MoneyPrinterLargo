@@ -20,6 +20,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, type ConfigField } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { AutoSyncPanel } from "@/components/AutoSyncPanel";
 import { toast } from "sonner";
 
 // Map an API config group label to a design icon. Anything we don't know
@@ -187,6 +188,11 @@ export function Settings() {
             </Button>
           </div>
         )}
+
+        {/* Auto-sync lives in its own dedicated panel because it has its
+            own concept of "running" state and per-tier controls — wrapping
+            it in the generic key/value editor below would lose half the UX. */}
+        <AutoSyncPanel />
 
         {loading || !section ? (
           <Skeleton className="h-[540px]" />

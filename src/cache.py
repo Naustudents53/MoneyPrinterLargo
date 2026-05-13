@@ -1,8 +1,49 @@
 import os
 import json
+import time
+import contextlib
 
 from typing import List
 from config import ROOT_DIR
+
+
+@contextlib.contextmanager
+def json_write_lock(json_path: str, timeout: float = 15.0):
+    """Process-safe exclusive lock for a JSON cache file.
+
+    Uses a `.lock` sentinel file — O_CREAT|O_EXCL is atomic on NTFS and
+    ext4, so it works correctly across multiple subprocesses without any
+    shared memory. Stale locks (left by a crashed process) are removed
+    automatically after `timeout` seconds."""
+    lock_path = json_path + ".lock"
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            break
+        except FileExistsError:
+            try:
+                age = time.monotonic() - os.path.getmtime(lock_path)
+                if age > timeout:
+                    os.remove(lock_path)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() > deadline:
+                try:
+                    os.remove(lock_path)
+                except Exception:
+                    pass
+                continue
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        try:
+            os.remove(lock_path)
+        except Exception:
+            pass
 
 def get_cache_path() -> str:
     """
@@ -104,17 +145,11 @@ def add_account(provider: str, account: dict) -> None:
     """
     cache_path = get_provider_cache_path(provider)
 
-    # Get the current accounts
-    accounts = get_accounts(provider)
-
-    # Add the new account
-    accounts.append(account)
-
-    # Write the new accounts to the cache
-    with open(cache_path, 'w') as file:
-        json.dump({
-            "accounts": accounts
-        }, file, indent=4)
+    with json_write_lock(cache_path):
+        accounts = get_accounts(provider)
+        accounts.append(account)
+        with open(cache_path, 'w') as file:
+            json.dump({"accounts": accounts}, file, indent=4)
 
 def remove_account(provider: str, account_id: str) -> None:
     """
@@ -127,19 +162,13 @@ def remove_account(provider: str, account_id: str) -> None:
     Returns:
         None
     """
-    # Get the current accounts
-    accounts = get_accounts(provider)
-
-    # Remove the account
-    accounts = [account for account in accounts if account['id'] != account_id]
-
-    # Write the new accounts to the cache
     cache_path = get_provider_cache_path(provider)
 
-    with open(cache_path, 'w') as file:
-        json.dump({
-            "accounts": accounts
-        }, file, indent=4)
+    with json_write_lock(cache_path):
+        accounts = get_accounts(provider)
+        accounts = [a for a in accounts if a['id'] != account_id]
+        with open(cache_path, 'w') as file:
+            json.dump({"accounts": accounts}, file, indent=4)
 
 def get_products() -> List[dict]:
     """

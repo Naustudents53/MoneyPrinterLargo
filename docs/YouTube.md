@@ -1,8 +1,8 @@
 # YouTube Shorts Automater
 
-MPP uses a similar implementation of V1 (see [MPV1](https://github.com/FujiwaraChoki/MoneyPrinter)), to generate Video-Files and upload them to YouTube Shorts.
+MoneyPrinter Pro automates the full Shorts pipeline: topic → script → metadata → image generation (AI or stock photos) → TTS → subtitles → MoviePy composition → Selenium upload to YouTube Studio.
 
-In contrast to V1, V2 uses AI generated images as the visuals for the video, instead of using stock footage. This makes the videos more unique and less likely to be flagged by YouTube. V2 also supports music right from the get-go.
+Visuals can come from either AI generators (Gemini Nano Banana 2, Leonardo AI) or curated stock sources (Wikimedia, Europeana, Library of Congress, Pexels, Pixabay) depending on the niche. Music is layered in from the bundled songs library.
 
 ## Relevant Configuration
 

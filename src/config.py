@@ -117,6 +117,100 @@ def get_threads() -> int:
     """
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         return json.load(file)["threads"]
+
+def _get_config_value(name: str, default=None):
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return json.load(file).get(name, default)
+
+def _get_bool_config(name: str, default: bool) -> bool:
+    value = os.environ.get(f"MP_{name.upper()}", "")
+    if not value:
+        value = _get_config_value(name, default)
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+def get_short_render_profile() -> str:
+    """
+    Gets the short-video render profile.
+
+    quality: current look (Ken Burns + karaoke)
+    fast: static images + karaoke
+    turbo: static images without burned-in karaoke
+    """
+    profile = os.environ.get("MP_SHORT_RENDER_PROFILE", "").strip()
+    if not profile:
+        profile = str(_get_config_value("short_render_profile", "quality")).strip()
+    profile = profile.lower()
+    if profile not in {"quality", "fast", "turbo"}:
+        return "quality"
+    return profile
+
+def get_short_render_fps() -> int:
+    """
+    Gets the FPS used when rendering Shorts.
+    Lower FPS reduces MoviePy's per-frame Python work.
+    """
+    default = 24 if get_short_render_profile() in {"fast", "turbo"} else 30
+    value = os.environ.get("MP_SHORT_RENDER_FPS", "").strip()
+    if not value:
+        value = _get_config_value("short_render_fps", default)
+    try:
+        fps = int(value)
+    except (TypeError, ValueError):
+        fps = default
+    return max(12, min(60, fps))
+
+def get_short_ken_burns_enabled() -> bool:
+    """Returns whether Shorts should animate image zooms in MoviePy."""
+    return _get_bool_config(
+        "short_ken_burns",
+        default=get_short_render_profile() == "quality",
+    )
+
+def get_short_karaoke_subtitles_enabled() -> bool:
+    """Returns whether Shorts should burn word-level karaoke subtitles."""
+    return _get_bool_config(
+        "short_karaoke_subtitles",
+        default=get_short_render_profile() != "turbo",
+    )
+
+def get_short_crossfade_seconds() -> float:
+    """Gets crossfade duration between Short images."""
+    default = 0.4 if get_short_render_profile() == "quality" else 0.0
+    value = os.environ.get("MP_SHORT_CROSSFADE_SECONDS", "").strip()
+    if not value:
+        value = _get_config_value("short_crossfade_seconds", default)
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        seconds = default
+    return max(0.0, min(2.0, seconds))
+
+def get_render_codec() -> str:
+    """
+    Gets the MoviePy/ffmpeg video codec.
+
+    Use "auto" to try hardware H.264 encoders first, falling back to libx264.
+    """
+    codec = os.environ.get("MP_RENDER_CODEC", "").strip()
+    if not codec:
+        codec = str(_get_config_value("render_codec", "libx264")).strip()
+    return codec or "libx264"
+
+def get_render_preset() -> str:
+    """Gets the ffmpeg encoder preset, if configured."""
+    preset = os.environ.get("MP_RENDER_PRESET", "").strip()
+    if not preset:
+        preset = str(_get_config_value("render_preset", "") or "").strip()
+    return preset
+
+def get_render_bitrate() -> str:
+    """Gets an optional ffmpeg video bitrate override."""
+    bitrate = os.environ.get("MP_RENDER_BITRATE", "").strip()
+    if not bitrate:
+        bitrate = str(_get_config_value("render_bitrate", "") or "").strip()
+    return bitrate
     
 def get_zip_url() -> str:
     """
@@ -322,9 +416,59 @@ def get_imagemagick_path() -> str:
         return json.load(file)["imagemagick_path"]
 
 def get_llm_provider() -> str:
-    """Gets the LLM provider (ollama or gemini)."""
+    """Gets the LLM provider (ollama, pollinations, gemini, or openai)."""
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         return json.load(file).get("llm_provider", "gemini")
+
+
+def get_openai_base_url() -> str:
+    """Gets the OpenAI-compatible API base URL."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        configured = json.load(file).get("openai_base_url", "")
+        return configured or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+
+def get_openai_api_key() -> str:
+    """Gets the OpenAI API key for GPT text generation."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        configured = json.load(file).get("openai_api_key", "")
+        return configured or os.environ.get("OPENAI_API_KEY", "")
+
+
+def get_openai_model() -> str:
+    """Gets the primary OpenAI model for text generation."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return json.load(file).get("openai_model", "gpt-5.5")
+
+
+def get_openai_models() -> list[str]:
+    """Gets the ordered list of OpenAI models to try (best first)."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        models = json.load(file).get("openai_models", [])
+
+    override = os.environ.get("MP_OPENAI_MODEL_OVERRIDE", "").strip()
+    if override:
+        models = [override] + [m for m in (models or []) if m != override]
+        return models
+
+    if models:
+        return models
+    return [get_openai_model()]
+
+
+def get_openai_reasoning_effort() -> str:
+    """Gets the reasoning effort used for GPT-5/OpenAI reasoning models."""
+    value = os.environ.get("MP_OPENAI_REASONING_EFFORT", "").strip()
+    if not value:
+        with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+            value = str(json.load(file).get("openai_reasoning_effort", "medium")).strip()
+    return value or "medium"
+
+
+def get_pollinations_text_model() -> str:
+    """Gets the configured Pollinations text model (default: openai)."""
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        return json.load(file).get("pollinations_text_model", "openai")
 
 def get_gemini_model() -> str:
     """Gets the primary Gemini model for text generation."""
@@ -332,9 +476,20 @@ def get_gemini_model() -> str:
         return json.load(file).get("gemini_model", "gemini-2.5-flash")
 
 def get_gemini_models() -> list[str]:
-    """Gets the ordered list of Gemini models to try (best first)."""
+    """Gets the ordered list of Gemini models to try (best first).
+
+    Per-job override via MP_GEMINI_MODEL_OVERRIDE pushes the chosen model to
+    the front of the list (and falls back to the configured ones if it gets
+    rate-limited) — set by the webapp runner when the user picks a specific
+    model in the Generate UI."""
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         models = json.load(file).get("gemini_models", [])
+
+    override = os.environ.get("MP_GEMINI_MODEL_OVERRIDE", "").strip()
+    if override:
+        models = [override] + [m for m in (models or []) if m != override]
+        return models
+
     if models:
         return models
     # Fallback: just the single configured model
@@ -393,11 +548,23 @@ def resolve_series(subject: str):
 def get_script_sentence_length() -> int:
     """
     Gets the forced script's sentence length.
-    In case there is no sentence length in config, returns 4 when none
+
+    Per-job overrides via the MP_SENTENCE_LENGTH_OVERRIDE env var win over the
+    config file — the webapp uses this to let users pick an estimated
+    duration without mutating config.json shared across other jobs.
 
     Returns:
         length (int): Length of script's sentence
     """
+    override = os.environ.get("MP_SENTENCE_LENGTH_OVERRIDE", "").strip()
+    if override:
+        try:
+            n = int(override)
+            if n > 0:
+                return n
+        except ValueError:
+            pass
+
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         config_json = json.load(file)
         if (config_json.get("script_sentence_length") is not None):
