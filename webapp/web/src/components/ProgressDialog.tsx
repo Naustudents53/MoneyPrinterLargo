@@ -330,7 +330,7 @@ export function ProgressDialog({
 
           <div className="relative">
             <div className="flex items-center justify-between px-3 py-1.5 rounded-t-lg border border-b-0 hairline-strong bg-[hsl(var(--ink)/0.95)] text-emerald-200/70">
-              <div className="flex items-center gap-2 text-[11px] font-mono uppercase tracking-wider">
+              <div className="flex items-center gap-2 text-[11px] font-mono uppercase">
                 <Terminal className="h-3 w-3" />
                 <span>logs</span>
                 {logs.length > 0 && (
@@ -351,7 +351,7 @@ export function ProgressDialog({
                       : "bg-emerald-200/30"
                   }`}
                 />
-                <span className="text-[10px] font-mono uppercase tracking-widest">
+                <span className="text-[10px] font-mono uppercase">
                   {status === "running" ? "live" : status === "done" ? "ready" : status === "error" ? "failed" : "idle"}
                 </span>
               </div>
@@ -541,7 +541,7 @@ function LogDivider({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-3 my-2 select-none">
       <div className={`flex-1 border-t ${tone}`} />
-      <span className={`text-[10px] font-mono uppercase tracking-[0.18em] ${tone.split(" ")[0]}`}>
+      <span className={`text-[10px] font-mono uppercase ${tone.split(" ")[0]}`}>
         {label}
       </span>
       <div className={`flex-1 border-t ${tone}`} />

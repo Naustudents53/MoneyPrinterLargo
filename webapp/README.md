@@ -50,20 +50,23 @@ Luego, una sola línea instala todo (backend + frontend + orquestador):
 
 ```bash
 cd webapp
-npm run install:all
+pnpm run install:all
 ```
 
 Esto ejecuta:
-- `npm install` (orquestador con `concurrently`)
-- `npm --prefix web install` (frontend Vite + React)
+- `pnpm install` (workspace: orquestador con `concurrently` + frontend Vite/React)
 - `pip install -r api/requirements.txt` (FastAPI)
+
+La configuracion de pnpm vive en `pnpm-workspace.yaml` y exige
+`minimumReleaseAge: 10080`, es decir, 7 dias antes de aceptar versiones nuevas
+publicadas en el registro.
 
 ## Ejecutar (una sola terminal de VS Code)
 
 Desde `webapp/`:
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 Esto arranca **backend + frontend en la misma terminal** con logs prefijados:
@@ -76,16 +79,16 @@ Abre **http://127.0.0.1:5173**. Los dos procesos comparten la terminal pero cons
 
 ```bash
 # Desde la raíz del repo (sin cd)
-npm --prefix webapp run dev
+pnpm --dir webapp run dev
 
 # Solo el backend
-npm run dev:api
+pnpm run dev:api
 
 # Solo el frontend
-npm run dev:web
+pnpm run dev:web
 
 # Build de producción del frontend
-npm run build
+pnpm run build
 ```
 
 ### Scripts legacy (también disponibles)
@@ -142,7 +145,7 @@ hasta terminar — solo se desconecta el stream en el cliente.
 - **Colores de marca**: edita las variables `--brand-start`, `--brand-mid`,
   `--brand-end` en [web/src/index.css](web/src/index.css).
 - **Endpoint del backend en producción**: define `VITE_API_BASE` antes de
-  `npm run build`.
+  `pnpm run build`.
 - **Puerto del backend**: cambia el target en [web/vite.config.ts](web/vite.config.ts)
   si lo mueves.
 

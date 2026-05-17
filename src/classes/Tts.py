@@ -3,21 +3,75 @@ import asyncio
 
 from config import ROOT_DIR, get_tts_voice, get_tts_provider
 
-# Edge-TTS voice mapping (natural-sounding Microsoft voices)
+# Edge-TTS voice mapping (natural-sounding Microsoft voices).
+#
+# The first 12 aliases are kept for backward compatibility: existing channels /
+# config.json may store them by name. The selector in the webapp stores the full
+# voice_id, so the broad Spanish catalogue below is keyed by descriptive
+# country-tagged aliases (display only; lookups by voice_id fall through
+# unchanged via EDGE_TTS_VOICES.get(value, value)).
 EDGE_TTS_VOICES = {
     "Jasper": "en-US-GuyNeural",
     "Bella": "en-US-JennyNeural",
     "Luna": "en-US-AriaNeural",
-    "Bruno": "en-US-DavisNeural",
-    "Rosie": "en-US-SaraNeural",
+    "Bruno": "en-US-BrianNeural",
+    "Rosie": "en-US-AvaNeural",
     "Hugo": "en-GB-RyanNeural",
     "Kiki": "en-AU-NatashaNeural",
     "Leo": "en-US-ChristopherNeural",
-    # Spanish voices
+    # Spanish - legacy aliases (do not rename: stored in existing configs)
     "Sofia": "es-MX-DaliaNeural",
     "Carlos": "es-MX-JorgeNeural",
     "Elena": "es-ES-ElviraNeural",
     "Pablo": "es-ES-AlvaroNeural",
+    # Spanish - Spain (es-ES)
+    "Ximena (ES)": "es-ES-XimenaNeural",
+    # Spanish - Argentina (es-AR)
+    "Elena (AR)": "es-AR-ElenaNeural",
+    "Tomas (AR)": "es-AR-TomasNeural",
+    # Spanish - Colombia (es-CO)
+    "Gonzalo (CO)": "es-CO-GonzaloNeural",
+    "Salome (CO)": "es-CO-SalomeNeural",
+    # Spanish - Chile (es-CL)
+    "Catalina (CL)": "es-CL-CatalinaNeural",
+    "Lorenzo (CL)": "es-CL-LorenzoNeural",
+    # Spanish - Peru (es-PE)
+    "Alex (PE)": "es-PE-AlexNeural",
+    "Camila (PE)": "es-PE-CamilaNeural",
+    # Spanish - Venezuela (es-VE)
+    "Paola (VE)": "es-VE-PaolaNeural",
+    "Sebastian (VE)": "es-VE-SebastianNeural",
+    # Spanish - United States (es-US, neutral Latino)
+    "Alonso (US)": "es-US-AlonsoNeural",
+    "Paloma (US)": "es-US-PalomaNeural",
+    # Spanish - Central America & Caribbean
+    "Maria (CR)": "es-CR-MariaNeural",
+    "Juan (CR)": "es-CR-JuanNeural",
+    "Marta (GT)": "es-GT-MartaNeural",
+    "Andres (GT)": "es-GT-AndresNeural",
+    "Karla (HN)": "es-HN-KarlaNeural",
+    "Carlos (HN)": "es-HN-CarlosNeural",
+    "Lorena (SV)": "es-SV-LorenaNeural",
+    "Rodrigo (SV)": "es-SV-RodrigoNeural",
+    "Margarita (PA)": "es-PA-MargaritaNeural",
+    "Roberto (PA)": "es-PA-RobertoNeural",
+    "Yolanda (NI)": "es-NI-YolandaNeural",
+    "Federico (NI)": "es-NI-FedericoNeural",
+    "Ramona (DO)": "es-DO-RamonaNeural",
+    "Emilio (DO)": "es-DO-EmilioNeural",
+    "Karina (PR)": "es-PR-KarinaNeural",
+    "Victor (PR)": "es-PR-VictorNeural",
+    "Belkys (CU)": "es-CU-BelkysNeural",
+    "Manuel (CU)": "es-CU-ManuelNeural",
+    # Spanish - South America (remaining)
+    "Andrea (EC)": "es-EC-AndreaNeural",
+    "Luis (EC)": "es-EC-LuisNeural",
+    "Sofia (BO)": "es-BO-SofiaNeural",
+    "Marcelo (BO)": "es-BO-MarceloNeural",
+    "Tania (PY)": "es-PY-TaniaNeural",
+    "Mario (PY)": "es-PY-MarioNeural",
+    "Valentina (UY)": "es-UY-ValentinaNeural",
+    "Mateo (UY)": "es-UY-MateoNeural",
 }
 
 # Deep narrator voice for long-form documentary videos (Spain, neutral & authoritative)

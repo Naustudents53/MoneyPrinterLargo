@@ -20,4 +20,4 @@ trap "kill $API_PID 2>/dev/null || true" EXIT
 
 cd "$ROOT/webapp/web"
 echo "[web] Starting Vite on http://127.0.0.1:5173 ..."
-npm run dev
+pnpm run dev

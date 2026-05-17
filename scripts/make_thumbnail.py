@@ -157,6 +157,10 @@ def build_visual_prompt(topic: str) -> str:
             f"places, objects, era, clothing, architecture or symbols from the topic. Use proper nouns "
             f"when relevant. The image must be visually unmistakable as the topic.\n"
             f"- Build ONE single dramatic scene, not a list of unrelated elements.\n"
+            f"- FACE-SAFE: avoid clear front-facing faces, portraits, selfies, beauty shots, detailed eyes, "
+            f"or recognizable likenesses. If people appear, show backs, silhouettes, over-the-shoulder angles, "
+            f"hands, props, helmets, hoods, smoke, shadow or foreground occlusion. Convey emotion through "
+            f"body language and the scene.\n"
             f"- Include: dramatic side lighting, high contrast, shallow depth of field, "
             f"cinematic composition, photorealistic.\n"
             f"- End the prompt with: no text, no letters, no logos, no watermark.\n"
@@ -181,6 +185,8 @@ def build_visual_prompt(topic: str) -> str:
     # Template fallback — embeds the topic literally so at least it's anchored.
     return (
         f"Cinematic dramatic scene about: {topic}. "
+        f"Face-safe composition with no identifiable faces, using hands, backs, silhouettes, "
+        f"over-the-shoulder angles or faces obscured by shadow and props. "
         f"Photorealistic, high contrast side lighting, atmospheric haze, intense composition, "
         f"ultra-detailed, shallow depth of field, 8K, "
         f"no text, no letters, no logos, no watermark"

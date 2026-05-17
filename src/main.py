@@ -561,6 +561,85 @@ def main():
                         else:
                             break
                     elif user_input == 7:
+                        # Generate a complete Short/Long video from user-uploaded photos.
+                        from classes.PhotoVideo import PhotoVideoGenerator, PhotoVideoRequest, collect_photo_paths
+
+                        info("Create video from uploaded photos")
+                        kind_choice = question("Format - [1] Short (default), [2] Long video: ").strip()
+                        photo_kind = "long" if kind_choice == "2" else "short"
+
+                        raw_photos = question(
+                            "Photo folder or file list (comma/semicolon separated): "
+                        ).strip()
+                        photo_paths = collect_photo_paths(raw_photos)
+                        if not photo_paths:
+                            warning("No valid photos found. Supported: jpg, png, webp, bmp, tif.")
+                            continue
+                        info(f" => Found {len(photo_paths)} photo(s).")
+
+                        topic = question(
+                            "Topic/theme (leave empty so the LLM analyzes the photos): "
+                        ).strip()
+
+                        script = ""
+                        script_mode = question(
+                            "Script - [1] LLM from photos (default), [2] paste now, [3] load .txt: "
+                        ).strip()
+                        if script_mode == "2":
+                            info("Paste the script. Finish with a single line containing END.")
+                            lines = []
+                            while True:
+                                line = input()
+                                if line.strip().upper() == "END":
+                                    break
+                                lines.append(line)
+                            script = "\n".join(lines).strip()
+                        elif script_mode == "3":
+                            script_path = question("Script .txt path: ").strip().strip('"')
+                            try:
+                                with open(script_path, "r", encoding="utf-8") as f:
+                                    script = f.read().strip()
+                            except Exception as e:
+                                warning(f"Could not read script file: {e}")
+                                script = ""
+
+                        if photo_kind == "short":
+                            duration_choice = question(
+                                "Short duration - [1] 1 minute (default), [2] 2 minutes, [3] 3 minutes: "
+                            ).strip()
+                            duration_seconds = {"2": 120, "3": 180}.get(duration_choice, 60)
+                            from classes.duration_presets import resolve_short_duration
+                            d, s, w, n = resolve_short_duration(duration_seconds)
+                            youtube._target_duration_seconds = d
+                            youtube._sentence_length_override = s
+                            youtube._target_word_count = w
+                            youtube._n_prompts_override = n
+                            info(f" => Target: {d}s | {s} sentences | ~{w} words")
+
+                        chosen_hook = _prompt_hook_profile_choice(youtube._hook_profile)
+                        youtube._hook_profile = chosen_hook
+                        info(f" => Hook profile: {chosen_hook}")
+
+                        try:
+                            video_path = PhotoVideoGenerator(youtube).generate(
+                                tts,
+                                PhotoVideoRequest(
+                                    kind=photo_kind,
+                                    photo_paths=photo_paths,
+                                    topic=topic,
+                                    script=script,
+                                    auto_analyze=True,
+                                ),
+                            )
+                        except Exception as e:
+                            error(f"Photo video generation failed: {type(e).__name__}: {e}")
+                            continue
+
+                        if not video_path:
+                            warning("Photo video generation aborted - nothing to upload.")
+                        elif confirm("Do you want to upload this video to YouTube?", default=True):
+                            youtube.upload_video()
+                    elif user_input == 8:
                         if get_verbose():
                             info(" => Climbing Options Ladder...", False)
                         break

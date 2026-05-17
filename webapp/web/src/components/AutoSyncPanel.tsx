@@ -234,7 +234,7 @@ export function AutoSyncPanel() {
               )}
             >
               <div className="flex flex-col gap-0.5">
-                <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-muted-foreground">
+                <span className="font-mono text-[9px] uppercase text-muted-foreground">
                   Maestro
                 </span>
                 <span className={cn("text-[11px] font-medium", draft.enabled ? "text-primary" : "text-muted-foreground")}>
@@ -297,7 +297,7 @@ export function AutoSyncPanel() {
           <div className="flex-1 space-y-2">
             <div className="flex items-baseline justify-between gap-2 flex-wrap">
               <div className="flex flex-col">
-                <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-muted-foreground">
+                <span className="font-mono text-[9px] uppercase text-muted-foreground">
                   Tier Recent · Fine-tune
                 </span>
                 <Label className="text-[13px] font-medium">
@@ -386,7 +386,7 @@ function TierCard({
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span
-                  className="font-mono text-[9px] uppercase tracking-[0.22em]"
+                  className="font-mono text-[9px] uppercase"
                   style={{ color: effective ? `hsl(var(--${def.accent}))` : "hsl(var(--muted-foreground))" }}
                 >
                   {def.eyebrow}
@@ -399,7 +399,7 @@ function TierCard({
           </div>
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-1.5 rounded-md border border-border/50 bg-background/40 px-2.5 py-1.5">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+              <Label className="text-[10px] uppercase text-muted-foreground font-mono">
                 cada
               </Label>
               <Input
@@ -473,7 +473,7 @@ function TierCard({
         {logs.length > 0 && effective && (
           <details className="mt-2 text-xs group/logs">
             <summary className="cursor-pointer text-muted-foreground hover:text-foreground flex items-center gap-1.5 select-none">
-              <span className="font-mono text-[10px] uppercase tracking-wider">Logs recientes</span>
+              <span className="font-mono text-[10px] uppercase">Logs recientes</span>
               <Badge variant="outline" className="h-4 text-[9px] px-1.5">{logs.length}</Badge>
             </summary>
             <div className="mt-2 font-mono text-[11px] bg-background/60 text-foreground/80 rounded-md border border-border/40 p-2 max-h-32 overflow-auto scrollbar-thin">
@@ -493,28 +493,28 @@ function TierCard({
 function TierStatusPill({ status }: { status?: string }) {
   if (status === "running") {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-primary">
+      <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase text-primary">
         <Loader2 className="h-2.5 w-2.5 animate-spin" /> corriendo
       </span>
     );
   }
   if (status === "ok") {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-success">
+      <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase text-success">
         <CheckCircle2 className="h-2.5 w-2.5" /> ok
       </span>
     );
   }
   if (status === "error") {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-destructive">
+      <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase text-destructive">
         <AlertCircle className="h-2.5 w-2.5" /> error
       </span>
     );
   }
   if (status === "disabled") {
     return (
-      <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+      <span className="text-[10px] font-mono uppercase text-muted-foreground">
         desactivado
       </span>
     );
@@ -541,7 +541,7 @@ function Stat({
       title={hint}
     >
       <div
-        className="flex items-center gap-1 text-[9px] uppercase tracking-[0.18em] font-mono"
+        className="flex items-center gap-1 text-[9px] uppercase font-mono"
         style={{
           color: accent ? `hsl(var(--${accent}))` : "hsl(var(--muted-foreground))",
           opacity: 0.85,

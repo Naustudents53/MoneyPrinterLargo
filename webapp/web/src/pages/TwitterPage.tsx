@@ -84,6 +84,7 @@ export function TwitterPage() {
   return (
     <>
       <Header
+        eyebrow="Social"
         title="Cuentas Twitter / X"
         description="Administra cuentas y postea tweets generados con IA."
         actions={
@@ -94,8 +95,35 @@ export function TwitterPage() {
       />
 
       <PageShell>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-1 space-y-3">
+        <section className="page-hero">
+          <div className="page-hero-inner">
+            <div>
+              <span className="eyebrow block mb-2">Social desk</span>
+              <h1 className="page-title">
+                Cuentas listas para <span className="brand-text">publicar</span>
+              </h1>
+              <p className="page-subtitle">
+                Administra perfiles, lanza posts con IA y revisa el historial local
+                desde una vista pensada para operar rapido.
+              </p>
+            </div>
+            <div className="metric-strip grid-cols-2 w-full sm:w-auto sm:min-w-[320px]">
+              <div className="px-4 py-3">
+                <span className="tiny-label">Cuentas</span>
+                <div className="mt-1 font-mono text-[17px] font-semibold">{accounts.length}</div>
+              </div>
+              <div className="px-4 py-3" style={{ borderLeft: "1px solid hsl(var(--border) / .06)" }}>
+                <span className="tiny-label">Posts</span>
+                <div className="mt-1 font-mono text-[17px] font-semibold">
+                  {accounts.reduce((sum, a) => sum + a.posts_count, 0)}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div className="grid grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)] gap-5">
+          <div className="space-y-3">
             {loading ? (
               <>
                 {Array.from({ length: 2 }).map((_, i) => (
@@ -119,14 +147,14 @@ export function TwitterPage() {
                   key={a.id}
                   onClick={() => setSelected(a)}
                   className={`w-full text-left transition-all ${
-                    selected?.id === a.id ? "ring-2 ring-primary" : ""
+                    selected?.id === a.id ? "ring-2 ring-primary/50 rounded-xl" : ""
                   }`}
                 >
-                  <Card className="hover:border-primary/40">
+                  <Card className="studio-hover">
                     <CardContent className="p-4 space-y-2">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
-                          <div className="rounded-md bg-accent/15 p-1.5 text-accent shrink-0">
+                          <div className="rounded-lg bg-accent/10 p-2 text-accent shrink-0">
                             <Twitter className="h-4 w-4" />
                           </div>
                           <span className="font-semibold truncate">{a.nickname}</span>
@@ -136,7 +164,7 @@ export function TwitterPage() {
                       <p className="text-xs text-muted-foreground line-clamp-2">
                         {a.topic || "(sin tópico)"}
                       </p>
-                      <div className="flex items-center justify-between pt-2 border-t border-border/60">
+                      <div className="flex items-center justify-between pt-2 border-t border-border/10">
                         <Button
                           variant="brand"
                           size="sm"
@@ -180,7 +208,7 @@ export function TwitterPage() {
             )}
           </div>
 
-          <div className="lg:col-span-2">
+          <div>
             <Card>
               <CardContent className="p-5">
                 <div className="flex items-center justify-between mb-4">
@@ -214,7 +242,7 @@ export function TwitterPage() {
                     {posts.map((p) => (
                       <li
                         key={p.index}
-                        className="rounded-lg border border-border/60 p-3 hover:bg-muted/30 transition-colors"
+                        className="list-row rounded-xl p-3"
                       >
                         <div className="flex items-center justify-between gap-2 mb-1.5">
                           <Badge variant="outline" className="text-[10px]">

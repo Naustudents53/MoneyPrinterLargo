@@ -25,7 +25,7 @@ REM Give the API a moment before launching the frontend
 timeout /t 2 /nobreak >nul
 
 echo [web] Starting Vite on http://127.0.0.1:5173 ...
-start "MPL Web" cmd /k "cd webapp\web && npm run dev"
+start "MPL Web" cmd /k "cd webapp\web && pnpm run dev"
 
 echo.
 echo Both services launched in separate windows.

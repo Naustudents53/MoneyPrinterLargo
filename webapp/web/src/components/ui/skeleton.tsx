@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn("shimmer rounded-md", className)}
+      className={cn("shimmer rounded-lg border border-border/5", className)}
       {...props}
     />
   );

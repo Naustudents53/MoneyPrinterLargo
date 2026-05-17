@@ -108,7 +108,7 @@ _user_override: bool = False
 # Gemini. Models are disabled per-session on failure to avoid retry storms.
 _OLLAMA_FALLBACK_CHAIN: list[str] = [
     "deepseek-v4-pro:cloud",
-    "gemma4-31b:cloud",
+    "gemma4:31b-cloud",
     "kimi-k2.6:cloud",
     "glm-5.1:cloud",
 ]
@@ -161,15 +161,34 @@ RECOMMENDED_OLLAMA_MODELS: list[tuple[str, str]] = [
 #   - ARC-AGI-2 (Gemini 3.1 Pro: 77.1%)
 #   - GPQA Diamond / SWE-bench (Gemini 3 Flash: 90.4% / 78%)
 RECOMMENDED_GEMINI_MODELS: list[tuple[str, str]] = [
-    ("gemini-3.1-pro-preview",       "Gemini 3.1 Pro â€” flagship (ARC-AGI-2 77.1)"),
-    ("gemini-3-flash-preview",       "Gemini 3 Flash â€” frontier fast (GPQA 90.4)"),
-    ("gemini-3.1-flash-lite",        "Gemini 3.1 Flash-Lite â€” efficient frontier"),
-    ("gemini-3.1-flash-lite-preview","Gemini 3.1 Flash-Lite preview"),
-    ("gemini-2.5-pro",               "Gemini 2.5 Pro â€” older flagship, solid"),
-    ("gemini-2.5-flash",             "Gemini 2.5 Flash â€” fast, cheap reasoning"),
+    ("gemini-3-pro-preview",         "Gemini 3 Pro Preview â€” highest quality"),
+    ("gemini-3-flash-preview",       "Gemini 3 Flash Preview â€” frontier fast"),
+    ("gemini-2.5-pro",               "Gemini 2.5 Pro â€” stable high quality"),
+    ("gemini-2.5-flash",             "Gemini 2.5 Flash â€” stable fast"),
     ("gemini-2.5-flash-lite",        "Gemini 2.5 Flash-Lite â€” fastest budget"),
     ("gemini-2.0-flash",             "Gemini 2.0 Flash â€” legacy compatibility"),
+    ("gemma-4-31b-it",               "Gemma 4 31B IT â€” open model via Gemini API"),
+    ("gemma-4-26b-a4b-it",           "Gemma 4 26B A4B IT â€” open model via Gemini API"),
 ]
+
+_GEMINI_MODEL_ALIASES = {
+    # Old / UI-only labels that are not valid Gemini API model resource names.
+    "gemma-4-31b": "gemma-4-31b-it",
+    "gemma-4-26b": "gemma-4-26b-a4b-it",
+    # Common confusion with Ollama Cloud tags.
+    "gemma4:31b-cloud": "gemma-4-31b-it",
+    "gemma4-31b:cloud": "gemma-4-31b-it",
+    "gemma4:26b-cloud": "gemma-4-26b-a4b-it",
+    "gemma4-26b:cloud": "gemma-4-26b-a4b-it",
+}
+
+
+def normalize_gemini_model_id(model: str | None) -> str | None:
+    """Return a Gemini API model id, translating legacy UI aliases."""
+    if not model:
+        return model
+    cleaned = str(model).strip()
+    return _GEMINI_MODEL_ALIASES.get(cleaned.lower(), cleaned)
 # Ollama "thinking" budget for the current call. Set via `force_provider` â€”
 # the long-video pipeline pins it to "high" so DeepSeek V4 Pro Cloud reasons
 # at full depth. None means: don't pass the kwarg at all.
@@ -752,9 +771,9 @@ def _generate_text_gemini(
         raise RuntimeError("No Gemini API key configured")
 
     if model:
-        models = [model]
+        models = [normalize_gemini_model_id(model)]
     else:
-        models = get_gemini_models()
+        models = [normalize_gemini_model_id(m) for m in get_gemini_models()]
 
     payload = {
         "system_instruction": {

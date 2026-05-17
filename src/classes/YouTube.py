@@ -17,6 +17,9 @@ if not hasattr(_PIL_Image, "ANTIALIAS"):
 from utils import *
 from cache import *
 from .Tts import TTS
+from .Retention import CosmicRetentionEngine
+from .MaxRetention import MaxRetentionEngine, is_max_retention, normalize_retention_mode
+from .RetentionLab import RetentionLab
 from llm_provider import generate_text
 from config import *
 from status import *
@@ -46,6 +49,27 @@ _PHOTO_STOPWORDS = {
     "de", "la", "el", "los", "las", "un", "una", "unos", "unas", "y", "o", "u",
     "sobre", "con", "por", "para", "es", "era", "fue", "su", "sus", "del",
 }
+
+
+_UNICODE_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+_UNICODE_TOKEN_RE = re.compile(r"[\w'-]+", re.UNICODE)
+
+
+def _unicode_words(text: str) -> list[str]:
+    """Return alphabetic words, including accented characters, without fragile ranges."""
+    return _UNICODE_WORD_RE.findall(text or "")
+
+
+def _unicode_tokens(text: str) -> list[str]:
+    """Return word-like tokens that may include digits, apostrophes or hyphens."""
+    return _UNICODE_TOKEN_RE.findall(text or "")
+
+
+def _capitalized_unicode_tokens(text: str) -> list[str]:
+    return [
+        tok for tok in _unicode_tokens(text)
+        if len(tok) > 2 and tok[0].isupper()
+    ]
 
 
 # Generic science/topic words that are NOT distinctive enough to anchor a
@@ -236,6 +260,7 @@ class YouTube:
         hook_profile: str = "",
         voice_drama: bool = False,
         target_duration_seconds: int | None = None,
+        retention_mode: str = "",
     ) -> None:
         """
         Constructor for YouTube Class.
@@ -250,6 +275,7 @@ class YouTube:
             short_voice (str): Optional Edge-TTS voice ID (or alias) for shorts narration.
             long_voice (str): Optional Edge-TTS voice ID (or alias) for long-video narration.
             hook_profile (str): Optional hook profile name (see HOOK_PROFILES). Falls back to "educational".
+            retention_mode (str): Optional per-run creative mode. "maxima_retencion" enables tighter Shorts.
 
         Returns:
             None
@@ -273,6 +299,7 @@ class YouTube:
         self._long_voice: str = (long_voice or "").strip()
         self._hook_profile: str = (hook_profile or "").strip().lower()
         self._voice_drama: bool = bool(voice_drama)
+        self._retention_mode: str = normalize_retention_mode(retention_mode)
 
         # Target Short duration â†’ drives sentence count, target word count,
         # and image count. Resolved through a single source of truth so we
@@ -282,6 +309,11 @@ class YouTube:
             d, s, w, n = resolve_short_duration(target_duration_seconds)
         else:
             d, s, w, n = (None, None, None, None)
+        if is_max_retention(self._retention_mode):
+            max_preset = MaxRetentionEngine.duration_preset(d or 60)
+            if max_preset:
+                d = d or 60
+                s, w, n = max_preset.sentences, max_preset.words, max_preset.images
         self._target_duration_seconds: int | None = d
         self._sentence_length_override: int | None = s
         self._target_word_count: int | None = w
@@ -292,6 +324,11 @@ class YouTube:
         self.word_timestamps = None
         self.thumbnail_path: str = ""
         self.active_series: dict = None
+        self.retention_preflight: dict = {}
+        self.retention_hook_lab: dict = {}
+        self.visual_beat_map: list = []
+        self.visual_beat_report: dict = {}
+        self.visual_preflight: dict = {}
 
         # Initialize the Firefox profile
         self.options: Options = Options()
@@ -331,7 +368,7 @@ class YouTube:
             ignore=shutil.ignore_patterns(
                 "lock", ".parentlock", "parent.lock",
                 "cache2", "startupCache", "shader-cache",
-                "thumbnails", "storage", "crashes",
+                "thumbnails", "crashes",
             ),
             dirs_exist_ok=False,
         )
@@ -410,8 +447,10 @@ class YouTube:
 
         # ---- 1. Collect full channel history ----
         past_topics: List[str] = []
+        past_videos: List[dict] = []
         try:
             videos = self.get_videos()
+            past_videos = videos or []
             for v in videos:
                 for key in ("subject", "title"):
                     val = v.get(key)
@@ -523,6 +562,9 @@ class YouTube:
                 f"The new topic must still unmistakably belong to this niche â€” "
                 f"only the specific subject should differ from the list above."
             )
+        if is_max_retention(getattr(self, "_retention_mode", "")):
+            forbidden_block += RetentionLab.burned_topic_directive(past_videos)
+            forbidden_block += RetentionLab.winning_topic_directive(past_videos)
 
         # ---- 4b. Niche validator (second LLM pass that double-checks the candidate) ----
         def _topic_in_niche(candidate: str) -> bool:
@@ -580,6 +622,11 @@ Return ONLY that single line. No other text."""
         max_attempts = 8
         for attempt in range(max_attempts):
             creativity_seed = random.randint(1, 100000)
+            max_retention_topic = (
+                MaxRetentionEngine.topic_generation_directive(self.niche, self.language)
+                if is_max_retention(getattr(self, "_retention_mode", ""))
+                else ""
+            )
             extra_reject = ""
             if rejected:
                 extra_reject = (
@@ -603,6 +650,7 @@ GOOD example: "TON 618: el agujero negro 66 mil millones de veces mÃ¡s masivo 
 GOOD example: "Â¿Por quÃ© Voyager 1 sigue enviando datos 47 aÃ±os despuÃ©s de su lanzamiento?" (one specific real mission detail)
 GOOD example: "El dÃ­a que LIGO detectÃ³ dos agujeros negros fusionÃ¡ndose por primera vez" (one specific real event)
 GOOD example: "EncÃ©lado: la luna de Saturno que escupe agua lÃ­quida al espacio" (one specific real phenomenon)
+{max_retention_topic}
 
 SELF-CHECK BEFORE ANSWERING: Re-read the niche "{self.niche}". If your topic is not unmistakably part of THAT niche, discard it and pick a different one.
 
@@ -648,6 +696,26 @@ OUTPUT FORMAT (strict):
                 rejected.append(candidate)
                 continue
 
+            if is_max_retention(getattr(self, "_retention_mode", "")):
+                weak_reason = MaxRetentionEngine.topic_rejection_reason(candidate, self.niche)
+                if weak_reason:
+                    warning(
+                        f"Topic weak for MAXIMA RETENCION ({weak_reason}) "
+                        f"(attempt {attempt + 1}/{max_attempts}).\n"
+                        f"   candidate: {candidate[:100]}"
+                    )
+                    rejected.append(candidate)
+                    continue
+                burned_reason = RetentionLab.topic_burned_reason(candidate, past_videos)
+                if burned_reason:
+                    warning(
+                        f"Topic weak in Retention Lab ({burned_reason}) "
+                        f"(attempt {attempt + 1}/{max_attempts}).\n"
+                        f"   candidate: {candidate[:100]}"
+                    )
+                    rejected.append(candidate)
+                    continue
+
             completion = candidate
             break
 
@@ -663,6 +731,57 @@ OUTPUT FORMAT (strict):
 
         self.subject = completion
         return completion
+
+    def _run_max_retention_preflight(
+        self,
+        script: str,
+        sentence_length: int | None = None,
+        allow_rewrite: bool = True,
+    ) -> str:
+        """Score MAXIMA RETENCION scripts before expensive render steps."""
+        if not is_max_retention(getattr(self, "_retention_mode", "")):
+            return script
+
+        resolved_sentence_length = sentence_length or self._sentence_length_override or get_script_sentence_length()
+        if allow_rewrite:
+            improved, report = RetentionLab.enforce_pre_render_score(
+                script=script,
+                topic=getattr(self, "subject", "") or "",
+                niche=self.niche,
+                language=self.language,
+                sentence_length=resolved_sentence_length,
+                target_words=self._target_word_count,
+                generate_response=self.generate_response,
+            )
+        else:
+            report = RetentionLab.score_short_script(
+                script=script,
+                topic=getattr(self, "subject", "") or "",
+                niche=self.niche,
+                language=self.language,
+                retention_mode=getattr(self, "_retention_mode", ""),
+            )
+            report.update({
+                "initial_score": report.get("score", 0),
+                "final_score": report.get("score", 0),
+                "threshold": RetentionLab.SCORE_THRESHOLD,
+                "attempts": 0,
+                "rewritten": False,
+                "accepted": report.get("score", 0) >= RetentionLab.SCORE_THRESHOLD,
+                "approved_script": True,
+            })
+            improved = script
+
+        self.retention_preflight = report
+        if get_verbose():
+            status = "OK" if report.get("accepted") else "RIESGO"
+            rewritten = " | rewritten" if report.get("rewritten") else ""
+            info(
+                " => MAXIMA RETENCION preflight: "
+                f"{report.get('final_score', report.get('score', 0))}/10 "
+                f"({status}{rewritten})"
+            )
+        return improved
 
     def generate_script(self) -> str:
         """
@@ -697,7 +816,8 @@ OUTPUT FORMAT (strict):
         # The preset is picked from HOOK_PROFILES by self._hook_profile (set per
         # channel on the account JSON). Falls back to "educational" if the
         # configured profile is missing or unknown.
-        profile_name = self._hook_profile or "educational"
+        is_cosmic_video = CosmicRetentionEngine.is_cosmic_context(self.subject, self.niche)
+        profile_name = self._hook_profile or ("storytelling" if is_cosmic_video else "educational")
         hook_styles = HOOK_PROFILES.get(profile_name) or HOOK_PROFILES["educational"]
         if profile_name not in HOOK_PROFILES and self._hook_profile:
             warning(f"Unknown hook_profile '{self._hook_profile}', falling back to 'educational'.")
@@ -726,10 +846,58 @@ OUTPUT FORMAT (strict):
         if get_verbose():
             info(f" => Hook profile: {profile_name} | style: {hook_style}")
 
+        hook_lab_directive = ""
+        if is_max_retention(getattr(self, "_retention_mode", "")):
+            try:
+                best_hook, hook_report = RetentionLab.select_best_hook(
+                    topic=self.subject,
+                    niche=self.niche,
+                    language=self.language,
+                    generate_response=self.generate_response,
+                    history_videos=self.get_videos(),
+                    candidates=8,
+                )
+            except Exception as e:
+                best_hook, hook_report = "", {"accepted": False, "error": str(e)[:200]}
+            self.retention_hook_lab = hook_report
+            if best_hook:
+                hook_lab_directive = f"""
+
+MAXIMA RETENCION HOOK LAB - mandatory:
+- Sentence 1 must be this hook exactly, unless grammar requires a tiny correction:
+"{best_hook}"
+- Sentence 2 must immediately explain the visual consequence promised by that hook.
+"""
+            if get_verbose() and hook_report:
+                info(
+                    " => Hook Lab: "
+                    f"{hook_report.get('best_score', 0)}/10 "
+                    f"{'OK' if hook_report.get('accepted') else 'RIESGO'}"
+                )
+
+        cosmic_directive = CosmicRetentionEngine.short_generation_directive(
+            self.subject,
+            self.niche,
+            self.language,
+        )
+        max_retention_directive = (
+            MaxRetentionEngine.script_generation_directive(
+                self.subject,
+                self.niche,
+                self.language,
+                sentence_length,
+            )
+            if is_max_retention(getattr(self, "_retention_mode", ""))
+            else ""
+        )
+
         prompt = f"""Write a narration script for a short video in EXACTLY {sentence_length} sentences.
 {duration_clause}
 
 TOPIC: {self.subject}
+{cosmic_directive}
+{max_retention_directive}
+{hook_lab_directive}
 
 NARRATIVE STRUCTURE (follow this order):
 1. HOOK (sentence 1): The hook MUST use this exact style: {hook_style}. Example (adapt to the topic and to {self.language}): {hook_example}. Do NOT default to any other hook style.
@@ -762,6 +930,42 @@ CRITICAL RULES:
             if get_verbose():
                 warning("Generated Script is too long. Retrying...")
             return self.generate_script()
+
+        completion = CosmicRetentionEngine.optimize_short_script(
+            script=completion,
+            topic=self.subject,
+            niche=self.niche,
+            language=self.language,
+            sentence_length=sentence_length,
+            target_words=target_words,
+            generate_response=self.generate_response,
+        )
+
+        if is_max_retention(getattr(self, "_retention_mode", "")):
+            completion = MaxRetentionEngine.optimize_short_script(
+                script=completion,
+                topic=self.subject,
+                niche=self.niche,
+                language=self.language,
+                sentence_length=sentence_length,
+                target_words=target_words,
+                generate_response=self.generate_response,
+            )
+            completion = self._run_max_retention_preflight(
+                completion,
+                sentence_length=sentence_length,
+                allow_rewrite=True,
+            )
+
+        if is_cosmic_video and get_verbose():
+            score = CosmicRetentionEngine.score_script(completion)
+            info(
+                " => Cosmic retention score: "
+                f"{score.average:.1f}/10 "
+                f"(hook {score.hook_strength}, mystery {score.mystery}, "
+                f"visual {score.visual_potential}, pacing {score.pacing}, "
+                f"ending {score.ending_strength})"
+            )
 
         self.script = completion
 
@@ -895,6 +1099,25 @@ ABSOLUTE RULES:
         for i, sec in enumerate(sections):
             sections_text += f"\nSECTION {i+1}: \"{sec}\"\n"
 
+        visual_beat_block = ""
+        if is_max_retention(getattr(self, "_retention_mode", "")):
+            try:
+                beats, beat_report = RetentionLab.build_visual_beat_map(
+                    sections=sections[:n_prompts],
+                    topic=self.subject,
+                    niche=self.niche,
+                    language=self.language,
+                    generate_response=self.generate_response,
+                )
+            except Exception as e:
+                beats, beat_report = [], {"accepted": False, "error": str(e)[:200]}
+            self.visual_beat_map = beats
+            self.visual_beat_report = beat_report
+            visual_beat_block = RetentionLab.visual_beat_block(beats)
+            if get_verbose() and beat_report:
+                status = "OK" if beat_report.get("accepted") else "fallback"
+                info(f" => Visual Beat Map: {beat_report.get('count', 0)} beats ({status})")
+
         if image_mode == "photos":
             prompt = f"""Generate exactly {n_prompts} short SEARCH QUERIES to find REAL scientific / astronomical / space-mission images for a video about: {self.subject}
 
@@ -917,11 +1140,14 @@ ANCHORING EXAMPLES â€” for a video about "TON 618":
 
 The script has been divided into {n_prompts} sections. Each query must match its section:
 {sections_text}
+{visual_beat_block}
 INSTRUCTIONS:
 - Query 1 finds a photo for SECTION 1, Query 2 for SECTION 2, etc.
+- If a Visual Beat Map is present, each query must satisfy its matching BEAT number.
 - Each query MUST contain at least one PROPER NOUN strictly identifying the subject (e.g. "TON 618", "Voyager 1", "JWST Carina Nebula", "Cassini Enceladus").
+- Prefer objects, places, missions, artifacts, landscapes, documents, spacecraft, buildings, maps, tools and environmental evidence over people. Avoid queries that will return portraits or clear faces. If a person is essential, query for hands, back view, silhouette, statue, document, artifact, crowd from behind, or the location/object associated with them.
 - 3 to 7 words per query. No full sentences.
-- FORBIDDEN words: cinematic, dramatic, lighting, 8K, 4K, photorealistic, HD, macro, bokeh, shot, close-up, aerial, style, composition, render, aesthetic. No adjectives describing mood or camera.
+- FORBIDDEN words: cinematic, dramatic, lighting, 8K, 4K, photorealistic, HD, macro, bokeh, shot, close-up, portrait, face, facial, selfie, headshot, aerial, style, composition, render, aesthetic. No adjectives describing mood or camera.
 - FORBIDDEN as the ONLY proper noun in a query: generic body types ("black hole", "galaxy", "nebula", "star"), generic missions ("NASA", "ESA", "telescope"), or generic places ("space", "universe", "sky"). They may appear, but never alone.
 - Write in English (most archives index in English).
 
@@ -948,18 +1174,32 @@ Return ONLY a JSON array of {n_prompts} strings. No markdown, no explanation."""
                 )
 
             video_title = (self.metadata or {}).get("title", "") if hasattr(self, "metadata") else ""
+            visual_retention = CosmicRetentionEngine.visual_retention_directive(
+                self.subject,
+                self.niche,
+            )
+            max_visual_retention = (
+                MaxRetentionEngine.visual_generation_directive(self.subject, self.niche)
+                if is_max_retention(getattr(self, "_retention_mode", ""))
+                else ""
+            )
 
             prompt = f"""Task: write exactly {n_prompts} image prompts for a YouTube Short. The script has been divided into {n_prompts} sections â€” write ONE image prompt per section. Each image must visually represent what is being narrated in THAT EXACT SECTION: the specific action happening, the environment where it takes place, and the atmosphere or emotion of that moment.{era_context}
 
 VIDEO TITLE: {video_title or self.subject}
 TOPIC: {self.subject}
+{visual_retention}
+{max_visual_retention}
 
 SCRIPT DIVIDED INTO {n_prompts} SECTIONS (prompt N must illustrate section N):
 {sections_text}
+{visual_beat_block}
 
 RULES FOR EACH PROMPT:
 
 1. SECTION FIDELITY â€” MANDATORY. Read your assigned section carefully. The image must show what is LITERALLY happening in those sentences: the action described, the place mentioned, the object referenced, the emotion conveyed. Do NOT invent a scene unrelated to the section. If the section describes a landscape or a phenomenon with no people, depict that landscape or phenomenon.
+
+1B. VISUAL BEAT MAP â€” MANDATORY WHEN PRESENT. Prompt N must satisfy BEAT N. Beat 1 is the first-frame scroll-stopper, so it must show one clear subject, one readable action, and one obvious contrast in the first glance.
 
 2. FULL SCENE DESCRIPTION. Every prompt must describe THREE things together:
    a) THE ACTION or main subject â€” what is happening or what is being shown
@@ -971,7 +1211,7 @@ RULES FOR EACH PROMPT:
 4. ACTION OR SCENE FIRST. If people appear, open with a verb-driven action. If the section describes a place, landscape, or phenomenon, open with that environment vividly described.
    FORBIDDEN openings: "[Name] standing in [costume]", "[Name] portrait", "A figure looking intently", "[Name] in [outfit] in front of [backdrop]".
 
-5. PEOPLE AND EMOTION. When people appear, describe their facial expression and body language to match the emotion of the moment (fear, determination, awe, grief, triumph, etc.). Give a brief physical anchor for named real people (max ~10 words). The emotion must match what the narrator is saying in that section.
+5. PEOPLE WITHOUT IDENTIFIABLE FACES. Prefer scenes with no people when the section allows it. When people are necessary, show them from behind, in profile silhouette, over the shoulder, with the face turned away, cropped outside the frame, hidden by shadow, helmet, veil, hood, hands, tools, documents, or environmental occlusion. Communicate emotion through posture, gesture, clothing, hands, distance between bodies, and the surrounding scene. NEVER request a clear front-facing face, portrait, selfie, beauty shot, detailed eyes, or recognizable likeness.
 
 6. CONCRETE OBJECTS. Name at least one specific object from the section (a tool, weapon, structure, artifact, natural element). Generic props are forbidden â€” use only what the script actually references.
 
@@ -986,7 +1226,7 @@ RULES FOR EACH PROMPT:
 11. LENGTH. 40-65 English words per prompt.
 
 EXAMPLES â€” pattern only, not templates to copy:
-   GOOD âœ“ (person + action + emotion) "A exhausted soldier drops to his knees on a smoldering battlefield at dusk, clutching a broken spear, his face streaked with ash and tears, enemy fortifications burning in the distance behind him, smoke rising into an orange sky."
+   GOOD âœ“ (person + action + emotion, no visible face) "An exhausted soldier drops to his knees on a smoldering battlefield at dusk, clutching a broken spear with both hands, helmet tilted forward hiding his face, shoulders collapsed in grief, enemy fortifications burning in the distance behind him, smoke rising into an orange sky."
    GOOD âœ“ (landscape / no people) "A vast primeval forest stretches to the horizon under a hazy amber sky, enormous ferns and cycad trees towering over a muddy river delta, volcanic mountains smoking faintly in the far background, the air thick with mist at dawn."
    GOOD âœ“ (phenomenon) "A massive wall of glacial ice advances slowly across a flat tundra plain under a pale grey sky, uprooting ancient trees in its path, frozen mammoths visible beneath the translucent surface, a herd of woolly rhinoceroses fleeing in the foreground."
    GOOD âœ“ (discovery moment) "An archaeologist kneels in a narrow underground chamber, trembling hand holding a torch over a perfectly preserved golden death mask resting on stone, dust particles floating in the warm light, rough-hewn rock walls pressing close on all sides."
@@ -1085,6 +1325,20 @@ Example format:
         # Limit to n_prompts
         image_prompts = image_prompts[:n_prompts]
 
+        self.visual_preflight = {}
+        if is_max_retention(getattr(self, "_retention_mode", "")) and image_prompts:
+            first_image_report = RetentionLab.score_image_prompt(
+                image_prompts[0],
+                topic=self.subject,
+                first_image=True,
+            )
+            self.visual_preflight["first_image"] = first_image_report
+            if get_verbose():
+                info(
+                    " => First image score: "
+                    f"{first_image_report.get('score', 0)}/10"
+                )
+
         # ------------------------------------------------------------------
         # Diversity guard (AI mode only) â€” detects the failure mode where
         # the LLM returns N near-identical "[name] in armor in front of
@@ -1136,6 +1390,20 @@ Example format:
                 return ""
 
             diag = _looks_too_generic(image_prompts)
+            first_image_report = self.visual_preflight.get("first_image") or {}
+            if (
+                not diag
+                and is_max_retention(getattr(self, "_retention_mode", ""))
+                and first_image_report
+                and first_image_report.get("score", 10) < RetentionLab.FIRST_IMAGE_SCORE_THRESHOLD
+            ):
+                issues = ", ".join(first_image_report.get("issues") or [])
+                diag = (
+                    "first image prompt is weak "
+                    f"({first_image_report.get('score')}/10"
+                    + (f": {issues}" if issues else "")
+                    + ")"
+                )
             if diag:
                 warning(f"Image prompts look generic ({diag}); regenerating once with stricter directive.")
                 stricter = (
@@ -1179,6 +1447,13 @@ Example format:
                         # Retry also fell into the failure mode â€” keep the original;
                         # at least it parsed. Nothing more to do here without a third call.
                         warning("   Retry still looked generic; keeping original prompts.")
+
+        if is_max_retention(getattr(self, "_retention_mode", "")) and image_prompts:
+            self.visual_preflight["first_image"] = RetentionLab.score_image_prompt(
+                image_prompts[0],
+                topic=self.subject,
+                first_image=True,
+            )
 
         if get_verbose():
             info(f" => Generated Image Prompts: {image_prompts}")
@@ -1553,6 +1828,15 @@ Example format:
                 "metadata": getattr(self, "metadata", {}) or {},
                 "is_long": bool(is_long),
                 "thumbnail_path": getattr(self, "thumbnail_path", "") or "",
+                # Stamp the owning channel so upload-last can never cross
+                # channels even if the per-channel ref pointer is missing.
+                "channel_id": getattr(self, "_account_uuid", "") or "",
+                "retention_mode": getattr(self, "_retention_mode", "") or "",
+                "retention_preflight": getattr(self, "retention_preflight", {}) or {},
+                "retention_hook_lab": getattr(self, "retention_hook_lab", {}) or {},
+                "visual_beat_map": getattr(self, "visual_beat_map", []) or [],
+                "visual_beat_report": getattr(self, "visual_beat_report", {}) or {},
+                "visual_preflight": getattr(self, "visual_preflight", {}) or {},
             }
             with open(sidecar, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -1573,8 +1857,9 @@ Example format:
     #   photograph filling the entire frame edge to edge"). Gemini / Nano
     #   Banana 2 respond much better to positive composition anchors than to
     #   "no panels / no collage" negatives, which can backfire via priming.
-    # - Include explicit face/skin/hands realism cues so portraits stop looking
-    #   plasticky and AI-glossy.
+    # - Avoid identifiable faces by default. Hands, clothing, posture, props,
+    #   silhouettes and environments carry the human emotion while preserving
+    #   the documentary realism.
     DEFAULT_BASE_STYLE = (
         "one full-bleed cinematic photograph filling the entire frame edge to edge, "
         "one continuous uninterrupted scene captured in a single real exposure, "
@@ -1585,12 +1870,22 @@ Example format:
         "period-accurate clothing architecture weapons and everyday objects rendered as "
         "real physical materials (wool, linen, bronze, leather, dyed cloth, weathered stone, "
         "oiled wood), authentic textures with visible wear and micro-detail, "
-        "anatomically correct human faces with realistic skin texture, visible pores, "
-        "subtle blemishes, natural facial proportions, sharp detailed eyes with realistic "
-        "iris and natural catchlights, accurate hands with exactly five fingers, correct anatomy, "
+        "human presence shown through realistic hands, clothing folds, posture, silhouettes, "
+        "tools and environmental interaction, faces not visible or not identifiable, "
+        "backs of heads, over-the-shoulder views, profile silhouettes, faces obscured by "
+        "shadow, helmets, veils, hoods, smoke, documents or foreground objects, "
+        "accurate hands with exactly five fingers, correct anatomy, "
         "fine 35mm film grain, no over-sharpening, neutral documentary tone, "
-        "no cartoon, no illustration, no painting, no anime, no stylization, no cel-shading, "
+        "no front-facing faces, no portraits, no selfies, no beauty shots, no detailed eyes, "
+        "no recognizable likeness, no cartoon, no illustration, no painting, no anime, no stylization, no cel-shading, "
         "no airbrushed look, no plastic skin, no waxy skin, no AI gloss"
+    )
+
+    FACE_SAFE_COMPOSITION = (
+        "Face-safe composition: avoid identifiable faces. If humans appear, show hands, "
+        "backs, silhouettes, over-the-shoulder angles, side profiles in shadow, or faces "
+        "obscured by helmets, hoods, documents, smoke, tools or foreground objects. "
+        "Use posture, gesture, clothing, props and environment to convey emotion."
     )
 
     # Words that frequently push Gemini / Nano Banana 2 toward producing a
@@ -1606,6 +1901,31 @@ Example format:
         re.IGNORECASE,
     )
 
+    _FACE_PROMPT_REWRITES: tuple[tuple[re.Pattern, str], ...] = (
+        (re.compile(r"\btight close[- ]up of a single face\b", re.IGNORECASE),
+         "tight close detail of hands, clothing and the story object, face outside the frame"),
+        (re.compile(r"\b(?:extreme |tight )?close[- ]up of (?:a |the |his |her |their )?face\b", re.IGNORECASE),
+         "close detail of hands, clothing and the story object, face outside the frame"),
+        (re.compile(r"\bfront[- ]facing (?:face|portrait|person|subject)\b", re.IGNORECASE),
+         "subject turned away from camera"),
+        (re.compile(r"\bportrait(?:s)?\b", re.IGNORECASE),
+         "environmental scene with face not visible"),
+        (re.compile(r"\bfacial expression(?:s)?\b", re.IGNORECASE),
+         "body language and hand gesture"),
+        (re.compile(r"\bfaces? (?:showing|locked|frozen|filled with|show)\b", re.IGNORECASE),
+         "postures showing"),
+        (re.compile(r"\bintense expression on the subject\b", re.IGNORECASE),
+         "tense body language from the subject, face turned away"),
+        (re.compile(r"\bvisible emotion \(eyes, jaw, brow\)\b", re.IGNORECASE),
+         "visible emotion through posture, shoulders and hands"),
+        (re.compile(r"\beyes?, jaw, brow\b", re.IGNORECASE),
+         "posture, shoulders and hands"),
+        (re.compile(r"\bsharp detailed eyes?\b", re.IGNORECASE),
+         "hands and material details"),
+        (re.compile(r"\brecognizable likeness\b", re.IGNORECASE),
+         "non-identifiable human presence"),
+    )
+
     @classmethod
     def _sanitize_image_prompt(cls, text: str) -> str:
         """Remove multi-image trigger words from a prompt. Image generators
@@ -1615,6 +1935,8 @@ Example format:
         if not text:
             return text
         cleaned = cls._COLLAGE_TRIGGERS.sub("", text)
+        for pattern, replacement in cls._FACE_PROMPT_REWRITES:
+            cleaned = pattern.sub(replacement, cleaned)
         # Collapse double spaces and stray punctuation left after substitution.
         cleaned = re.sub(r"\s{2,}", " ", cleaned)
         cleaned = re.sub(r"\s+,", ",", cleaned)
@@ -1655,7 +1977,7 @@ Example format:
         # "ART STYLE: 1" to the LLM, which then drifts into a generic cartoon
         # look instead of falling through to the photoreal default.
         if custom_style:
-            alpha_words = re.findall(r"[A-Za-zÃÃ‰ÃÃ“ÃšÃ‘Ã¡Ã©Ã­Ã³ÃºÃ±]{3,}", custom_style)
+            alpha_words = [w for w in _unicode_words(custom_style) if len(w) >= 3]
             stripped_lower = custom_style.lower().strip()
             if (
                 len(custom_style) < 8
@@ -1692,7 +2014,7 @@ Example format:
             parts.append(
                 f"FINAL REMINDER â€” keep the entire image in the art style described above ({short_style}). "
                 f"Do NOT default to photorealism. Do NOT add realistic skin texture or photographic lighting. "
-                f"The art style overrides any realism implied by the scene."
+                f"The art style overrides any realism implied by the scene. {self.FACE_SAFE_COMPOSITION}"
             )
         else:
             parts.append(clean_prompt)
@@ -1710,6 +2032,7 @@ Example format:
                 )
                 parts.append((setting_clause + anchors_clause + avoid_clause).strip())
             parts.append(self.DEFAULT_BASE_STYLE)
+            parts.append(self.FACE_SAFE_COMPOSITION)
 
         combined = ". ".join(p for p in parts if p)
         # Hard cap to ~1500 chars â€” Gemini accepts up to ~1900 in our payload
@@ -1840,7 +2163,7 @@ RULES:
 
     def _topic_keywords(self) -> List[str]:
         """Key lowercase tokens from self.subject, used to anchor stock searches to the topic."""
-        words = re.findall(r"[A-Za-zÃ€-Ã¿]+", (self.subject or "").lower())
+        words = _unicode_words((self.subject or "").lower())
         return [w for w in words if len(w) > 2 and w not in _PHOTO_STOPWORDS]
 
     def _anchor_query(self, query: str) -> str:
@@ -1855,7 +2178,7 @@ RULES:
     def _query_tokens(self, *texts: str) -> set:
         """Extract content-word tokens from the given strings for relevance checks."""
         combined = " ".join(t for t in texts if t).lower()
-        tokens = re.findall(r"[a-zÃ -Ã¿]+", combined)
+        tokens = _unicode_words(combined)
         return {t for t in tokens if len(t) > 2 and t not in _PHOTO_STOPWORDS}
 
     def _strict_anchor_tokens(self) -> set:
@@ -1871,7 +2194,7 @@ RULES:
         anchor check on their own."""
         if not query:
             return set()
-        nouns = re.findall(r"\b[A-ZÃ-ÃšÃ‘][\wÃ€-Å¿]{2,}\b", query)
+        nouns = _capitalized_unicode_tokens(query)
         out = set()
         for n in nouns:
             t = n.lower()
@@ -1992,7 +2315,7 @@ RULES:
         """Extract clean search keywords from an AI image prompt for stock photo search."""
         import re
         # Remove common AI style/photography keywords
-        style_words = r'\b(cinematic|dramatic|lighting|8K|4K|ultra|HD|macro|bokeh|aerial|drone|cyberpunk|hyper-realistic|vibrant|saturated|documentary|photography|shot|wide|close-up|extreme|detailed|textures?|colors?|film grain|neon|volumetric|fog|aesthetic|digital painting|golden hour|breathtaking|raw|authentic|feel|shallow depth|field|sweeping|portrait|style|composition|render|realistic|illustration|art|scene|view|high quality|resolution|background|foreground|angle|perspective|moody|atmosphere|accent|dark|light)\b'
+        style_words = r'\b(cinematic|dramatic|lighting|8K|4K|ultra|HD|macro|bokeh|aerial|drone|cyberpunk|hyper-realistic|vibrant|saturated|documentary|photography|shot|wide|close-up|extreme|detailed|textures?|colors?|film grain|neon|volumetric|fog|aesthetic|digital painting|golden hour|breathtaking|raw|authentic|feel|shallow depth|field|sweeping|portrait|selfie|headshot|face|faces|facial|eyes?|style|composition|render|realistic|illustration|art|scene|view|high quality|resolution|background|foreground|angle|perspective|moody|atmosphere|accent|dark|light)\b'
         cleaned = re.sub(style_words, '', prompt, flags=re.IGNORECASE)
         cleaned = re.sub(r'[,\-:;"\'\(\)]', ' ', cleaned)
         cleaned = ' '.join(cleaned.split())
@@ -2853,10 +3176,15 @@ RULES:
 
         # Per-channel short voice override (falls back to TTS instance default if empty).
         short_vid = self._resolve_voice(self._short_voice)
-        # Optional dramatic modulation for narrator-style channels (mystery/horror/storytelling).
-        # Lighter than the long-form documentary preset (-8% / -15Hz) so shorts still feel punchy.
-        rate = "-5%" if self._voice_drama else ""
-        pitch = "-8Hz" if self._voice_drama else ""
+        # Optional dramatic modulation for narrator-style channels. MAXIMA
+        # RETENCION keeps the voice moving faster and lowers the pitch only
+        # slightly when drama is enabled.
+        if is_max_retention(getattr(self, "_retention_mode", "")):
+            rate = MaxRetentionEngine.VOICE_RATE
+            pitch = MaxRetentionEngine.VOICE_DRAMA_PITCH if self._voice_drama else ""
+        else:
+            rate = "-5%" if self._voice_drama else ""
+            pitch = "-8Hz" if self._voice_drama else ""
         path, word_timestamps = tts_instance.synthesize_with_timestamps(
             tts_text, path, voice_id=short_vid or None, rate=rate, pitch=pitch,
         )
@@ -3075,15 +3403,17 @@ RULES:
         if not words:
             return None
 
+        max_mode = is_max_retention(getattr(self, "_retention_mode", ""))
+        caption_cfg = MaxRetentionEngine.caption_config() if max_mode else None
         font_path = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
-        font_size = 80
+        font_size = caption_cfg.font_size if caption_cfg else 80
         font = ImageFont.truetype(font_path, font_size)
         canvas_w = 1080
         max_line_width = 920
         word_spacing = 28
         line_spacing = 0  # ascent+descent already provides natural spacing
-        max_words_per_group = 5
-        max_lines = 3
+        max_words_per_group = caption_cfg.max_words_per_group if caption_cfg else 5
+        max_lines = 2 if max_mode else 3
 
         # Measure height of a single line using full font metrics (ascent + descent)
         # plus stroke so descenders (g, y, p) and strokes never get clipped
@@ -3209,7 +3539,149 @@ RULES:
         clip = VideoClip(make_rgb, duration=audio_duration).set_fps(fps)
         mask = VideoClip(make_mask, duration=audio_duration, ismask=True).set_fps(fps)
         clip = clip.set_mask(mask)
-        clip = clip.set_position(("center", 1300))
+        clip = clip.set_position(("center", caption_cfg.position_y if caption_cfg else 1300))
+        return clip
+
+    def _build_karaoke_subtitles_landscape(self, audio_duration: float, fps: int = 24):
+        """
+        Build karaoke subtitles for 16:9 long videos.
+
+        Unlike the Shorts subtitle builder, this renders words lazily with a
+        small cache. A long narration can have thousands of words, so pre-
+        rendering every possible highlighted word would use too much memory.
+        """
+        from bisect import bisect_right
+        from functools import lru_cache
+        from PIL import Image, ImageDraw, ImageFont
+        import numpy as np
+
+        words = self.word_timestamps
+        if not words:
+            return None
+
+        font_path = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
+        font_size = 58
+        font = ImageFont.truetype(font_path, font_size)
+        canvas_w = 1920
+        max_line_width = 1500
+        word_spacing = 24
+        max_words_per_group = 7
+        max_lines = 2
+        stroke_width = 5
+
+        ascent, descent = font.getmetrics()
+        line_h = ascent + descent
+        canvas_h = max_lines * line_h + (stroke_width * 2) + 28
+
+        def _word_text(item):
+            return str(item.get("word", "")).strip().upper()
+
+        def _measure(text: str) -> int:
+            bb = font.getbbox(text)
+            return bb[2] - bb[0]
+
+        def _wrap_texts(texts):
+            lines = []
+            current = []
+            current_w = 0
+            for text in texts:
+                width = _measure(text)
+                test_w = current_w + width + (word_spacing if current else 0)
+                if current and test_w > max_line_width:
+                    lines.append(current)
+                    current = [(text, width)]
+                    current_w = width
+                else:
+                    current.append((text, width))
+                    current_w = test_w
+            if current:
+                lines.append(current)
+            return lines
+
+        groups = []
+        current_group = []
+        for word in words:
+            candidate = current_group + [word]
+            candidate_texts = [_word_text(w) for w in candidate]
+            if len(candidate) > max_words_per_group or len(_wrap_texts(candidate_texts)) > max_lines:
+                if current_group:
+                    groups.append(current_group)
+                current_group = [word]
+            else:
+                current_group = candidate
+        if current_group:
+            groups.append(current_group)
+
+        word_to_group = {}
+        global_idx = 0
+        for group_idx, group in enumerate(groups):
+            for local_idx in range(len(group)):
+                word_to_group[global_idx] = (group_idx, local_idx)
+                global_idx += 1
+
+        starts = [float(w.get("start", 0.0)) for w in words]
+        ends = [float(w.get("end", 0.0)) for w in words]
+        blank_rgb = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
+        blank_alpha = np.zeros((canvas_h, canvas_w), dtype=np.float64)
+
+        @lru_cache(maxsize=96)
+        def _render(word_idx: int):
+            if word_idx not in word_to_group:
+                return blank_rgb, blank_alpha
+            group_idx, local_idx = word_to_group[word_idx]
+            group = groups[group_idx]
+            texts = [_word_text(w) for w in group]
+            lines = _wrap_texts(texts)
+
+            img = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+
+            counter = 0
+            y = 14
+            for line in lines[:max_lines]:
+                line_total_w = sum(width for _, width in line) + word_spacing * (len(line) - 1)
+                x = (canvas_w - line_total_w) // 2
+                for text, width in line:
+                    fill = (255, 215, 0) if counter == local_idx else "white"
+                    draw.text(
+                        (x, y),
+                        text,
+                        fill=fill,
+                        font=font,
+                        stroke_width=stroke_width,
+                        stroke_fill="black",
+                    )
+                    x += width + word_spacing
+                    counter += 1
+                y += line_h
+
+            arr = np.array(img)
+            return arr[:, :, :3], arr[:, :, 3].astype(np.float64) / 255.0
+
+        def _active_word_index(t: float) -> int:
+            idx = bisect_right(starts, t) - 1
+            if idx < 0:
+                return -1
+            if idx >= len(words):
+                idx = len(words) - 1
+            # Keep the previous word visible in tiny timing gaps, but hide it
+            # during the music-only tail after the last narrated word.
+            if idx == len(words) - 1 and t > ends[idx] + 0.8:
+                return -1
+            return idx
+
+        def make_rgb(t):
+            idx = _active_word_index(t)
+            return blank_rgb if idx < 0 else _render(idx)[0]
+
+        def make_mask(t):
+            idx = _active_word_index(t)
+            return blank_alpha if idx < 0 else _render(idx)[1]
+
+        clip = VideoClip(make_rgb, duration=audio_duration).set_fps(fps)
+        mask = VideoClip(make_mask, duration=audio_duration, ismask=True).set_fps(fps)
+        clip = clip.set_mask(mask)
+        clip = clip.set_position(("center", 820))
         return clip
 
     def _estimate_word_timestamps(self, audio_duration: float):
@@ -3460,8 +3932,14 @@ RULES:
             random_song_clip = concatenate_audioclips([random_song_clip] * loops_needed)
         random_song_clip = random_song_clip.subclip(0, tts_clip.duration)
 
-        # Background music at 15% volume (audible but won't overpower voice)
-        random_song_clip = random_song_clip.fx(afx.volumex, 0.15)
+        # Keep background music present but under the voice. MAXIMA RETENCION
+        # lowers it further so the faster narration remains crisp.
+        music_volume = (
+            MaxRetentionEngine.MUSIC_VOLUME
+            if is_max_retention(getattr(self, "_retention_mode", ""))
+            else 0.15
+        )
+        random_song_clip = random_song_clip.fx(afx.volumex, music_volume)
         comp_audio = CompositeAudioClip([tts_clip.set_fps(44100), random_song_clip])
 
         final_clip = final_clip.set_audio(comp_audio)
@@ -3549,6 +4027,11 @@ RULES:
         self.tts_path = None
         self.subtitles_path = None
         self._used_stock_urls = set()
+        self.retention_preflight = {}
+        self.retention_hook_lab = {}
+        self.visual_beat_map = []
+        self.visual_beat_report = {}
+        self.visual_preflight = {}
         # Shorts upload fast â€” no need for the long-video patient wait.
         self._is_long_video = False
 
@@ -3574,6 +4057,11 @@ RULES:
         # Generate the Script (unless the caller pre-approved one)
         if preset_script and preset_script.strip():
             self.script = preset_script.strip()
+            self._run_max_retention_preflight(
+                self.script,
+                sentence_length=self._sentence_length_override or get_script_sentence_length(),
+                allow_rewrite=False,
+            )
             if get_verbose():
                 info(f" => Using pre-approved script ({len(self.script)} chars)")
         else:
@@ -3639,7 +4127,10 @@ RULES:
         # Pick ONE hook style per video so the cold open isn't generic. The
         # picked (style, example) is forwarded into both single-call and
         # sectional paths â€” keeps the opening varied across runs.
-        profile_name = (self._hook_profile or "").strip().lower() or "educational"
+        is_cosmic_video = CosmicRetentionEngine.is_cosmic_context(self.subject, self.niche)
+        profile_name = (self._hook_profile or "").strip().lower() or (
+            "storytelling" if is_cosmic_video else "educational"
+        )
         hook_styles = HOOK_PROFILES.get(profile_name) or HOOK_PROFILES["educational"]
         if profile_name not in HOOK_PROFILES and self._hook_profile:
             warning(f"Unknown hook_profile '{self._hook_profile}', falling back to 'educational'.")
@@ -3724,7 +4215,7 @@ RULES:
             return "".join(c for c in s if not unicodedata.combining(c))
 
         subj_tokens = {
-            _norm(t) for t in re.findall(r"[A-Za-zÃ€-Ã¿]+", self.subject or "")
+            _norm(t) for t in _unicode_words(self.subject or "")
             if len(t) > 4
         }
         if subj_tokens:
@@ -3783,11 +4274,14 @@ RULES:
         if script_brief:
             info(f" => Using series narrative brief: {series.get('id', '')}")
 
-        themes = (
-            list(series_themes)
-            if isinstance(series_themes, list) and len(series_themes) == 10
-            else list(LONG_VIDEO_SECTION_THEMES)
-        )
+        if isinstance(series_themes, list) and len(series_themes) == 10:
+            themes = list(series_themes)
+        else:
+            themes = CosmicRetentionEngine.long_section_themes(
+                LONG_VIDEO_SECTION_THEMES,
+                self.subject,
+                self.niche,
+            )
         sections_block = "\n\n".join(
             f"[SECTION {i+1}: <tÃ­tulo corto descriptivo>]\n{theme}\n(10-14 oraciones, 250-350 palabras.)"
             for i, theme in enumerate(themes)
@@ -3797,12 +4291,18 @@ RULES:
             f"\nDIRECTIVA NARRATIVA DE LA SERIE â€” OBLIGATORIA EN CADA PALABRA DE TU RESPUESTA:\n{script_brief}\n"
             if script_brief else ""
         )
+        retention_block = CosmicRetentionEngine.long_generation_directive(
+            self.subject,
+            self.niche,
+            lang,
+        )
 
         prompt = f"""Eres un narrador experto de documentales y guionista profesional especializado en RETENCIÃ“N: tu trabajo es que el espectador NO se vaya en los primeros 5 minutos y aguante hasta el final.
 Escribe un GUION COMPLETO de narraciÃ³n cautivador de 15 a 20 minutos sobre el siguiente tema.
 
 Tema: {self.subject}
 {brief_block}
+{retention_block}
 ARQUITECTURA DE RETENCIÃ“N â€” LEE ESTO ANTES DE EMPEZAR:
 - Los primeros 5 minutos (INTRO + SECTION 1 + SECTION 2) son un MOTOR DE GANCHO: cold open cinematogrÃ¡fico â†’ viÃ±eta inmersiva â†’ siembra del MISTERIO PRINCIPAL del video.
 - ESTÃ PROHIBIDO mencionar "me gusta" o "like" en el INTRO, en la SECTION 1 o en la SECTION 2. La invitaciÃ³n al like aparece SOLO al INICIO de la SECTION 3, cuando el espectador ya estÃ¡ enganchado.
@@ -3878,13 +4378,22 @@ REGLAS DE ESTILO:
         if isinstance(series_themes, list) and len(series_themes) == 10:
             section_themes = list(series_themes)
         else:
-            section_themes = list(LONG_VIDEO_SECTION_THEMES)
+            section_themes = CosmicRetentionEngine.long_section_themes(
+                LONG_VIDEO_SECTION_THEMES,
+                self.subject,
+                self.niche,
+            )
 
         # Block of narrative directives prepended to every per-call prompt when
         # a series brief is active. Empty string in non-series mode (no-op).
         brief_block = (
             f"\n\nDIRECTIVA NARRATIVA DE LA SERIE â€” OBLIGATORIA EN CADA PALABRA DE TU RESPUESTA:\n{script_brief}\n\n"
             if script_brief else ""
+        )
+        retention_block = CosmicRetentionEngine.long_generation_directive(
+            self.subject,
+            self.niche,
+            lang,
         )
 
         def _ask_section(prompt: str, min_words: int) -> str:
@@ -3916,7 +4425,7 @@ REGLAS DE ESTILO:
 
         # ---- INTRO â€” cold open + open loops (NO like-ask here) ----
         intro_prompt = f"""Eres un narrador experto de documentales especializado en RETENCIÃ“N. Escribe SOLO la INTRODUCCIÃ“N de un guion documental sobre: {self.subject}
-{brief_block}
+{brief_block}{retention_block}
 OBJETIVO DE LA INTRO: enganchar al espectador en los primeros 30 segundos para que aguante los 20 minutos. NO menciones "me gusta" ni "like" â€” esa invitaciÃ³n va en otra secciÃ³n posterior, NUNCA aquÃ­.
 
 ESTRUCTURA OBLIGATORIA (5-7 oraciones, 130-180 palabras):
@@ -3982,7 +4491,7 @@ REGLAS DE ESTILO:
                 loops_block = ""
 
             section_prompt = f"""Eres un narrador experto de documentales especializado en retenciÃ³n. EstÃ¡s escribiendo la SECCIÃ“N {i} de 10 de un guion sobre: {self.subject}
-{brief_block}{loops_block}
+{brief_block}{retention_block}{loops_block}
 Esto es lo Ãºltimo que ya se narrÃ³ (NO lo repitas, continÃºa el flujo natural):
 \"\"\"
 {tail}
@@ -4008,7 +4517,7 @@ Escribe SOLO la SECCIÃ“N {i}:
         prior = "\n\n".join(parts)
         tail = " ".join(prior.split()[-300:])
         closing_prompt = f"""Eres un narrador experto de documentales. EstÃ¡s escribiendo el CIERRE de un guion sobre: {self.subject}
-{brief_block}
+{brief_block}{retention_block}
 Esto es lo Ãºltimo que se narrÃ³:
 \"\"\"
 {tail}
@@ -4193,7 +4702,7 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripciÃ³n."""
 
         title_topic_text = f"{video_title} {self.subject}".lower()
         allowed_tokens = {
-            _norm(t) for t in re.findall(r"[A-Za-zÃ€-Ã¿]+", title_topic_text) if len(t) > 2
+            _norm(t) for t in _unicode_words(title_topic_text) if len(t) > 2
         }
 
         visual_prompt = ""
@@ -4214,7 +4723,10 @@ ESCRIBE TODO EN {self.language}. Solo devuelve la descripciÃ³n."""
                 f"- ONE single dramatic scene, not a list of unrelated elements.\n"
                 f"- Composition cues only â€” describe framing, lighting direction, depth, focus, "
                 f"mood. Examples: 'dramatic side lighting', 'high contrast', 'shallow depth of "
-                f"field', 'low angle', 'intense expression on the subject'. Style-agnostic.\n"
+                f"field', 'low angle', 'tense body language with the face turned away'. Style-agnostic.\n"
+                f"- FACE-SAFE: avoid clear front-facing faces, portraits, selfies, beauty shots, detailed eyes, "
+                f"or recognizable likenesses. If people appear, use backs, silhouettes, over-the-shoulder angles, "
+                f"hands, props, helmets, hoods, smoke, shadow or foreground occlusion.\n"
                 f"- DO NOT mention rendering style, medium, or technique. NEVER write "
                 f"'photorealistic', 'cinematic film look', 'cartoon', 'anime', '3D render', "
                 f"'watercolor', '8K', 'photograph', 'illustration', or any similar word that "
@@ -4239,7 +4751,8 @@ Return ONLY a JSON object with two fields:
 - "visual": ENGLISH prompt (40-70 words) for an AI image generator. CRITICAL RULES:
   * The image MUST be visually unmistakable as the topic â€” name the actual SPECIFIC people, places, objects, clothing, architecture, era, or symbols from the topic. Use proper nouns when relevant.
   * Build ONE single dramatic scene, not a list of unrelated elements.
-  * Composition cues only â€” describe framing, lighting direction, depth, focus, mood. Examples: "dramatic side lighting", "high contrast", "shallow depth of field", "low angle", "intense expression on the subject". Style-agnostic.
+  * Composition cues only â€” describe framing, lighting direction, depth, focus, mood. Examples: "dramatic side lighting", "high contrast", "shallow depth of field", "low angle", "tense body language with the face turned away". Style-agnostic.
+  * FACE-SAFE: avoid clear front-facing faces, portraits, selfies, beauty shots, detailed eyes, or recognizable likenesses. If people appear, use backs, silhouettes, over-the-shoulder angles, hands, props, helmets, hoods, smoke, shadow or foreground occlusion.
   * DO NOT mention rendering style, medium, or technique. NEVER write "photorealistic", "cinematic film look", "cartoon", "anime", "3D render", "watercolor", "8K", "photograph", "illustration", or any similar word that locks in a visual style â€” the channel's art style is added separately downstream.
   * End the prompt with: "no text, no letters, no logos, no watermark".
   * FORBIDDEN: generic phrases like "person looking", "mysterious figure", "abstract concept" â€” be SPECIFIC.
@@ -4302,7 +4815,7 @@ Return ONLY the JSON. No markdown, no explanation."""
                     return False
                 STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
                         "que", "por", "para", "con", "en", "a", "su", "sus", "lo"}
-                words = [_norm(w) for w in re.findall(r"[A-Za-zÃ€-Ã¿]+", candidate)]
+                words = [_norm(w) for w in _unicode_words(candidate)]
                 # Reject one-word overlays â€” clickbait needs a phrase.
                 if len(words) < 3:
                     return False
@@ -4324,8 +4837,8 @@ Return ONLY the JSON. No markdown, no explanation."""
             # prompt MUST NOT lock in a rendering medium ("cinematic",
             # "photorealistic", etc.) that would fight cartoon/anime channels.
             visual_prompt = (
-                f"Dramatic close-up related to {self.subject}, "
-                f"intense expression on the subject, dramatic side lighting, "
+                f"Dramatic face-safe scene related to {self.subject}, "
+                f"hands, symbolic objects, or a subject turned away from camera, dramatic side lighting, "
                 f"dark moody background, high contrast, no text"
             )
 
@@ -4352,12 +4865,20 @@ Return ONLY the JSON. No markdown, no explanation."""
             #    Skip SECRETO / MISTERIO so the overlay doesn't keep defaulting
             #    to "EL SECRETO DE X" â€” pick the next caps word if there is one.
             CAPS_SKIP = {"SECRETO", "MISTERIO", "SECRETOS", "MISTERIOS"}
+
+            def _is_caps_keyword(word: str) -> bool:
+                parts = _unicode_words(word)
+                if len(parts) != 1:
+                    return False
+                token = parts[0]
+                return (
+                    len(token) >= 4
+                    and token.upper() == token
+                    and _norm(token).upper() not in CAPS_SKIP
+                )
+
             caps_idx = next(
-                (i for i, w in enumerate(tw)
-                 if re.match(r"^[A-ZÃÃ‰ÃÃ“ÃšÃœÃ‘]{4,}$", w)
-                 and re.sub(r"[ÃÃ‰ÃÃ“ÃšÃœ]", lambda m: {"Ã": "A", "Ã‰": "E", "Ã": "I",
-                                                    "Ã“": "O", "Ãš": "U", "Ãœ": "U"}[m.group()], w)
-                 not in CAPS_SKIP),
+                (i for i, w in enumerate(tw) if _is_caps_keyword(w)),
                 None,
             )
 
@@ -4396,7 +4917,7 @@ Return ONLY the JSON. No markdown, no explanation."""
             STOP = {"el", "la", "los", "las", "un", "una", "de", "del", "y", "o",
                     "que", "por", "quÃ©", "para", "con", "en", "a"}
             topic_words = [
-                w for w in re.findall(r"[A-Za-zÃ€-Ã¿]+", self.subject or "")
+                w for w in _unicode_words(self.subject or "")
                 if w.lower() not in STOP and len(w) > 3
                 and not _is_secreto_misterio(w)
             ][:5]
@@ -4547,13 +5068,13 @@ Return ONLY the JSON. No markdown, no explanation."""
     # otherwise default to "wide dramatic vista in golden hour" for every
     # frame, which is what made long videos look generic.
     _LONG_SHOT_TYPES: list[str] = [
-        "tight close-up of a single face â€” visible emotion (eyes, jaw, brow), shallow background",
+        "tight detail of hands, clothing and the key object â€” face outside the frame, shallow background",
         "medium shot of subject mid-action â€” hands and gesture clearly visible, environment partly framed",
         "wide establishing shot â€” subject placed within the full setting, scale of the world visible",
         "low-angle hero shot â€” subject filling the frame from below, sky or ceiling behind",
         "over-the-shoulder POV â€” viewer sees what the subject is looking at, back of subject's head/shoulder in foreground",
         "profile silhouette â€” subject lit from behind against a bright background, edge light defining the body",
-        "two-shot â€” two characters interacting tightly, eye contact or shared object between them",
+        "two-shot â€” two characters interacting through a shared object, both faces hidden or turned away",
         "overhead / top-down â€” subject(s) seen from directly above, environment as a flat backdrop",
     ]
     _LONG_LIGHTING: list[str] = [
@@ -4576,21 +5097,21 @@ Return ONLY the JSON. No markdown, no explanation."""
         """
         pos = index / max(1, total)
         if pos < 0.10:
-            return ("cold-open hook", "cinematic awe, dramatic lighting, faces locked in intense focus, EPIC scale, the moment that opens the video")
+            return ("cold-open hook", "cinematic awe, dramatic lighting, EPIC scale, faces hidden by silhouette or framing, the moment that opens the video")
         if pos < 0.20:
             return ("immersive vignette", "sensorial â€” viewer is INSIDE the scene, vivid textures, dust/breath/sweat visible, intimate framing")
         if pos < 0.30:
-            return ("mystery pivot", "ominous â€” something is off, faces showing doubt or unease, off-kilter framing, cold or dim light")
+            return ("mystery pivot", "ominous â€” something is off, doubt shown through posture and hesitation, off-kilter framing, cold or dim light")
         if pos < 0.42:
-            return ("first revelation + backstory", "discovery energy, hands uncovering or inspecting, warm light revealing a detail, character close-ups")
+            return ("first revelation + backstory", "discovery energy, hands uncovering or inspecting, warm light revealing a detail, faces outside the frame")
         if pos < 0.55:
-            return ("escalation", "rising tension, motion blur, conflict, sweat / breath / urgency, faces showing strain")
+            return ("escalation", "rising tension, motion blur, conflict, sweat / breath / urgency, strain shown through shoulders and hands")
         if pos < 0.68:
-            return ("reversal", "shock or realization on faces, hard contrast, the moment the truth lands")
+            return ("reversal", "shock or realization shown through posture and frozen gestures, hard contrast, the moment the truth lands")
         if pos < 0.78:
-            return ("human element", "intimate emotion â€” grief, joy, fear, awe â€” tight on a single face, vulnerable framing")
+            return ("human element", "intimate emotion â€” grief, joy, fear, awe â€” tight on hands, clothing, personal objects, vulnerable framing with face hidden")
         if pos < 0.90:
-            return ("climax â€” peak intensity", "MOST DRAMATIC of the video, peak intensity, the revelation moment, faces frozen in awe or horror, strongest composition")
+            return ("climax â€” peak intensity", "MOST DRAMATIC of the video, peak intensity, the revelation moment, bodies frozen in awe or horror, strongest composition, faces obscured")
         return ("legacy / contemplation", "contemplative, quiet, soft warm lighting, a single subject, reflective stillness")
 
     def generate_long_prompts(self) -> List[str]:
@@ -4617,7 +5138,7 @@ Return ONLY the JSON. No markdown, no explanation."""
         # fallback names when a script chunk has no named entity of its own.
         # Lowercased connectors filtered so we keep only meaningful tokens.
         _topic_anchors = [
-            tok for tok in re.findall(r"[A-Za-zÃ€-Ã¿0-9'\-]+", self.subject or "")
+            tok for tok in _unicode_tokens(self.subject or "")
             if len(tok) > 2 and tok.lower() not in _PHOTO_STOPWORDS
         ]
         topic_anchor_str = ", ".join(_topic_anchors[:6]) or (self.subject or "the topic")
@@ -4669,7 +5190,7 @@ Return ONLY the JSON. No markdown, no explanation."""
                 f"This documentary is set in: **{setting_line}**.\n"
                 f"Visual anchors that should appear naturally when relevant: {anchors_line}.\n"
                 f"FORBIDDEN visual elements (anachronistic / off-setting): {avoid_line}.\n"
-                f"REQUIRED in every prompt with a person: clothing, props and architecture that belong to the setting above.\n"
+                f"REQUIRED in every prompt with a person: clothing, props and architecture that belong to the setting above; faces must be hidden, turned away, cropped out, shadowed, veiled or otherwise non-identifiable.\n"
                 f"=========================================="
             )
 
@@ -4678,7 +5199,13 @@ Return ONLY the JSON. No markdown, no explanation."""
             if (ctx and ctx.get("setting")) else ""
         )
 
+        visual_retention = CosmicRetentionEngine.visual_retention_directive(
+            self.subject,
+            self.niche,
+        )
+
         prompt = f"""Task: write {n_prompts} image prompts for a long-form video about "{self.subject}".{era_clause}
+{visual_retention}
 
 You receive {n_prompts} script chunks below, each tagged with a narrative beat, shot type and lighting. Each prompt MUST illustrate the LITERAL content of its chunk â€” the people, the action, the place, the moment that chunk describes. The shot type and lighting tags are NON-OPTIONAL: bake them into the prompt so the {n_prompts} images don't look identical.
 
@@ -4698,22 +5225,24 @@ ABSOLUTE RULES (every prompt):
 
 4. SCENE FIDELITY. Open with a concrete action (subject + verb) drawn from the chunk text. If the chunk says "Galileo demonstrates his telescope to the cardinals at night", the image is exactly that â€” not "an astronomer in a robe".
 
-5. NAMED CHARACTER IDENTITY. When the script names a real person, do NOT just write their name â€” describe them physically (age, hair, beard, build, clothing) so the image generator can render the correct person. The physical description MUST appear every time they're shown.
+5. FACE-SAFE PEOPLE. Avoid people entirely when a landscape, artifact, spacecraft, building, document, tool, map or environment can carry the idea. When people are necessary, keep them non-identifiable: back view, over-the-shoulder, profile silhouette, face turned away, cropped outside the frame, hidden by shadow, helmet, veil, hood, smoke, documents, hands, tools or foreground objects. NEVER request a clear front-facing face, portrait, selfie, beauty shot, detailed eyes, or recognizable likeness.
 
-6. SETTING ACCURACY â€” STRICT. {period_inline}If a person appears, describe their clothing exactly as it would look in the setting (fabric, cut, color, footwear, headwear). Same for architecture, tools, vehicles and 2-3 supporting objects.
+6. NAMED CHARACTER IDENTITY WITHOUT LIKENESS. When the script names a real person, do NOT ask for their face or likeness. Anchor them through clothing, era, location, action, posture and objects instead (for example, "Galileo's hands adjusting a brass telescope beside candlelit papers, his face hidden in shadow"). The name can appear in the prompt for story anchoring, but the visual must not show an identifiable face.
 
-7. SHOT + LIGHTING â€” USE THE TAGS. Each chunk below has a "Shot type" and "Lighting" tag. The prompt must clearly reflect that shot type and that lighting. If chunk 5 says "tight close-up of a single face" with "candlelight", chunk 6 must NOT also be a close-up under candlelight.
+7. SETTING ACCURACY â€” STRICT. {period_inline}If a person appears, describe their clothing exactly as it would look in the setting (fabric, cut, color, footwear, headwear). Same for architecture, tools, vehicles and 2-3 supporting objects.
 
-8. NARRATIVE BEAT â€” USE THE MOOD TAG. Each chunk has a "Mood/emotion to convey" tag tied to its position in the video. A prompt for the "cold-open hook" beat must read cinematic and high-impact; a prompt for the "human element" beat must read intimate and emotional; a prompt for the "climax" beat must be the MOST DRAMATIC of all.
+8. SHOT + LIGHTING â€” USE THE TAGS. Each chunk below has a "Shot type" and "Lighting" tag. The prompt must clearly reflect that shot type and that lighting. If one chunk uses a tight detail under candlelight, the next must vary framing and light.
 
-9. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world â€” same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing â€” but never the level of realism.
+9. NARRATIVE BEAT â€” USE THE MOOD TAG. Each chunk has a "Mood/emotion to convey" tag tied to its position in the video. A prompt for the "cold-open hook" beat must read cinematic and high-impact; a prompt for the "human element" beat must read intimate and emotional through hands, posture, personal objects or distance between bodies; a prompt for the "climax" beat must be the MOST DRAMATIC of all.
 
-10. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later â€” your job is content only.
+10. CONSISTENT REALISM. All {n_prompts} prompts describe the SAME world â€” same realism level, same physical universe. No image should feel like it comes from a different show. Vary action, time of day, framing â€” but never the level of realism.
 
-11. LENGTH. 55-90 English words per prompt. No camera or lens jargon ("close-up" as written text is fine; "85mm f/1.4" is not).
+11. NO ART STYLE WORDS. Describe SCENES ONLY. Never write "painting", "illustration", "cartoon", "anime", "drawing", "vector", "3D render", "ukiyo-e", "fresco", "engraving", "comic", "pixel art" or any other medium/aesthetic label. The visual look is decided by a suffix appended later â€” your job is content only.
+
+12. LENGTH. 55-90 English words per prompt. No camera or lens jargon ("close-up" as written text is fine; "85mm f/1.4" is not).
 
 Examples of GOOD scene-only prompts (the PATTERN matters â€” names and props will differ for your topic):
-- (Historical setting) "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, his legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, determined tense faces, low-angle hero composition, golden hour."
+- (Historical setting, no visible face) "Caesar in a red cloak crosses the shallow Rubicon at dusk on a black warhorse, seen from behind with his hooded head turned away, his legion wading behind him in lorica segmentata armor with rectangular shields and silver eagle standards, low hills on the horizon, tense posture, low-angle hero composition, golden hour."
 - (Modern setting) "A young trader leans over three glowing monitors on the floor of the New York Stock Exchange, mouth open mid-shout, paper tickets crumpled on his keyboard, the index ticker spiking red overhead, colleagues running behind him, tight medium shot, harsh fluorescent overhead light."
 - (Sports setting) "A quarterback in a navy and red jersey throws a tight spiral over the defensive line under stadium floodlights, mud streaking his white pants, breath visible in cold air, tens of thousands of blurred fans behind the end zone, low-angle hero shot, sodium floodlight."
 - (Science / probe) "The Voyager 1 probe, gold-foiled and antenna-extended, drifts past the dark crescent of Saturn's rings, faint sunlight glancing off its main dish, the rings casting a black band across the planet, profile silhouette composition, harsh sunlight from the right."
@@ -4783,7 +5312,7 @@ No markdown. No explanation. Just the JSON array."""
                 chunk = sections[i] if i < len(sections) else self.subject
                 # Pick a named entity from the chunk if any, else fall back to topic anchors
                 chunk_nouns = [
-                    tok for tok in re.findall(r"[A-Z][A-Za-zÃ€-Ã¿0-9'\-]{2,}", chunk)
+                    tok for tok in _capitalized_unicode_tokens(chunk)
                     if tok.lower() not in _PHOTO_STOPWORDS
                 ]
                 anchor = chunk_nouns[0] if chunk_nouns else (_topic_anchors[0] if _topic_anchors else self.subject)
@@ -5188,6 +5717,21 @@ No markdown. No explanation. Just the JSON array."""
 
         # Smooth fade-to-black at the very end so the closing doesn't cut abruptly.
         final_clip = final_clip.fadeout(EXTRA_TAIL)
+
+        subtitles = None
+        if getattr(self, "word_timestamps", None):
+            try:
+                print(colored("[+] Building long-video karaoke subtitles...", "blue"), flush=True)
+                subtitles = self._build_karaoke_subtitles_landscape(target_visual_duration, fps=24)
+                if subtitles is not None:
+                    subtitles = subtitles.set_duration(target_visual_duration)
+                    final_clip = CompositeVideoClip(
+                        [final_clip, subtitles], size=(1920, 1080)
+                    ).set_duration(target_visual_duration)
+                    print(colored("[+] Long karaoke subtitles ready.", "green"), flush=True)
+            except Exception as e:
+                warning(f"Failed to generate long karaoke subtitles, continuing without subtitles: {e}")
+
         print(colored(f"    [Transitions] done in {time.time() - t_phase:.1f}s", "green"), flush=True)
 
         # Audio: TTS + background music
@@ -6115,6 +6659,56 @@ No markdown. No explanation. Just the JSON array."""
                     warning(f"\t=> {label}: JS click also failed: {str(e2)[:160]}")
                 return False
 
+    def _dismiss_still_checking_dialog(self, driver, timeout_s: float = 6.0) -> bool:
+        """
+        Handle the "We're still checking your content" confirmation dialog that
+        YouTube Studio shows after clicking Done when its background checks have
+        not finished yet. The default highlighted button is "Go back", so we
+        explicitly click "Publish anyway" / "Publicar de todos modos".
+
+        Returns True if a dialog was found and dismissed, False otherwise.
+        """
+        verbose = get_verbose()
+        publish_anyway_labels = (
+            "Publish anyway",
+            "Publicar de todos modos",
+            "Publicar igualmente",
+        )
+        text_predicates = " or ".join(
+            f"normalize-space(.)='{label}'" for label in publish_anyway_labels
+        )
+        xpath = (
+            "//tp-yt-paper-dialog//*[self::ytcp-button or self::button or self::a]"
+            f"[{text_predicates}]"
+        )
+
+        deadline = time.time() + timeout_s
+        last_err = None
+        while time.time() < deadline:
+            try:
+                candidates = driver.find_elements(By.XPATH, xpath)
+                for el in candidates:
+                    try:
+                        if not el.is_displayed():
+                            continue
+                    except Exception:
+                        continue
+                    if verbose:
+                        info(
+                            "\t=> 'Still checking content' dialog detected; "
+                            "clicking 'Publish anyway'..."
+                        )
+                    if self._robust_click(driver, el, "Publish anyway button"):
+                        time.sleep(1.5)
+                        return True
+            except Exception as e:
+                last_err = e
+            time.sleep(0.5)
+
+        if verbose and last_err is not None:
+            warning(f"\t=> No 'still checking' dialog handled: {str(last_err)[:160]}")
+        return False
+
     def upload_video(self) -> bool:
         """
         Uploads the video to YouTube via Selenium.
@@ -6420,6 +7014,15 @@ No markdown. No explanation. Just the JSON array."""
             except Exception as e:
                 warning(f"Done button failed: {e}")
 
+            # YT Studio sometimes interrupts the publish flow with a
+            # "We're still checking your content" confirmation when its
+            # background scans have not finished. The default action is
+            # "Go back", so force-click "Publish anyway" if present.
+            try:
+                self._dismiss_still_checking_dialog(driver)
+            except Exception as e:
+                warning(f"'Still checking content' dialog handler failed: {e}")
+
             is_long_video = bool(getattr(self, "_is_long_video", False))
 
             # Lock in the upload-tab handle the moment Done is clicked.
@@ -6442,6 +7045,15 @@ No markdown. No explanation. Just the JSON array."""
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "thumbnail_path": getattr(self, "thumbnail_path", "") or "",
                 "is_short": not is_long_video,
+                "retention_mode": getattr(self, "_retention_mode", "") or "",
+                "retention_score": (
+                    (getattr(self, "retention_preflight", {}) or {}).get("final_score")
+                    or (getattr(self, "retention_preflight", {}) or {}).get("score")
+                ),
+                "hook_score": (getattr(self, "retention_hook_lab", {}) or {}).get("best_score"),
+                "first_image_score": (
+                    ((getattr(self, "visual_preflight", {}) or {}).get("first_image") or {}).get("score")
+                ),
             }
             try:
                 self.add_video(cache_entry)

@@ -16,6 +16,11 @@ import {
   FileText,
   Search,
   Loader2,
+  Target,
+  Flame,
+  Trophy,
+  TrendingDown,
+  TrendingUp,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -54,10 +59,17 @@ import {
   type ErrorList,
   type JobLogEntry,
   type NotifSettings,
+  type RetentionLabChannel,
+  type RetentionLabResponse,
+  type RetentionLabTerm,
+  type RetentionLabVideo,
 } from "@/lib/api";
 import { formatBytes, relativeTime, formatDate, truncate } from "@/lib/utils";
 
 export function Operations() {
+  const tabClass =
+    "gap-2 h-10 rounded-lg px-3 text-muted-foreground data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none hover:text-foreground transition-colors";
+
   return (
     <>
       <Header
@@ -66,57 +78,403 @@ export function Operations() {
         description="Disco, costos, errores, historial, notificaciones y backup."
       />
       <PageShell>
+        <section className="page-hero">
+          <div className="page-hero-inner">
+            <div>
+              <span className="eyebrow block mb-2">Command center</span>
+              <h1 className="page-title">
+                Salud, costos y <span className="brand-text">mantenimiento</span>
+              </h1>
+              <p className="page-subtitle">
+                Disco, costos, errores, logs, notificaciones y backups en una consola
+                unificada para cuidar el pipeline.
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 w-full sm:w-auto sm:min-w-[480px]">
+              <OpsMiniStat icon={HardDrive} label="Disco" value=".mp/" tone="primary" />
+              <OpsMiniStat icon={AlertTriangle} label="Errores" value="triage" tone="accent" />
+              <OpsMiniStat icon={Archive} label="Backup" value="zip" tone="gold" />
+            </div>
+          </div>
+        </section>
+
         <Tabs defaultValue="disk" className="w-full">
-          <TabsList className="flex flex-wrap h-auto gap-0.5 bg-transparent border-0 p-0 justify-start">
+          <TabsList className="command-strip flex h-auto flex-wrap justify-start gap-1 rounded-xl p-1.5">
             <TabsTrigger
               value="disk"
-              className="gap-2 rounded-none border-b-2 border-transparent bg-transparent px-4 py-2.5 data-[state=active]:bg-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:ring-0 data-[state=active]:text-foreground hover:text-foreground transition-colors"
+              className={tabClass}
             >
               <HardDrive className="h-3.5 w-3.5" /> Disco
             </TabsTrigger>
             <TabsTrigger
               value="cost"
-              className="gap-2 rounded-none border-b-2 border-transparent bg-transparent px-4 py-2.5 data-[state=active]:bg-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:ring-0 data-[state=active]:text-foreground hover:text-foreground transition-colors"
+              className={tabClass}
             >
               <DollarSign className="h-3.5 w-3.5" /> Costos
             </TabsTrigger>
             <TabsTrigger
               value="errors"
-              className="gap-2 rounded-none border-b-2 border-transparent bg-transparent px-4 py-2.5 data-[state=active]:bg-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:ring-0 data-[state=active]:text-foreground hover:text-foreground transition-colors"
+              className={tabClass}
             >
               <AlertTriangle className="h-3.5 w-3.5" /> Errores
             </TabsTrigger>
             <TabsTrigger
+              value="retention"
+              className={tabClass}
+            >
+              <Target className="h-3.5 w-3.5" /> Retencion
+            </TabsTrigger>
+            <TabsTrigger
               value="logs"
-              className="gap-2 rounded-none border-b-2 border-transparent bg-transparent px-4 py-2.5 data-[state=active]:bg-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:ring-0 data-[state=active]:text-foreground hover:text-foreground transition-colors"
+              className={tabClass}
             >
               <ListChecks className="h-3.5 w-3.5" /> Historial
             </TabsTrigger>
             <TabsTrigger
               value="notifications"
-              className="gap-2 rounded-none border-b-2 border-transparent bg-transparent px-4 py-2.5 data-[state=active]:bg-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:ring-0 data-[state=active]:text-foreground hover:text-foreground transition-colors"
+              className={tabClass}
             >
               <Bell className="h-3.5 w-3.5" /> Notificaciones
             </TabsTrigger>
             <TabsTrigger
               value="backup"
-              className="gap-2 rounded-none border-b-2 border-transparent bg-transparent px-4 py-2.5 data-[state=active]:bg-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:ring-0 data-[state=active]:text-foreground hover:text-foreground transition-colors"
+              className={tabClass}
             >
               <Archive className="h-3.5 w-3.5" /> Backup
             </TabsTrigger>
           </TabsList>
-          <div className="h-px bg-border/30 -mt-px" />
-
 
           <TabsContent value="disk"><DiskTab /></TabsContent>
           <TabsContent value="cost"><CostTab /></TabsContent>
           <TabsContent value="errors"><ErrorsTab /></TabsContent>
+          <TabsContent value="retention"><RetentionTab /></TabsContent>
           <TabsContent value="logs"><LogsTab /></TabsContent>
           <TabsContent value="notifications"><NotificationsTab /></TabsContent>
           <TabsContent value="backup"><BackupTab /></TabsContent>
         </Tabs>
       </PageShell>
     </>
+  );
+}
+
+function OpsMiniStat({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: typeof HardDrive;
+  label: string;
+  value: string;
+  tone: "primary" | "accent" | "gold";
+}) {
+  const color = tone === "primary" ? "var(--primary)" : tone === "accent" ? "var(--accent)" : "var(--gold)";
+  return (
+    <div className="soft-panel px-3 py-3">
+      <div className="flex items-center gap-2">
+        <span
+          className="flex h-8 w-8 items-center justify-center rounded-lg"
+          style={{
+            color: `hsl(${color})`,
+            background: `hsl(${color} / .12)`,
+            border: `1px solid hsl(${color} / .24)`,
+          }}
+        >
+          <Icon className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <div className="tiny-label">{label}</div>
+          <div className="font-mono text-[13px] font-semibold text-foreground">{value}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Retention Lab
+// ---------------------------------------------------------------------------
+
+function RetentionTab() {
+  const [data, setData] = useState<RetentionLabResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setData(await api.retentionLab());
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  if (loading && !data) return <Skeleton className="h-96 w-full" />;
+  if (!data) return null;
+
+  const aggregate = data.aggregate;
+  const knownHint = `${aggregate.known_views} con metricas`;
+  const weakRatio = aggregate.known_views
+    ? `${Math.round((aggregate.weak / aggregate.known_views) * 100)}% bajo 100`
+    : "sin datos";
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard
+          label="Shorts"
+          value={aggregate.shorts}
+          hint={knownHint}
+          icon={Target}
+          accent="primary"
+        />
+        <StatCard
+          label="Ganadores"
+          value={aggregate.winners}
+          hint="mil vistas o mas"
+          icon={Trophy}
+          accent="gold"
+        />
+        <StatCard
+          label="Bajo cien"
+          value={aggregate.weak}
+          hint={weakRatio}
+          icon={TrendingDown}
+          accent="accent"
+        />
+        <StatCard
+          label="Sin lectura"
+          value={aggregate.unknown_views}
+          hint="requiere sync"
+          icon={Search}
+          accent="violeta"
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <span className="eyebrow block">Retention Lab</span>
+          <span className="text-[11px] text-muted-foreground">
+            Ultima lectura: {formatDate(data.generated_at)}
+          </span>
+        </div>
+        <Button onClick={load} disabled={loading} variant="outline" size="sm" className="gap-2">
+          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+          Actualizar
+        </Button>
+      </div>
+
+      {data.channels.length === 0 ? (
+        <EmptyState
+          icon={Target}
+          title="Sin canales"
+          description="No hay historial local para analizar todavia."
+        />
+      ) : (
+        <div className="space-y-4">
+          {data.channels.map((channel) => (
+            <RetentionChannelCard key={channel.channel_id || channel.channel_nickname} channel={channel} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RetentionChannelCard({ channel }: { channel: RetentionLabChannel }) {
+  const risk = channel.stats.known_views > 0 && channel.stats.weak >= Math.max(2, channel.stats.winners);
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-3">
+        <div className="min-w-0">
+          <CardTitle className="text-base truncate">
+            {channel.channel_nickname || "Canal sin nombre"}
+          </CardTitle>
+          <p className="text-xs text-muted-foreground truncate">
+            {channel.niche || "Sin niche"} {channel.language ? `| ${channel.language}` : ""}
+          </p>
+        </div>
+        <Badge variant={risk ? "warning" : "success"}>
+          {risk ? "riesgo" : "estable"}
+        </Badge>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+          <RetentionMetric label="Mediana" value={formatViews(channel.stats.median_views)} />
+          <RetentionMetric label="Promedio" value={formatViews(channel.stats.avg_views)} />
+          <RetentionMetric label="Ganadores" value={String(channel.stats.winners)} />
+          <RetentionMetric label="Bajo 100" value={String(channel.stats.weak)} />
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div className="soft-panel p-3 lg:col-span-1">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
+              <Target className="h-3.5 w-3.5 text-primary" /> Acciones
+            </div>
+            <div className="space-y-2">
+              {channel.recommendations.map((rec) => (
+                <div key={rec} className="text-xs leading-relaxed text-foreground">
+                  {rec}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="soft-panel p-3 lg:col-span-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <RetentionVideoList
+                title="Ganadores"
+                icon={Trophy}
+                items={channel.winners}
+                empty="Sin ganadores con metricas."
+                tone="gold"
+              />
+              <RetentionVideoList
+                title="Bajo cien"
+                icon={TrendingDown}
+                items={channel.weak_videos}
+                empty="Sin Shorts bajo cien."
+                tone="destructive"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <RetentionTermList
+            title="Temas quemados"
+            icon={Flame}
+            items={channel.burned_topics}
+            empty="Sin patrones quemados detectados."
+            variant="warning"
+          />
+          <RetentionTermList
+            title="Patrones ganadores"
+            icon={TrendingUp}
+            items={channel.winning_terms}
+            empty="Sin patrones ganadores detectados."
+            variant="success"
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function RetentionMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="soft-panel px-3 py-2">
+      <div className="tiny-label">{label}</div>
+      <div className="font-mono text-lg font-semibold tabular-nums text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function RetentionVideoList({
+  title,
+  icon: Icon,
+  items,
+  empty,
+  tone,
+}: {
+  title: string;
+  icon: typeof Trophy;
+  items: RetentionLabVideo[];
+  empty: string;
+  tone: "gold" | "destructive";
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
+        <Icon className={cn("h-3.5 w-3.5", tone === "gold" ? "text-gold" : "text-destructive")} />
+        {title}
+      </div>
+      {items.length === 0 ? (
+        <div className="rounded-lg border border-border/15 bg-background/30 p-3 text-xs text-muted-foreground">
+          {empty}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {items.slice(0, 4).map((video) => (
+            <a
+              key={`${video.url}-${video.date}-${video.title}`}
+              href={video.url || undefined}
+              target="_blank"
+              rel="noreferrer"
+              className="block rounded-lg border border-border/15 bg-background/30 p-3 transition-colors hover:border-primary/30 hover:bg-primary/5"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-medium text-foreground">
+                    {truncate(video.title || video.subject || "Sin titulo", 62)}
+                  </div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    {video.date ? relativeTime(video.date) : "sin fecha"}
+                  </div>
+                </div>
+                <Badge variant={tone === "gold" ? "gold" : "destructive"}>
+                  {formatViews(video.views)}
+                </Badge>
+              </div>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RetentionTermList({
+  title,
+  icon: Icon,
+  items,
+  empty,
+  variant,
+}: {
+  title: string;
+  icon: typeof Flame;
+  items: RetentionLabTerm[];
+  empty: string;
+  variant: "warning" | "success";
+}) {
+  return (
+    <div className="soft-panel p-3">
+      <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
+        <Icon className={cn("h-3.5 w-3.5", variant === "warning" ? "text-warning" : "text-success")} />
+        {title}
+      </div>
+      {items.length === 0 ? (
+        <div className="rounded-lg border border-border/15 bg-background/30 p-3 text-xs text-muted-foreground">
+          {empty}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {items.slice(0, 5).map((item) => (
+            <div key={item.term} className="rounded-lg border border-border/15 bg-background/30 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-foreground">{item.term}</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    {item.count} usos | promedio {formatViews(item.avg_views)}
+                  </div>
+                </div>
+                <Badge variant={variant}>
+                  {variant === "warning" ? `${item.weak_count} low` : `${item.winner_count} win`}
+                </Badge>
+              </div>
+              {item.examples[0] && (
+                <div className="mt-2 truncate text-[11px] text-muted-foreground">
+                  {truncate(item.examples[0], 84)}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -219,7 +577,7 @@ function DiskTab() {
                 <span className="eyebrow">Distribución</span>
                 <CardTitle>Por extensión</CardTitle>
               </div>
-              <span className="font-mono text-[10px] tracking-wider uppercase text-muted-foreground">
+              <span className="font-mono text-[10px] uppercase text-muted-foreground">
                 {data.by_ext.length} tipos
               </span>
             </div>
@@ -269,7 +627,7 @@ function DiskTab() {
                 <span className="eyebrow">Top consumidores</span>
                 <CardTitle>25 archivos más pesados</CardTitle>
               </div>
-              <span className="font-mono text-[10px] tracking-wider uppercase text-muted-foreground">
+              <span className="font-mono text-[10px] uppercase text-muted-foreground">
                 {formatBytes(data.biggest.reduce((s, f) => s + f.bytes, 0))} total
               </span>
             </div>
@@ -404,7 +762,7 @@ function CostTab() {
               <span className="eyebrow">Serie temporal</span>
               <CardTitle>Costo por día</CardTitle>
             </div>
-            <span className="font-mono text-[10px] tracking-wider uppercase text-muted-foreground">
+            <span className="font-mono text-[10px] uppercase text-muted-foreground">
               {data.by_day.length} días con actividad
             </span>
           </div>
@@ -431,7 +789,7 @@ function CostTab() {
                         "w-full rounded-t-sm transition-all relative",
                         isPeak
                           ? "bg-accent group-hover:bg-accent"
-                          : "bg-primary/55 group-hover:bg-primary",
+                          : "bg-primary/50 group-hover:bg-primary",
                       )}
                       style={{ height: `${h}%`, minHeight: 2 }}
                     >
@@ -790,9 +1148,9 @@ function LogsTab() {
       ) : (
         <Card>
           <CardContent className="p-0">
-            <div className="max-h-[600px] overflow-y-auto">
-              <table className="w-full text-xs">
-                <thead className="text-muted-foreground sticky top-0 bg-background border-b border-border/70">
+            <div className="max-h-[600px] overflow-y-auto scrollbar-thin">
+              <table className="data-table text-xs">
+                <thead className="sticky top-0 z-10">
                   <tr>
                     <th className="text-left py-2 px-3">Título</th>
                     <th className="text-left py-2 px-3">Estado</th>
@@ -804,7 +1162,7 @@ function LogsTab() {
                 </thead>
                 <tbody>
                   {items.map((j) => (
-                    <tr key={j.id} className="border-b border-border/40 hover:bg-muted/30">
+                    <tr key={j.id}>
                       <td className="py-1.5 px-3 font-medium truncate max-w-[200px]">{j.title}</td>
                       <td className="py-1.5 px-3">
                         <Badge variant={j.status === "done" ? "success" : j.status === "error" ? "destructive" : "outline"}>
@@ -1048,6 +1406,11 @@ function BackupTab() {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function formatViews(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+  return Math.round(value).toLocaleString("es-ES");
+}
 
 function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (

@@ -1,0 +1,5 @@
+packages:
+  - web
+
+# 7 days, expressed in minutes. pnpm only installs versions older than this.
+minimumReleaseAge: 10080

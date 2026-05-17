@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2 } from "lucide-react";
+import { Loader2, Play, Square } from "lucide-react";
 import { api, type Channel, type ChannelInput, type Voice } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -290,32 +290,99 @@ function VoiceSelect({ id, value, voices, onChange }: VoiceSelectProps) {
   }, {});
   const languages = Object.keys(grouped).sort();
 
+  // The preview endpoint expects a real Edge-TTS voice id. The select stores
+  // voice_id directly, but legacy/orphan values may be an alias. Resolve those
+  // back to a voice_id so the play button still works.
+  const aliasToId = new Map(voices.map((v) => [v.alias, v.voice_id]));
+  const previewId = knownIds.has(value) ? value : aliasToId.get(value) ?? "";
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [state, setState] = useState<"idle" | "loading" | "playing">("idle");
+
+  const stop = () => {
+    audioRef.current?.pause();
+    audioRef.current = null;
+    setState("idle");
+  };
+
+  const preview = () => {
+    if (state !== "idle") {
+      stop();
+      return;
+    }
+    if (!previewId) {
+      toast.error("Selecciona una voz válida para escucharla.");
+      return;
+    }
+    setState("loading");
+    const audio = new Audio(api.voicePreviewUrl(previewId));
+    audioRef.current = audio;
+    audio.onplaying = () => setState("playing");
+    audio.onended = stop;
+    audio.onerror = () => {
+      toast.error("No se pudo generar el preview de esta voz.");
+      stop();
+    };
+    audio.play().catch(() => {
+      toast.error("No se pudo reproducir el audio.");
+      stop();
+    });
+  };
+
+  // Stop any playback when the component unmounts (dialog closed).
+  useEffect(() => () => stop(), []);
+
   return (
-    <Select value={value || "__none__"} onValueChange={(v) => onChange(v === "__none__" ? "" : v)}>
-      <SelectTrigger id={id}>
-        <SelectValue placeholder="(seleccionar voz)" />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="__none__">(sin voz — usa el default del sistema)</SelectItem>
-        {isOrphan && (
-          <SelectItem value={value}>
-            {value} <span className="text-xs text-muted-foreground">(personalizada)</span>
-          </SelectItem>
-        )}
-        {languages.map((lang) => (
-          <div key={lang}>
-            <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-              {lang}
+    <div className="flex items-center gap-2">
+      <Select
+        value={value || "__none__"}
+        onValueChange={(v) => {
+          stop();
+          onChange(v === "__none__" ? "" : v);
+        }}
+      >
+        <SelectTrigger id={id} className="flex-1">
+          <SelectValue placeholder="(seleccionar voz)" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">(sin voz — usa el default del sistema)</SelectItem>
+          {isOrphan && (
+            <SelectItem value={value}>
+              {value} <span className="text-xs text-muted-foreground">(personalizada)</span>
+            </SelectItem>
+          )}
+          {languages.map((lang) => (
+            <div key={lang}>
+              <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+                {lang}
+              </div>
+              {grouped[lang].map((v) => (
+                <SelectItem key={v.voice_id} value={v.voice_id}>
+                  {v.alias}{" "}
+                  <span className="text-xs text-muted-foreground">— {v.voice_id}</span>
+                </SelectItem>
+              ))}
             </div>
-            {grouped[lang].map((v) => (
-              <SelectItem key={v.voice_id} value={v.voice_id}>
-                {v.alias}{" "}
-                <span className="text-xs text-muted-foreground">— {v.voice_id}</span>
-              </SelectItem>
-            ))}
-          </div>
-        ))}
-      </SelectContent>
-    </Select>
+          ))}
+        </SelectContent>
+      </Select>
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        onClick={preview}
+        disabled={!previewId && state === "idle"}
+        title={state === "idle" ? "Escuchar voz" : "Detener"}
+        className="shrink-0"
+      >
+        {state === "loading" ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : state === "playing" ? (
+          <Square className="h-4 w-4" />
+        ) : (
+          <Play className="h-4 w-4" />
+        )}
+      </Button>
+    </div>
   );
 }

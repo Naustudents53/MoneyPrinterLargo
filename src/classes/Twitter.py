@@ -8,6 +8,7 @@ from cache import *
 from config import *
 from status import *
 from llm_provider import generate_text
+from classes.TweetOptimizer import ViralTweetOptimizer
 from typing import List, Optional
 from datetime import datetime
 from termcolor import colored
@@ -41,6 +42,7 @@ class Twitter:
         """
         self.account_uuid: str = account_uuid
         self.account_nickname: str = account_nickname
+        fp_profile_path = fp_profile_path or get_firefox_profile_path()
         self.fp_profile_path: str = fp_profile_path
         self.topic: str = topic
 
@@ -201,24 +203,38 @@ class Twitter:
         Returns:
             post (str): The post
         """
-        completion = generate_text(
-            f"Generate a Twitter post about: {self.topic} in {get_twitter_language()}. "
-            "The Limit is 2 sentences. Choose a specific sub-topic of the provided topic."
-        )
+        recent_posts = [post.get("content", "") for post in self.get_posts()][-12:]
 
         if get_verbose():
-            info("Generating a post...")
+            info("Generating algorithm-optimized post candidates...")
 
-        if completion is None:
+        selection = ViralTweetOptimizer.generate(
+            topic=self.topic,
+            language=get_twitter_language(),
+            recent_posts=recent_posts,
+            generate_response=lambda prompt: generate_text(prompt, temperature=0.9),
+        )
+        completion = selection.tweet
+
+        if get_verbose():
+            reasons = ", ".join(selection.score.reasons) or "balanced engagement score"
+            info(
+                f"Selected best of {len(selection.candidates)} candidates "
+                f"(score={selection.score.total:.2f}; {reasons})"
+            )
+
+        if not completion:
             error("Failed to generate a post. Please try again.")
             sys.exit(1)
 
         # Apply Regex to remove all *
-        completion = re.sub(r"\*", "", completion).replace('"', "")
+        completion = ViralTweetOptimizer.clean_tweet(
+            re.sub(r"\*", "", completion).replace('"', "")
+        )
 
         if get_verbose():
             info(f"Length of post: {len(completion)}")
-        if len(completion) >= 260:
-            return completion[:257].rsplit(" ", 1)[0] + "..."
+        if len(completion) > 260:
+            return ViralTweetOptimizer.truncate_at_word(completion, 260)
 
         return completion

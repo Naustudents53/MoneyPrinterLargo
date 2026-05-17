@@ -84,7 +84,7 @@ La idea es simple: configurar tus proveedores, abrir la app, elegir el canal o f
 ## Requisitos
 
 - Python 3.12
-- Node.js 18+ y npm
+- Node.js 18+ y pnpm 10.16+
 - Firefox
 - ffmpeg disponible en el PATH
 - ImageMagick
@@ -116,7 +116,7 @@ Luego instala la webapp:
 ```bash
 source venv/bin/activate
 cd webapp
-npm run install:all
+pnpm run install:all
 ```
 
 En Windows PowerShell, activa el entorno con:
@@ -162,7 +162,7 @@ Importante: `config.json` es local y puede contener secretos. No subas API keys 
 Desde `webapp/`, con el entorno virtual activo:
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 Esto levanta dos servicios en la misma terminal:
@@ -179,7 +179,7 @@ http://127.0.0.1:5173
 También puedes ejecutarlo desde la raíz:
 
 ```bash
-npm --prefix webapp run dev
+pnpm --dir webapp run dev
 ```
 
 ---
@@ -258,9 +258,9 @@ MoneyPrinterLargo-public/
 1. Ejecuta `bash scripts/setup_local.sh`.
 2. Edita `config.json`.
 3. Activa el entorno virtual.
-4. Instala la webapp con `cd webapp && npm run install:all`.
+4. Instala la webapp con `cd webapp && pnpm run install:all`.
 5. Corre `python scripts/preflight_local.py`.
-6. Inicia la webapp con `npm run dev`.
+6. Inicia la webapp con `pnpm run dev`.
 7. Abre `http://127.0.0.1:5173`.
 8. Crea o revisa tus canales.
 9. Genera un guion de prueba.

@@ -28,7 +28,7 @@ export function Logo({ className, size = 32 }: LogoProps) {
         style={{
           color: "hsl(213 27% 6%)",
           fontSize: Math.round(size * 0.34),
-          letterSpacing: "-0.04em",
+          letterSpacing: "0",
         }}
       >
         $
@@ -45,10 +45,10 @@ export function WordMark({ className }: { className?: string }) {
     <div className={cn("flex items-center gap-2.5 min-w-0", className)}>
       <Logo size={32} />
       <div className="flex flex-col leading-tight min-w-0">
-        <span className="font-display font-semibold text-[13px] tracking-tight text-foreground truncate">
+        <span className="font-display font-semibold text-[13px] text-foreground truncate">
           MoneyPrinter
         </span>
-        <span className="font-mono text-[10px] tracking-[0.04em] text-muted-foreground truncate">
+        <span className="font-mono text-[10px] text-muted-foreground truncate">
           LARGO · v1.0.0
         </span>
       </div>

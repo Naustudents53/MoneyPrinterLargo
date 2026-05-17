@@ -49,8 +49,7 @@ export function BackgroundJobs() {
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>
           <button
-            className="h-[34px] px-2.5 flex items-center gap-2 rounded-lg bg-surface text-foreground text-[12px]"
-            style={{ border: "1px solid hsl(var(--border) / .07)" }}
+            className="command-strip h-[34px] px-2.5 flex items-center gap-2 rounded-lg text-foreground text-[12px]"
             title="Trabajos en background"
           >
             <span
@@ -70,10 +69,10 @@ export function BackgroundJobs() {
             </span>
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-[420px] max-w-[95vw]">
+        <DropdownMenuContent align="end" className="w-[420px] max-w-[95vw] p-2">
           <DropdownMenuLabel className="flex items-center justify-between">
             <span>Trabajos en background</span>
-            <span className="text-[10px] font-normal text-muted-foreground font-mono uppercase tracking-wider">
+            <span className="text-[10px] font-normal text-muted-foreground font-mono uppercase">
               {running.length} corriendo · {finished.length} recientes
             </span>
           </DropdownMenuLabel>
@@ -92,14 +91,13 @@ export function BackgroundJobs() {
                     setOpen(false);
                     setAttaching(j);
                   }}
-                  className="w-full text-left px-3 py-2.5 hover:bg-surface transition-colors"
-                  style={{ borderBottom: "1px solid hsl(var(--border) / .04)" }}
+                  className="list-row mb-1 w-full rounded-lg text-left px-3 py-2.5"
                 >
                   <div className="flex items-center gap-2">
                     <JobStatusIcon status={j.status} />
                     <span className="text-sm font-medium truncate flex-1">{j.title}</span>
                     <span
-                      className="font-mono text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded"
+                      className="font-mono text-[10px] uppercase px-1.5 py-0.5 rounded"
                       style={{
                         border: "1px solid hsl(var(--border) / .12)",
                         color: "hsl(var(--muted-foreground))",
@@ -172,7 +170,7 @@ export function BackgroundJobsBar() {
   return (
     <>
       <div
-        className="bg-bg-raised/70 backdrop-blur-md px-7 py-2 flex items-center gap-3.5 shrink-0"
+        className="bg-bg-raised/80 backdrop-blur-xl px-3 sm:px-7 py-2 flex items-center gap-3.5 shrink-0"
         style={{ borderBottom: "1px solid hsl(var(--border) / .07)" }}
       >
         <span className="eyebrow text-muted-foreground">Jobs activos</span>
@@ -181,8 +179,7 @@ export function BackgroundJobsBar() {
             <button
               key={j.id}
               onClick={() => setAttaching(j)}
-              className="h-[30px] px-3 flex items-center gap-2.5 rounded-lg bg-surface text-foreground text-[12px] shrink-0 hover:bg-surface-up transition-colors"
-              style={{ border: "1px solid hsl(var(--border) / .07)" }}
+              className="command-strip h-[30px] px-3 flex items-center gap-2.5 rounded-lg text-foreground text-[12px] shrink-0 transition-colors"
             >
               <span
                 className="h-1.5 w-1.5 rounded-full bg-warning animate-mpl-pulse"

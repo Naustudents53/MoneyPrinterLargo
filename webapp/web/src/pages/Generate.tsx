@@ -11,6 +11,7 @@ import {
   Lightbulb,
   Loader2,
   X,
+  Upload,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
@@ -21,6 +22,7 @@ import { ScriptPreviewDialog } from "@/components/ScriptPreviewDialog";
 import { BatchGenerateDialog } from "@/components/BatchGenerateDialog";
 import {
   api,
+  RETENTION_MODE_OPTIONS,
   SHORT_DURATION_OPTIONS,
   HOOK_PROFILE_OPTIONS,
   SHORT_RENDER_PROFILE_OPTIONS,
@@ -30,6 +32,7 @@ import {
   type SeriesEntry,
   type ShortDurationSeconds,
   type ShortRenderProfile,
+  type RetentionMode,
   type SystemInfo,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -45,6 +48,16 @@ const SHORT_RENDER_META: Record<ShortRenderProfile, {
   turbo: { label: "Turbo", hint: "Render limpio", fps: 24 },
 };
 
+const RETENTION_MODE_META: Record<RetentionMode, {
+  label: string;
+  hint: string;
+}> = {
+  standard: { label: "Estandar", hint: "ritmo normal" },
+  maxima_retencion: { label: "MAXIMA RETENCION", hint: "hook + cortes" },
+};
+
+type VisualSource = "ai" | "photos" | "upload";
+
 export function Generate() {
   const [params] = useSearchParams();
   const presetChannel = params.get("channel") || "";
@@ -55,7 +68,9 @@ export function Generate() {
   const [channelId, setChannelId] = useState(presetChannel);
   const [kind, setKind] = useState<"short" | "long">("short");
   const [topic, setTopic] = useState("");
-  const [imageMode, setImageMode] = useState<"ai" | "photos">("ai");
+  const [imageMode, setImageMode] = useState<VisualSource>("ai");
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const [seriesId, setSeriesId] = useState("");
   // Per-job hook profile override. Empty string = use the channel's configured
   // default (selectedChannel.hook_profile); otherwise overrides for THIS run.
@@ -64,6 +79,7 @@ export function Generate() {
   const [previewAtEnd, setPreviewAtEnd] = useState(false);
   const [shortDuration, setShortDuration] = useState<ShortDurationSeconds>(60);
   const [shortRenderProfile, setShortRenderProfile] = useState<ShortRenderProfile>("fast");
+  const [retentionMode, setRetentionMode] = useState<RetentionMode>("standard");
 
   // Decorative mixer knobs — not wired to the backend. They make the panel
   // feel like a control surface; the actual TTS/BSO volumes live in
@@ -161,16 +177,40 @@ export function Generate() {
     return series;
   }, [series]);
 
-  const start = () => {
+  const uploadSelectedPhotos = async () => {
+    if (imageMode !== "upload") return "";
+    if (photoFiles.length === 0) {
+      toast.error("Selecciona al menos una foto");
+      return "";
+    }
+    setUploadingPhotos(true);
+    try {
+      const uploaded = await api.uploadPhotos(photoFiles);
+      return uploaded.id;
+    } finally {
+      setUploadingPhotos(false);
+    }
+  };
+
+  const start = async () => {
     if (!channelId) {
       toast.error("Selecciona un canal");
       return;
     }
+    let photoUploadId = "";
+    try {
+      photoUploadId = await uploadSelectedPhotos();
+    } catch (e) {
+      toast.error(`No se pudieron subir las fotos: ${(e as Error).message}`);
+      return;
+    }
+    if (imageMode === "upload" && !photoUploadId) return;
+
     const serverAutoUpload = autoUpload && !previewAtEnd;
     const url = api.generateUrl(channelId, {
       kind,
       custom_topic: topic.trim(),
-      image_mode: imageMode,
+      image_mode: imageMode === "photos" ? "photos" : "ai",
       auto_upload: serverAutoUpload,
       series_id: seriesId || undefined,
       duration_seconds: kind === "short" ? shortDuration : undefined,
@@ -178,6 +218,8 @@ export function Generate() {
       llm_provider: llmProvider || undefined,
       llm_model: llmProvider && llmModel ? llmModel : undefined,
       hook_profile: hookProfile || undefined,
+      photo_upload_id: photoUploadId || undefined,
+      retention_mode: kind === "short" ? retentionMode : undefined,
     });
     setSseUrl(url);
     setProgressOpen(true);
@@ -221,9 +263,15 @@ export function Generate() {
       toast.error("La vista previa solo está disponible para shorts");
       return;
     }
+    if (imageMode === "upload") {
+      toast.error("La vista previa no analiza fotos; inicia el render para usar tus fotos");
+      return;
+    }
     const url = api.previewScriptUrl(channelId, {
       custom_topic: topic.trim(),
       model: llmProvider && llmModel ? llmModel : undefined,
+      duration_seconds: shortDuration,
+      retention_mode: retentionMode,
     });
     setPreviewSseUrl(url);
     setPreviewOpen(true);
@@ -232,13 +280,22 @@ export function Generate() {
   // When the user approves the preview, kick the full /generate flow but
   // pass `script_file=<previewId>` so the runner reuses the script instead
   // of regenerating it.
-  const onPreviewApproved = (data: { previewId: string }) => {
+  const onPreviewApproved = async (data: { previewId: string }) => {
     if (!channelId) return;
+    let photoUploadId = "";
+    try {
+      photoUploadId = await uploadSelectedPhotos();
+    } catch (e) {
+      toast.error(`No se pudieron subir las fotos: ${(e as Error).message}`);
+      return;
+    }
+    if (imageMode === "upload" && !photoUploadId) return;
+
     const serverAutoUpload = autoUpload && !previewAtEnd;
     const url = api.generateUrl(channelId, {
       kind: "short",
       custom_topic: topic.trim(),
-      image_mode: imageMode,
+      image_mode: imageMode === "photos" ? "photos" : "ai",
       auto_upload: serverAutoUpload,
       series_id: seriesId || undefined,
       duration_seconds: shortDuration,
@@ -246,6 +303,8 @@ export function Generate() {
       llm_provider: llmProvider || undefined,
       llm_model: llmProvider && llmModel ? llmModel : undefined,
       script_file: data.previewId,
+      photo_upload_id: photoUploadId || undefined,
+      retention_mode: retentionMode,
     });
     setPreviewOpen(false);
     setSseUrl(url);
@@ -260,7 +319,8 @@ export function Generate() {
             : shortRenderProfile === "fast"
             ? 0.11
             : 0.07) +
-          90,
+          90 +
+          (retentionMode === "maxima_retencion" ? shortDuration * 0.08 + 45 : 0),
       )
     : 900;
   const outputFps = kind === "short" ? SHORT_RENDER_META[shortRenderProfile].fps : 24;
@@ -278,7 +338,7 @@ export function Generate() {
               size="sm"
               className="gap-1.5"
               onClick={startPreview}
-              disabled={!channelId || kind !== "short"}
+              disabled={!channelId || kind !== "short" || imageMode === "upload"}
               title={
                 kind !== "short"
                   ? "La vista previa solo está disponible para shorts"
@@ -304,10 +364,27 @@ export function Generate() {
       />
 
       <PageShell>
-        <div
-          className="grid gap-3.5"
-          style={{ gridTemplateColumns: "minmax(0, 1fr) 360px" }}
-        >
+        <section className="page-hero">
+          <div className="page-hero-inner">
+            <div>
+              <span className="eyebrow block mb-2">Production board</span>
+              <h1 className="page-title">
+                Genera el siguiente <span className="brand-text">{kind === "short" ? "short" : "video"}</span>
+              </h1>
+              <p className="page-subtitle">
+                Canal, guion, voz, imagenes y render en una consola unica. El flujo
+                queda listo para revisar o subir sin cambiar de pantalla.
+              </p>
+            </div>
+            <div className="metric-strip grid-cols-3 w-full sm:w-auto sm:min-w-[460px]">
+              <GenerateMetric label="Canal" value={selectedChannel?.nickname || "sin canal"} colorVar="var(--primary)" />
+              <GenerateMetric label="ETA" value={`${eta}s`} colorVar="var(--accent)" />
+              <GenerateMetric label="FPS" value={outputFps} colorVar="var(--gold)" />
+            </div>
+          </div>
+        </section>
+
+        <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_360px] gap-3.5">
           {/* MAIN — 3-stage console */}
           <div
             className="studio-surface overflow-hidden"
@@ -315,7 +392,7 @@ export function Generate() {
           >
             {/* Track headers */}
             <div
-              className="grid grid-cols-3"
+              className="grid grid-cols-1 md:grid-cols-3"
               style={{ borderBottom: "1px solid hsl(var(--border) / .07)" }}
             >
               <TrackHeader
@@ -341,11 +418,11 @@ export function Generate() {
             </div>
 
             {/* Track bodies */}
-            <div className="grid grid-cols-3">
+            <div className="grid grid-cols-1 md:grid-cols-3">
               {/* INPUT */}
               <div
-                className="px-[18px] pt-[18px] pb-[22px] flex flex-col gap-3.5"
-                style={{ borderRight: "1px solid hsl(var(--border) / .07)" }}
+                className="px-[18px] pt-[18px] pb-[22px] flex flex-col gap-3.5 md:border-r"
+                style={{ borderColor: "hsl(var(--border) / .07)" }}
               >
                 <Field label="Canal">
                   <ChannelSelect
@@ -461,8 +538,8 @@ export function Generate() {
 
               {/* TRANSFORM */}
               <div
-                className="px-[18px] pt-[18px] pb-[22px] flex flex-col gap-[18px]"
-                style={{ borderRight: "1px solid hsl(var(--border) / .07)" }}
+                className="px-[18px] pt-[18px] pb-[22px] flex flex-col gap-[18px] md:border-r"
+                style={{ borderColor: "hsl(var(--border) / .07)" }}
               >
                 {kind === "short" && (
                   <>
@@ -478,6 +555,32 @@ export function Generate() {
                           label: `${s}s`,
                         }))}
                       />
+                    </Field>
+                    <Field
+                      label="RetenciÃ³n"
+                      hint={RETENTION_MODE_META[retentionMode].hint}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Sparkles
+                          className="h-4 w-4 shrink-0"
+                          strokeWidth={1.7}
+                          style={{
+                            color:
+                              retentionMode === "maxima_retencion"
+                                ? "hsl(var(--gold))"
+                                : "hsl(var(--muted-foreground))",
+                          }}
+                        />
+                        <Segmented
+                          value={retentionMode}
+                          onChange={(v) => setRetentionMode(v as RetentionMode)}
+                          accentVar="var(--gold)"
+                          options={RETENTION_MODE_OPTIONS.map((mode) => ({
+                            value: mode,
+                            label: RETENTION_MODE_META[mode].label,
+                          }))}
+                        />
+                      </div>
                     </Field>
                     <Field
                       label="Render"
@@ -498,14 +601,67 @@ export function Generate() {
                 <Field label="Fuente de imágenes">
                   <Segmented
                     value={imageMode}
-                    onChange={(v) => setImageMode(v as "ai" | "photos")}
+                    onChange={(v) => setImageMode(v as VisualSource)}
                     accentVar="var(--accent)"
                     options={[
                       { value: "ai", label: "AI · Nano Banana" },
                       { value: "photos", label: "Stock fotos" },
+                      { value: "upload", label: "Mis fotos" },
                     ]}
                   />
                 </Field>
+
+                {imageMode === "upload" && (
+                  <Field
+                    label="Fotos subidas"
+                    hint={photoFiles.length ? `${photoFiles.length} archivos` : "jpg/png/webp"}
+                  >
+                    <div className="flex flex-col gap-2">
+                      <input
+                        id="photo-video-files"
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="sr-only"
+                        onChange={(event) =>
+                          setPhotoFiles(Array.from(event.target.files ?? []))
+                        }
+                      />
+                      <label
+                        htmlFor="photo-video-files"
+                        className={cn(
+                          "inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg px-3 text-[12px] font-medium transition-colors",
+                          "border text-foreground hover:bg-surface",
+                        )}
+                        style={{
+                          borderColor: "hsl(var(--border) / .13)",
+                          background: "hsl(var(--bg-raised) / .55)",
+                        }}
+                      >
+                        <Upload className="h-4 w-4" strokeWidth={1.8} />
+                        {photoFiles.length ? "Cambiar fotos" : "Elegir fotos"}
+                      </label>
+                      {photoFiles.length > 0 && (
+                        <div
+                          className="max-h-[92px] overflow-auto rounded-lg px-2 py-1.5 text-[11px] leading-relaxed font-mono text-muted-foreground"
+                          style={{
+                            background: "hsl(var(--background))",
+                            border: "1px solid hsl(var(--border) / .07)",
+                          }}
+                        >
+                          {photoFiles.slice(0, 8).map((file) => (
+                            <div key={`${file.name}-${file.size}`} className="truncate">
+                              {file.name}
+                            </div>
+                          ))}
+                          {photoFiles.length > 8 && (
+                            <div>+{photoFiles.length - 8} mas</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </Field>
+                )}
 
                 <Field
                   label="Hook profile"
@@ -663,9 +819,14 @@ export function Generate() {
                     size="lg"
                     className="w-full gap-2"
                     onClick={start}
-                    disabled={!channelId}
+                    disabled={!channelId || uploadingPhotos}
                   >
-                    <Play className="h-3.5 w-3.5" /> Imprimir vídeo
+                    {uploadingPhotos ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Play className="h-3.5 w-3.5" />
+                    )}
+                    {uploadingPhotos ? "Subiendo fotos" : "Imprimir vídeo"}
                   </Button>
                   <div className="mt-2.5 flex items-center justify-between text-[11px] text-muted-foreground font-mono">
                     <span>ETA ~{eta}s</span>
@@ -744,10 +905,11 @@ export function Generate() {
         channels={channels}
         defaults={{
           kind,
-          imageMode,
+          imageMode: imageMode === "photos" ? "photos" : "ai",
           autoUpload,
           model: llmProvider && llmModel ? llmModel : undefined,
           renderProfile: kind === "short" ? shortRenderProfile : undefined,
+          retentionMode: kind === "short" ? retentionMode : undefined,
         }}
       />
     </>
@@ -757,6 +919,28 @@ export function Generate() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Track header
 // ─────────────────────────────────────────────────────────────────────────────
+function GenerateMetric({
+  label,
+  value,
+  colorVar,
+}: {
+  label: string;
+  value: string | number;
+  colorVar: string;
+}) {
+  return (
+    <div className="px-4 py-3" style={{ borderRight: "1px solid hsl(var(--border) / .06)" }}>
+      <div className="flex items-center gap-1.5">
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: `hsl(${colorVar})` }} />
+        <span className="tiny-label">{label}</span>
+      </div>
+      <div className="mt-1 truncate font-mono text-[17px] font-semibold tabular-nums text-foreground">
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function TrackHeader({
   num,
   label,
@@ -772,9 +956,9 @@ function TrackHeader({
 }) {
   return (
     <div
-      className="px-[18px] py-3.5 relative"
+      className="px-[18px] py-3.5 relative md:border-r last:border-r-0"
       style={{
-        borderRight: rightBorder ? "1px solid hsl(var(--border) / .07)" : "none",
+        borderColor: rightBorder ? "hsl(var(--border) / .07)" : "transparent",
       }}
     >
       <span
@@ -785,13 +969,13 @@ function TrackHeader({
       <div className="flex items-center gap-2 mb-0.5">
         <span
           className="font-mono text-[10px] font-semibold"
-          style={{ letterSpacing: "0.16em", color: `hsl(${colorVar})` }}
+          style={{ letterSpacing: "0", color: `hsl(${colorVar})` }}
         >
           · {num}
         </span>
         <span
           className="font-mono uppercase font-semibold text-[10px]"
-          style={{ letterSpacing: "0.24em", color: `hsl(${colorVar})` }}
+          style={{ letterSpacing: "0", color: `hsl(${colorVar})` }}
         >
           {label}
         </span>
@@ -815,7 +999,7 @@ function Field({
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="flex items-center justify-between text-[11px] text-muted-foreground font-medium tracking-tight">
+      <label className="flex items-center justify-between text-[11px] text-muted-foreground font-medium">
         <span>{label}</span>
         {hint && (
           <span className="font-mono text-[10px] text-muted-foreground/80">
@@ -916,7 +1100,7 @@ function Segmented({
             type="button"
             onClick={() => onChange(opt.value)}
             className={cn(
-              "px-3 py-1.5 rounded-md text-[12px] cursor-pointer tracking-tight",
+              "px-3 py-1.5 rounded-md text-[12px] cursor-pointer",
               active
                 ? "bg-surface text-foreground font-medium"
                 : "bg-transparent text-muted-foreground hover:text-foreground",
@@ -949,7 +1133,7 @@ function ToggleRow({
   return (
     <div className="flex items-start justify-between gap-2.5 py-2">
       <div className="flex-1">
-        <div className="text-[13px] text-foreground font-medium tracking-tight">
+        <div className="text-[13px] text-foreground font-medium">
           {label}
         </div>
         {hint && (
@@ -1105,7 +1289,7 @@ function Knob({
       </span>
       <span
         className="font-mono uppercase text-[9.5px] text-muted-foreground"
-        style={{ letterSpacing: "0.16em" }}
+        style={{ letterSpacing: "0" }}
       >
         {label}
       </span>
@@ -1166,7 +1350,7 @@ function ChannelSelect({
           {initial}
         </span>
         <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-medium leading-tight tracking-tight truncate">
+          <div className="text-[13px] font-medium leading-tight truncate">
             {ch?.nickname}
           </div>
           <div className="text-[10.5px] text-muted-foreground font-mono truncate">
@@ -1262,7 +1446,7 @@ function ChannelSummary({ channel }: { channel: Channel | undefined }) {
       >
         Canal seleccionado
       </span>
-      <h3 className="font-display text-[22px] font-semibold tracking-[-0.02em] mb-1">
+      <h3 className="font-display text-[22px] font-semibold mb-1">
         {channel.nickname}
       </h3>
       <div className="text-[12px] text-muted-foreground mb-3.5">
@@ -1305,13 +1489,13 @@ function Mini({
       }}
     >
       <span
-        className="font-mono uppercase font-semibold text-[9px] tracking-[0.20em]"
+        className="font-mono uppercase font-semibold text-[9px]"
         style={{ color: `hsl(${accentVar})` }}
       >
         {label}
       </span>
       <div
-        className="font-display text-[18px] font-semibold tracking-[-0.02em] mt-0.5 truncate"
+        className="font-display text-[18px] font-semibold mt-0.5 truncate"
         style={{ fontVariantNumeric: "tabular-nums" }}
       >
         {value}
@@ -1325,7 +1509,7 @@ function Row({ k, v }: { k: string; v: string }) {
     <div className="flex justify-between gap-3">
       <span
         className="font-mono uppercase text-[10px] text-muted-foreground"
-        style={{ letterSpacing: "0.10em" }}
+        style={{ letterSpacing: "0" }}
       >
         {k}
       </span>

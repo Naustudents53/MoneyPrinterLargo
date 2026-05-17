@@ -34,6 +34,7 @@ YOUTUBE_OPTIONS = [
     "Clean up saved videos",
     "Re-upload existing video",
     "Setup CRON Job",
+    "Create video from uploaded photos",
     "Quit"
 ]
 

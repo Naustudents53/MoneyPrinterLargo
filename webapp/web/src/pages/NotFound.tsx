@@ -7,18 +7,25 @@ import { Compass } from "lucide-react";
 export function NotFound() {
   return (
     <>
-      <Header title="404" description="Página no encontrada" />
+      <Header eyebrow="Ruta" title="404" description="Pagina no encontrada" />
       <PageShell>
-        <div className="text-center py-24 space-y-4">
-          <div className="inline-flex rounded-full bg-primary/10 p-4">
-            <Compass className="h-8 w-8 text-primary" />
+        <section className="page-hero">
+          <div className="page-hero-inner justify-center text-center">
+            <div className="mx-auto max-w-xl">
+              <div className="mx-auto mb-5 inline-flex rounded-2xl bg-primary/10 p-4 text-primary">
+                <Compass className="h-8 w-8" />
+              </div>
+              <span className="eyebrow block mb-2">404</span>
+              <h1 className="page-title">Esta ruta no existe</h1>
+              <p className="page-subtitle mx-auto">
+                Vuelve al dashboard para seguir operando el estudio.
+              </p>
+              <Button asChild variant="brand" className="mt-5">
+                <Link to="/">Volver al dashboard</Link>
+              </Button>
+            </div>
           </div>
-          <h2 className="font-display text-3xl font-bold">Esta ruta no existe</h2>
-          <p className="text-muted-foreground">Quizá te equivocaste de URL.</p>
-          <Button asChild variant="brand">
-            <Link to="/">Volver al dashboard</Link>
-          </Button>
-        </div>
+        </section>
       </PageShell>
     </>
   );
