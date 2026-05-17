@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -215,7 +216,11 @@ def _apply_short_render_profile(profile: str) -> None:
     print(f"[runner] Override: short_render_profile={profile}", flush=True)
 
 
-_CHANNEL_REF_SUFFIX = ".last_video"
+# NOTE: the `.json` extension is load-bearing. rem_temp_files() wipes every
+# non-(.json/.mp4) file in .mp/ on each pipeline run, so a parallel job for
+# another channel would otherwise delete this pointer and upload-last would
+# fall back to the global mtime scan.
+_CHANNEL_REF_SUFFIX = ".last_video.json"
 
 
 def _write_channel_ref(channel_id: str, video_path: str) -> None:
@@ -226,7 +231,7 @@ def _write_channel_ref(channel_id: str, video_path: str) -> None:
     ref = os.path.join(mp_dir, f"{channel_id}{_CHANNEL_REF_SUFFIX}")
     try:
         with open(ref, "w", encoding="utf-8") as f:
-            f.write(video_path)
+            json.dump({"video_path": video_path, "channel_id": channel_id}, f)
     except Exception as e:
         print(f"[runner] WARN: could not write channel ref: {e}", flush=True)
 
@@ -234,12 +239,27 @@ def _write_channel_ref(channel_id: str, video_path: str) -> None:
 def _read_channel_ref(channel_id: str) -> str:
     """Return the video path recorded by the last generate run, or ''."""
     mp_dir = os.path.join(str(ROOT_DIR), ".mp")
-    ref = os.path.join(mp_dir, f"{channel_id}{_CHANNEL_REF_SUFFIX}")
-    try:
-        with open(ref, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except Exception:
-        return ""
+    for suffix in (_CHANNEL_REF_SUFFIX, ".last_video", ".last_video.txt"):
+        ref = os.path.join(mp_dir, f"{channel_id}{suffix}")
+        try:
+            with open(ref, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+            if not raw:
+                continue
+            try:
+                data = json.loads(raw)
+                if isinstance(data, dict):
+                    ref_channel = str(data.get("channel_id", "")).strip()
+                    if ref_channel and ref_channel != channel_id:
+                        continue
+                    return str(data.get("video_path", "")).strip()
+            except ValueError:
+                pass
+            # Legacy plain-path content (pre-JSON ref files).
+            return raw
+        except Exception:
+            continue
+    return ""
 
 
 def _cleanup_after_upload(video_path: str, is_long: bool, channel_id: str = "") -> None:
@@ -269,12 +289,13 @@ def _cleanup_after_upload(video_path: str, is_long: bool, channel_id: str = "") 
         # Remove the per-channel ref pointer (upload consumed it).
         if channel_id:
             mp_dir = os.path.join(str(ROOT_DIR), ".mp")
-            ref = os.path.join(mp_dir, f"{channel_id}{_CHANNEL_REF_SUFFIX}")
-            if os.path.isfile(ref):
-                try:
-                    os.remove(ref)
-                except Exception:
-                    pass
+            for suffix in (_CHANNEL_REF_SUFFIX, ".last_video", ".last_video.txt"):
+                ref = os.path.join(mp_dir, f"{channel_id}{suffix}")
+                if os.path.isfile(ref):
+                    try:
+                        os.remove(ref)
+                    except Exception:
+                        pass
 
         if not is_long:
             print("[runner] .mp cleaned after upload", flush=True)
@@ -548,7 +569,10 @@ def cmd_upload_last(args):
     # Resolve which .mp4 to upload:
     # 1. Per-channel ref file written by cmd_generate — exact path, safe with
     #    parallel jobs because each channel has its own pointer file.
-    # 2. Fallback: scan .mp/ by mtime (prefer files that have a sidecar).
+    # 2. Fallback: newest .mp4 whose sidecar's channel_id matches THIS channel.
+    #    The fallback never considers videos belonging to another channel (or
+    #    sidecar-less videos), so a missing ref pointer can no longer cause a
+    #    cross-channel upload.
     mp_dir = os.path.join(str(ROOT_DIR), ".mp")
     ref_path = _read_channel_ref(args.channel_id)
     if ref_path and os.path.isfile(ref_path):
@@ -558,23 +582,36 @@ def cmd_upload_last(args):
         candidates = []
         if os.path.isdir(mp_dir):
             for name in os.listdir(mp_dir):
-                if name.lower().endswith(".mp4"):
-                    p = os.path.join(mp_dir, name)
-                    try:
-                        candidates.append((os.path.getmtime(p), p))
-                    except OSError:
-                        pass
+                if not name.lower().endswith(".mp4"):
+                    continue
+                p = os.path.join(mp_dir, name)
+                sc = os.path.splitext(p)[0] + ".meta.json"
+                if not os.path.isfile(sc):
+                    continue
+                try:
+                    with open(sc, "r", encoding="utf-8") as f:
+                        sc_channel = json.load(f).get("channel_id", "")
+                except Exception:
+                    continue
+                if sc_channel != args.channel_id:
+                    continue
+                try:
+                    candidates.append((os.path.getmtime(p), p))
+                except OSError:
+                    pass
         if not candidates:
-            print("[runner] ERROR: no .mp4 found in .mp/ to upload", flush=True)
+            print(
+                "[runner] ERROR: no video found for this channel to upload "
+                f"(channel {args.channel_id}). The per-channel pointer was "
+                "missing and no .mp4 with a matching sidecar exists. "
+                "Regenerate the video for this channel and upload again.",
+                flush=True,
+            )
             sys.exit(5)
         candidates.sort(reverse=True)
-        chosen = next(
-            (p for _, p in candidates
-             if os.path.isfile(os.path.splitext(p)[0] + ".meta.json")),
-            candidates[0][1],
-        )
+        chosen = candidates[0][1]
         youtube.video_path = chosen
-        print(f"[runner] Resolved via mtime scan (no ref file): {chosen}", flush=True)
+        print(f"[runner] Resolved via channel-scoped mtime scan: {chosen}", flush=True)
 
     # Load the sidecar (`<basename>.meta.json`) that the generation step wrote
     # so we recover subject + title + description. Without this, upload_video

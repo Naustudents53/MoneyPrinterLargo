@@ -310,6 +310,43 @@ export interface PhotoUploadResponse {
   files: string[];
 }
 
+export interface PhotoPromptOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface PhotoPromptOptions {
+  styles: PhotoPromptOption[];
+  aspect_ratios: PhotoPromptOption[];
+}
+
+export interface PhotoPromptRequest {
+  channel_id?: string;
+  topic?: string;
+  count?: number;
+  style?: string;
+  aspect_ratio?: string;
+  language?: string;
+  llm_provider?: "ollama" | "gemini" | "openai" | "pollinations" | "";
+  llm_model?: string;
+  retention_mode?: RetentionMode;
+}
+
+export interface PhotoPromptResponse {
+  topic: string;
+  generated_topic: boolean;
+  style: string;
+  aspect_ratio: string;
+  count: number;
+  text: string;
+  filename: string;
+  channel_id: string;
+  channel_nickname: string;
+  script: string;
+  prompts: string[];
+}
+
 // Auto-sync scheduler ------------------------------------------------------
 
 export type AutoSyncTier = "light" | "recent" | "full";
@@ -419,9 +456,19 @@ export const api = {
 
   // Voices (curated Edge-TTS list — used by ChannelFormDialog selects)
   listVoices: () => request<{ voices: Voice[] }>("/api/voices"),
+  voicePreviewUrl: (voiceId: string) =>
+    `${BASE}/api/voices/preview?voice_id=${encodeURIComponent(voiceId)}`,
 
   // LLM models (used by Generate page selector)
   listLLMModels: () => request<LLMModelList>("/api/llm/models"),
+
+  // Photo prompt generator
+  photoPromptOptions: () => request<PhotoPromptOptions>("/api/photo-prompts/options"),
+  generatePhotoPrompts: (data: PhotoPromptRequest) =>
+    request<PhotoPromptResponse>("/api/photo-prompts/generate", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   // Hook styles (used by Generate page hook selector)
   listHookStyles: () => request<{ styles: HookStyle[] }>("/api/llm/hook-styles"),

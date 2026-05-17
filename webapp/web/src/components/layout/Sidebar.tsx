@@ -10,6 +10,7 @@ import {
   Film,
   BookOpen,
   Image as ImageIcon,
+  ImagePlus,
   Activity,
   type LucideIcon,
 } from "lucide-react";
@@ -51,6 +52,7 @@ const NAV: NavGroup[] = [
       { to: "/outreach", label: "Outreach Local", icon: Mail },
       { to: "/storage", label: "Archivos de vídeo", icon: Film },
       { to: "/thumbnails", label: "Thumbnails", icon: ImageIcon },
+      { to: "/photo-prompts", label: "Prompts fotos", icon: ImagePlus },
     ],
   },
   {
@@ -173,7 +175,7 @@ export function MobileNav() {
     NAV[0].items[0],
     NAV[0].items[1],
     NAV[1].items[0],
-    NAV[2].items[3],
+    NAV[2].items[4],
     NAV[3].items[1],
   ];
 

@@ -176,6 +176,18 @@ class GenerationRequest(BaseModel):
     series_id: str = ""              # only used for kind="long"
 
 
+class PhotoPromptGenerateRequest(BaseModel):
+    channel_id: str = ""
+    topic: str = ""
+    count: int = 6
+    style: str = "cinematic_realism"
+    aspect_ratio: str = "9:16"
+    language: str = "espanol"
+    llm_provider: str = ""
+    llm_model: str = ""
+    retention_mode: str = "standard"
+
+
 class ConfigPatch(BaseModel):
     data: dict[str, Any]
 
@@ -894,6 +906,44 @@ def list_voices():
     return {"voices": voices}
 
 
+# Short neutral sample so every voice is judged on the same line.
+_VOICE_PREVIEW_TEXT = (
+    "Hola, así suena esta voz. Este es un ejemplo de narración para tu canal."
+)
+
+
+@app.get("/api/voices/preview")
+async def preview_voice(voice_id: str, text: str | None = None):
+    """
+    Synthesize a short audio sample for a single Edge-TTS voice so the user can
+    hear it from the channel form without generating a full video. The result
+    is cached on disk (keyed by voice + text hash) so re-previewing the same
+    voice is instant and does not re-hit Microsoft's TTS endpoint.
+    """
+    import hashlib
+
+    if not re.fullmatch(r"[A-Za-z]{2,3}-[A-Za-z]{2,4}-[A-Za-z]+Neural", voice_id):
+        raise HTTPException(400, "Invalid voice id")
+
+    sample = (text or _VOICE_PREVIEW_TEXT).strip()[:300]
+    if not sample:
+        raise HTTPException(400, "Empty preview text")
+
+    cache_key = hashlib.sha1(f"{voice_id}|{sample}".encode()).hexdigest()[:16]
+    out = MP_DIR / f".voice-preview-{cache_key}.mp3"
+
+    if not out.exists():
+        MP_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            import edge_tts
+
+            await edge_tts.Communicate(sample, voice_id).save(str(out))
+        except Exception as e:
+            raise HTTPException(502, f"TTS preview failed: {e}") from e
+
+    return FileResponse(out, media_type="audio/mpeg", filename=f"{voice_id}.mp3")
+
+
 @app.get("/api/config")
 def read_config():
     cfg = _read_config()
@@ -1311,6 +1361,58 @@ def suggest_topics(channel_id: str, n: int = 5, model: str = ""):
     return {"topics": candidates}
 
 
+@app.get("/api/photo-prompts/options")
+def photo_prompt_options():
+    from classes.PhotoPromptGenerator import PHOTO_PROMPT_ASPECT_RATIOS, PHOTO_PROMPT_STYLES
+
+    return {
+        "styles": [
+            {
+                "id": key,
+                "label": value["label"],
+                "description": value["description"],
+            }
+            for key, value in PHOTO_PROMPT_STYLES.items()
+        ],
+        "aspect_ratios": [
+            {"id": key, "label": key, "description": value}
+            for key, value in PHOTO_PROMPT_ASPECT_RATIOS.items()
+        ],
+    }
+
+
+@app.post("/api/photo-prompts/generate")
+def generate_photo_prompts(payload: PhotoPromptGenerateRequest):
+    from classes.PhotoPromptGenerator import PhotoPromptGenerator
+
+    accounts = get_accounts("youtube")
+    channel = None
+    if payload.channel_id:
+        channel = next((acc for acc in accounts if acc.get("id") == payload.channel_id), None)
+        if not channel:
+            raise HTTPException(404, "Channel not found")
+    elif accounts:
+        channel = accounts[0]
+
+    try:
+        result = PhotoPromptGenerator().generate(
+            channel=channel,
+            topic=payload.topic,
+            count=payload.count,
+            style=payload.style,
+            aspect_ratio=payload.aspect_ratio,
+            language=payload.language,
+            llm_provider=payload.llm_provider,
+            llm_model=payload.llm_model,
+            retention_mode=payload.retention_mode,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:
+        raise HTTPException(500, f"Photo prompt generation failed: {e}") from e
+    return result.to_dict()
+
+
 # Preview-script artifacts live in .mp/.preview-<uuid>.txt — the same directory
 # as the rest of the pipeline scratch space, prefixed so rem_temp_files() won't
 # wipe them (they end in .txt which is allowed to stay).
@@ -1676,8 +1778,45 @@ async def upload_last(channel_id: str, kind: str = "short"):
         raise HTTPException(404, "Channel not found")
     if kind not in ("short", "long"):
         raise HTTPException(400, "kind must be 'short' or 'long'")
-    title = f"Subiendo {kind} — {ch.get('nickname', channel_id)}"
-    job = _spawn_job(["upload-last", "--channel-id", channel_id, "--kind", kind], title=title)
+
+    # The sidecar (.meta.json) written by the generate step is the authoritative
+    # source for short-vs-long. Peek at it so the job title matches what the
+    # runner will actually upload, even when the frontend sends the default
+    # kind=short.
+    effective_kind = kind
+    try:
+        for suffix in (".last_video.json", ".last_video", ".last_video.txt"):
+            ref_file = MP_DIR / f"{channel_id}{suffix}"
+            if not ref_file.is_file():
+                continue
+            ref_raw = ref_file.read_text(encoding="utf-8").strip()
+            try:
+                ref_data = json.loads(ref_raw)
+                if isinstance(ref_data, dict):
+                    ref_channel = str(ref_data.get("channel_id", "")).strip()
+                    if ref_channel and ref_channel != channel_id:
+                        continue
+                    video_path = str(ref_data.get("video_path", "")).strip()
+                else:
+                    video_path = ""
+            except ValueError:
+                video_path = ref_raw  # legacy plain-path content
+            sidecar = (
+                Path(os.path.splitext(video_path)[0] + ".meta.json")
+                if video_path
+                else None
+            )
+            if sidecar and sidecar.is_file():
+                meta = json.loads(sidecar.read_text(encoding="utf-8"))
+                if "is_long" in meta:
+                    effective_kind = "long" if bool(meta["is_long"]) else "short"
+                    break
+    except Exception:
+        pass
+
+    label = "video largo" if effective_kind == "long" else "short"
+    title = f"Subiendo {label} — {ch.get('nickname', channel_id)}"
+    job = _spawn_job(["upload-last", "--channel-id", channel_id, "--kind", effective_kind], title=title)
     return EventSourceResponse(_stream_job(job))
 
 

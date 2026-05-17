@@ -1828,6 +1828,9 @@ Example format:
                 "metadata": getattr(self, "metadata", {}) or {},
                 "is_long": bool(is_long),
                 "thumbnail_path": getattr(self, "thumbnail_path", "") or "",
+                # Stamp the owning channel so upload-last can never cross
+                # channels even if the per-channel ref pointer is missing.
+                "channel_id": getattr(self, "_account_uuid", "") or "",
                 "retention_mode": getattr(self, "_retention_mode", "") or "",
                 "retention_preflight": getattr(self, "retention_preflight", {}) or {},
                 "retention_hook_lab": getattr(self, "retention_hook_lab", {}) or {},
@@ -6656,6 +6659,56 @@ No markdown. No explanation. Just the JSON array."""
                     warning(f"\t=> {label}: JS click also failed: {str(e2)[:160]}")
                 return False
 
+    def _dismiss_still_checking_dialog(self, driver, timeout_s: float = 6.0) -> bool:
+        """
+        Handle the "We're still checking your content" confirmation dialog that
+        YouTube Studio shows after clicking Done when its background checks have
+        not finished yet. The default highlighted button is "Go back", so we
+        explicitly click "Publish anyway" / "Publicar de todos modos".
+
+        Returns True if a dialog was found and dismissed, False otherwise.
+        """
+        verbose = get_verbose()
+        publish_anyway_labels = (
+            "Publish anyway",
+            "Publicar de todos modos",
+            "Publicar igualmente",
+        )
+        text_predicates = " or ".join(
+            f"normalize-space(.)='{label}'" for label in publish_anyway_labels
+        )
+        xpath = (
+            "//tp-yt-paper-dialog//*[self::ytcp-button or self::button or self::a]"
+            f"[{text_predicates}]"
+        )
+
+        deadline = time.time() + timeout_s
+        last_err = None
+        while time.time() < deadline:
+            try:
+                candidates = driver.find_elements(By.XPATH, xpath)
+                for el in candidates:
+                    try:
+                        if not el.is_displayed():
+                            continue
+                    except Exception:
+                        continue
+                    if verbose:
+                        info(
+                            "\t=> 'Still checking content' dialog detected; "
+                            "clicking 'Publish anyway'..."
+                        )
+                    if self._robust_click(driver, el, "Publish anyway button"):
+                        time.sleep(1.5)
+                        return True
+            except Exception as e:
+                last_err = e
+            time.sleep(0.5)
+
+        if verbose and last_err is not None:
+            warning(f"\t=> No 'still checking' dialog handled: {str(last_err)[:160]}")
+        return False
+
     def upload_video(self) -> bool:
         """
         Uploads the video to YouTube via Selenium.
@@ -6960,6 +7013,15 @@ No markdown. No explanation. Just the JSON array."""
                     warning("Done button could not be clicked.")
             except Exception as e:
                 warning(f"Done button failed: {e}")
+
+            # YT Studio sometimes interrupts the publish flow with a
+            # "We're still checking your content" confirmation when its
+            # background scans have not finished. The default action is
+            # "Go back", so force-click "Publish anyway" if present.
+            try:
+                self._dismiss_still_checking_dialog(driver)
+            except Exception as e:
+                warning(f"'Still checking content' dialog handler failed: {e}")
 
             is_long_video = bool(getattr(self, "_is_long_video", False))
 
