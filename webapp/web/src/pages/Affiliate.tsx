@@ -22,10 +22,32 @@ export function Affiliate() {
   return (
     <>
       <Header
+        eyebrow="Monetizacion"
         title="Affiliate Marketing"
         description="Productos de Amazon vinculados a una cuenta Twitter."
       />
       <PageShell>
+        <section className="page-hero">
+          <div className="page-hero-inner">
+            <div>
+              <span className="eyebrow block mb-2">Revenue shelf</span>
+              <h1 className="page-title">
+                Productos con <span className="brand-text">tracking</span>
+              </h1>
+              <p className="page-subtitle">
+                Links afiliados conectados a cuentas sociales para mantener el
+                inventario comercial visible.
+              </p>
+            </div>
+            <div className="metric-strip grid-cols-1 w-full sm:w-auto sm:min-w-[220px]">
+              <div className="px-4 py-3">
+                <span className="tiny-label">Productos</span>
+                <div className="mt-1 font-mono text-[17px] font-semibold">{products.length}</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -46,9 +68,9 @@ export function Affiliate() {
                 description="Agrega un producto desde el CLI o vía API. Esta sección listará productos vinculados a una cuenta Twitter."
               />
             ) : (
-              <ul className="divide-y divide-border/60 rounded-lg border border-border/60">
+              <ul className="space-y-2">
                 {products.map((p) => (
-                  <li key={p.id} className="px-4 py-3 flex items-center gap-3">
+                  <li key={p.id} className="list-row rounded-xl px-4 py-3 flex items-center gap-3">
                     <Badge variant="gold" className="font-mono">
                       {p.id.slice(0, 8)}
                     </Badge>

@@ -39,6 +39,8 @@ export const HOOK_PROFILE_OPTIONS = ["educational", "storytelling"] as const;
 export type HookProfile = (typeof HOOK_PROFILE_OPTIONS)[number];
 export const SHORT_RENDER_PROFILE_OPTIONS = ["quality", "fast", "turbo"] as const;
 export type ShortRenderProfile = (typeof SHORT_RENDER_PROFILE_OPTIONS)[number];
+export const RETENTION_MODE_OPTIONS = ["standard", "maxima_retencion"] as const;
+export type RetentionMode = (typeof RETENTION_MODE_OPTIONS)[number];
 
 export interface Channel {
   id: string;
@@ -87,6 +89,64 @@ export interface ChannelVideo {
   comment_count?: number;
   dislike_count?: number;
   stats_synced_at?: string;
+}
+
+export interface RetentionLabVideo {
+  title: string;
+  subject: string;
+  url: string;
+  date: string;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  stats_synced_at: string;
+  performance: "winner" | "weak" | "normal" | "unknown";
+}
+
+export interface RetentionLabTerm {
+  term: string;
+  count: number;
+  avg_views: number;
+  latest_views: number | null;
+  winner_count: number;
+  weak_count: number;
+  examples: string[];
+  reason?: string;
+}
+
+export interface RetentionLabChannel {
+  channel_id: string;
+  channel_nickname: string;
+  niche: string;
+  language: string;
+  stats: {
+    videos: number;
+    shorts: number;
+    known_views: number;
+    unknown_views: number;
+    winners: number;
+    weak: number;
+    avg_views: number;
+    median_views: number;
+  };
+  winners: RetentionLabVideo[];
+  weak_videos: RetentionLabVideo[];
+  burned_topics: RetentionLabTerm[];
+  winning_terms: RetentionLabTerm[];
+  recommendations: string[];
+}
+
+export interface RetentionLabResponse {
+  generated_at: string;
+  aggregate: {
+    channels: number;
+    shorts: number;
+    known_views: number;
+    unknown_views: number;
+    winners: number;
+    weak: number;
+  };
+  channels: RetentionLabChannel[];
 }
 
 export interface TwitterAccount {
@@ -226,6 +286,7 @@ export interface BatchJobItem {
   sentence_length?: number;
   hook_style?: string;
   render_profile?: ShortRenderProfile;
+  retention_mode?: RetentionMode;
 }
 
 export interface BatchJobResult {
@@ -241,6 +302,12 @@ export interface PreviewScript {
   id: string;
   subject: string;
   script: string;
+}
+
+export interface PhotoUploadResponse {
+  id: string;
+  count: number;
+  files: string[];
 }
 
 // Auto-sync scheduler ------------------------------------------------------
@@ -324,6 +391,12 @@ export const api = {
       `/api/channels/${id}/videos/mark-all?kind=${kind}`,
       { method: "POST" }
     ),
+  retentionLab: (channelId?: string) => {
+    const qs = new URLSearchParams();
+    if (channelId) qs.set("channel_id", channelId);
+    const query = qs.toString();
+    return request<RetentionLabResponse>(`/api/retention-lab${query ? "?" + query : ""}`);
+  },
 
   // Twitter
   listTwitterAccounts: () => request<TwitterAccount[]>("/api/twitter/accounts"),
@@ -370,6 +443,26 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+
+  uploadPhotos: async (files: File[]) => {
+    const body = new FormData();
+    files.forEach((file) => body.append("files", file));
+    const res = await fetch(`${BASE}/api/photo-video/uploads`, {
+      method: "POST",
+      body,
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const json = await res.json();
+        detail = json.detail || JSON.stringify(json);
+      } catch {
+        // ignore
+      }
+      throw new Error(`${res.status}: ${detail}`);
+    }
+    return res.json() as Promise<PhotoUploadResponse>;
+  },
 
   // Batch generation (spawns N parallel jobs)
   generateBatch: (jobs: BatchJobItem[]) =>
@@ -444,6 +537,8 @@ export const api = {
     sentence_length?: number;
     hook_style?: string;
     script_file?: string;
+    photo_upload_id?: string;
+    retention_mode?: RetentionMode;
   }): string {
     const qs = new URLSearchParams();
     qs.set("kind", params.kind);
@@ -466,13 +561,19 @@ export const api = {
     }
     if (params.hook_style) qs.set("hook_style", params.hook_style);
     if (params.script_file) qs.set("script_file", params.script_file);
+    if (params.photo_upload_id) qs.set("photo_upload_id", params.photo_upload_id);
+    if (params.kind === "short" && params.retention_mode && params.retention_mode !== "standard") {
+      qs.set("retention_mode", params.retention_mode);
+    }
     return `${BASE}/api/channels/${id}/generate?${qs.toString()}`;
   },
   previewScriptUrl(id: string, params: {
     custom_topic?: string;
     model?: string;
     sentence_length?: number;
+    duration_seconds?: ShortDurationSeconds;
     hook_style?: string;
+    retention_mode?: RetentionMode;
   } = {}): string {
     const qs = new URLSearchParams();
     qs.set("kind", "short");
@@ -481,7 +582,11 @@ export const api = {
     if (params.sentence_length && params.sentence_length > 0) {
       qs.set("sentence_length", String(params.sentence_length));
     }
+    if (params.duration_seconds) qs.set("duration_seconds", String(params.duration_seconds));
     if (params.hook_style) qs.set("hook_style", params.hook_style);
+    if (params.retention_mode && params.retention_mode !== "standard") {
+      qs.set("retention_mode", params.retention_mode);
+    }
     return `${BASE}/api/channels/${id}/preview-script?${qs.toString()}`;
   },
   uploadLastUrl: (id: string, kind: "short" | "long" = "short") =>

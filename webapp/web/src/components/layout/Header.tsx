@@ -43,18 +43,21 @@ export function Header({ title, description, eyebrow, actions }: HeaderProps) {
 
   return (
     <header
-      className="sticky top-0 z-30 h-16 flex items-center gap-[18px] px-7 bg-bg-raised/80 backdrop-blur-xl shrink-0"
-      style={{ borderBottom: "1px solid hsl(var(--border) / .07)" }}
+      className="sticky top-0 z-30 min-h-[68px] flex items-center gap-3 sm:gap-[18px] px-3 sm:px-5 lg:px-7 bg-bg-raised/80 backdrop-blur-2xl shrink-0"
+      style={{
+        borderBottom: "1px solid hsl(var(--border) / .10)",
+        boxShadow: "inset 0 -1px 0 hsl(var(--foreground) / .025)",
+      }}
     >
       {/* Title block — eyebrow + title + description on a single baseline */}
       <div className="flex-1 min-w-0 flex flex-col gap-0.5">
         {eyebrow && <div className="eyebrow truncate">{eyebrow}</div>}
         <div className="flex items-baseline gap-3 min-w-0">
-          <span className="font-display text-[18px] font-semibold tracking-tight text-foreground whitespace-nowrap">
+          <span className="font-display text-[17px] sm:text-[18px] font-semibold text-foreground whitespace-nowrap">
             {title}
           </span>
           {description && (
-            <span className="text-[13px] text-muted-foreground truncate">
+            <span className="hidden sm:inline text-[13px] text-muted-foreground truncate">
               {description}
             </span>
           )}
@@ -71,8 +74,7 @@ export function Header({ title, description, eyebrow, actions }: HeaderProps) {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
-            className="h-[34px] px-3 flex items-center gap-2 rounded-lg bg-surface text-foreground text-[12px]"
-            style={{ border: "1px solid hsl(var(--border) / .07)" }}
+            className="h-[36px] px-3 hidden sm:flex items-center gap-2 rounded-lg command-strip text-foreground text-[12px] transition-transform active:scale-[.98]"
           >
             <span
               className={cn(
@@ -113,7 +115,7 @@ export function Header({ title, description, eyebrow, actions }: HeaderProps) {
             <span className="eyebrow">Backend</span>
             <span
               className={cn(
-                "inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider",
+                "inline-flex items-center gap-1.5 text-[10px] font-mono uppercase",
                 healthy === false ? "text-destructive" : "text-success"
               )}
             >
@@ -163,8 +165,7 @@ export function Header({ title, description, eyebrow, actions }: HeaderProps) {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
-            className="w-[34px] h-[34px] flex items-center justify-center rounded-lg bg-surface text-foreground"
-            style={{ border: "1px solid hsl(var(--border) / .07)" }}
+            className="w-[36px] h-[36px] flex items-center justify-center rounded-lg command-strip text-foreground transition-transform active:scale-[.96]"
             aria-label="Cambiar tema"
           >
             {theme === "dark" ? (
@@ -190,7 +191,7 @@ export function Header({ title, description, eyebrow, actions }: HeaderProps) {
         size="icon"
         aria-label="GitHub"
         className="rounded-lg w-[34px] h-[34px]"
-        style={{ border: "1px solid hsl(var(--border) / .07)" }}
+        style={{ border: "1px solid hsl(var(--border) / .10)" }}
       >
         <a
           href="https://github.com/anthropics/claude-code"
@@ -208,7 +209,7 @@ export function Header({ title, description, eyebrow, actions }: HeaderProps) {
 function Row({ k, v }: { k: string; v: string }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
+      <span className="font-mono text-[10.5px] uppercase text-muted-foreground">
         {k}
       </span>
       <span className="font-mono text-[11px] text-foreground truncate max-w-[150px]">{v}</span>

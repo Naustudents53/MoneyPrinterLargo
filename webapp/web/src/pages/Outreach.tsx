@@ -10,10 +10,26 @@ export function Outreach() {
   return (
     <>
       <Header
+        eyebrow="Leads"
         title="Outreach Local"
         description="Scraping de Google Maps + envío de emails outreach."
       />
       <PageShell>
+        <section className="page-hero">
+          <div className="page-hero-inner">
+            <div>
+              <span className="eyebrow block mb-2">Local growth</span>
+              <h1 className="page-title">
+                Outreach listo para <span className="brand-text">activar</span>
+              </h1>
+              <p className="page-subtitle">
+                Estado, configuracion y acceso al scraper desde una pantalla que
+                mantiene claro que este flujo corre por CLI.
+              </p>
+            </div>
+          </div>
+        </section>
+
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">

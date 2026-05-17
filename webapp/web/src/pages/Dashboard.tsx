@@ -141,13 +141,13 @@ export function Dashboard() {
           <div className="px-5 py-4 flex items-center justify-between">
             <div>
               <span
-                className="font-mono uppercase font-semibold text-[10px] tracking-[0.24em]"
+                className="font-mono uppercase font-semibold text-[10px]"
                 style={{ color: "hsl(var(--warning))" }}
               >
                 · pipeline en vivo
               </span>
               <div className="flex items-baseline gap-2.5 mt-1">
-                <span className="font-display text-[18px] font-semibold tracking-tight">
+                <span className="font-display text-[18px] font-semibold">
                   {jobs.filter((j) => j.status === "running").length} jobs corriendo
                 </span>
                 <span className="text-xs text-muted-foreground">
@@ -237,7 +237,7 @@ export function Dashboard() {
                       />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[13px] font-medium tracking-tight text-foreground truncate">
+                      <div className="text-[13px] font-medium text-foreground truncate">
                         {truncate(v.title, 100) || "(sin título)"}
                       </div>
                       <div className="text-[11px] text-muted-foreground mt-0.5 flex gap-2 items-center">
@@ -394,8 +394,8 @@ function HeroEditorial({
         aria-hidden
         className="absolute inset-0 pointer-events-none opacity-60"
         style={{
-          backgroundImage: `radial-gradient(ellipse 60% 90% at 100% 0%, hsl(var(--primary) / .15), transparent 65%),
-            radial-gradient(ellipse 50% 70% at 0% 100%, hsl(var(--accent) / .15), transparent 70%)`,
+          backgroundImage: `linear-gradient(115deg, hsl(var(--primary) / .16), transparent 34%),
+            linear-gradient(245deg, hsl(var(--accent) / .14), transparent 42%)`,
         }}
       />
 
@@ -403,7 +403,7 @@ function HeroEditorial({
       <div className="relative grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-9 px-9 pt-[34px] pb-7">
         <div>
           <span className="eyebrow inline-block mb-3.5">· studio · {today}</span>
-          <h2 className="font-display text-[44px] lg:text-[56px] font-semibold tracking-[-0.035em] leading-[1.05] mb-4 text-foreground">
+          <h2 className="font-display text-[44px] lg:text-[56px] font-semibold leading-[1.05] mb-4 text-foreground">
             Imprime largo,
             <br />
             <span className="brand-text">edita poco.</span>
@@ -438,7 +438,7 @@ function HeroEditorial({
         >
           <div className="flex items-center justify-between mb-1">
             <span className="eyebrow text-muted-foreground">Última actividad</span>
-            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-success uppercase tracking-wider">
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-success uppercase">
               <span className="h-1.5 w-1.5 rounded-full bg-success animate-mpl-pulse" />
               EN VIVO
             </span>
@@ -542,7 +542,7 @@ function ActivityRow({
         style={{ background: `hsl(${colorVar})` }}
       />
       <div className="flex-1 min-w-0">
-        <div className="text-[12.5px] font-medium tracking-tight text-foreground">
+        <div className="text-[12.5px] font-medium text-foreground">
           {text}
         </div>
         <div className="text-[11px] text-muted-foreground mt-px truncate">{detail}</div>
@@ -584,12 +584,12 @@ function Telemetry({
         />
         <span
           className="font-mono uppercase text-[10px] font-semibold text-muted-foreground"
-          style={{ letterSpacing: "0.18em" }}
+          style={{ letterSpacing: "0" }}
         >
           {label}
         </span>
       </div>
-      <span className="font-mono text-[18px] font-semibold tracking-tight text-foreground tabular-nums">
+      <span className="font-mono text-[18px] font-semibold text-foreground tabular-nums">
         {value}
       </span>
       <span className="text-[11px] text-muted-foreground">{detail}</span>
@@ -630,7 +630,7 @@ function PipelineRow({ job }: { job: JobSummary }) {
       <div className="min-w-0">
         <div className="flex items-center gap-2.5 mb-2">
           <span className="w-2 h-2 rounded-sm bg-primary shrink-0" />
-          <span className="text-[13.5px] font-medium tracking-tight truncate">
+          <span className="text-[13.5px] font-medium truncate">
             {job.title}
           </span>
           <span

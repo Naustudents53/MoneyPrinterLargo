@@ -178,6 +178,7 @@ export function ChannelDetail() {
   return (
     <>
       <Header
+        eyebrow="Canal"
         title={channel?.nickname ?? "Canal"}
         description={channel?.niche || "—"}
         actions={
@@ -217,6 +218,27 @@ export function ChannelDetail() {
             <ArrowLeft className="h-4 w-4" /> Volver a canales
           </Link>
         </Button>
+
+        {channel && (
+          <section className="page-hero">
+            <div className="page-hero-inner">
+              <div>
+                <span className="eyebrow block mb-2">Channel workspace</span>
+                <h1 className="page-title">
+                  {channel.nickname} <span className="brand-text">control</span>
+                </h1>
+                <p className="page-subtitle">
+                  {channel.niche || "Canal sin nicho definido."}
+                </p>
+              </div>
+              <div className="metric-strip grid-cols-3 w-full sm:w-auto sm:min-w-[420px]">
+                <ChannelMetric label="Videos" value={videos.length} tone="primary" />
+                <ChannelMetric label="Shorts" value={shortCount} tone="accent" />
+                <ChannelMetric label="Subs" value={channel.subscriber_count == null ? "—" : formatCompact(channel.subscriber_count)} tone="gold" />
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* Channel summary — editorial telemetry strip */}
         {channel && !loading ? (
@@ -286,7 +308,7 @@ export function ChannelDetail() {
           <div className="px-5 pt-[18px] pb-4 flex items-end justify-between gap-4 flex-wrap">
             <div>
               <span className="eyebrow text-muted-foreground">· historial</span>
-              <h2 className="font-display text-[20px] font-semibold tracking-tight text-foreground mt-1">
+              <h2 className="font-display text-[20px] font-semibold text-foreground mt-1">
                 Historial de videos
               </h2>
               <p className="text-[12px] text-muted-foreground mt-0.5">
@@ -396,7 +418,7 @@ export function ChannelDetail() {
               <div
                 className="hidden lg:grid items-center gap-4 px-5 py-2 text-[10px] font-mono uppercase font-semibold text-muted-foreground"
                 style={{
-                  letterSpacing: "0.18em",
+                  letterSpacing: "0",
                   gridTemplateColumns: "72px minmax(0,2.2fr) minmax(0,1.4fr) 130px minmax(0,1fr) 100px",
                   borderTop: "1px solid hsl(var(--border) / .04)",
                   background: "hsl(var(--bg-raised) / .4)",
@@ -598,6 +620,29 @@ function KindTab({
   );
 }
 
+function ChannelMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string | number;
+  tone: "primary" | "accent" | "gold";
+}) {
+  const color = tone === "primary" ? "var(--primary)" : tone === "accent" ? "var(--accent)" : "var(--gold)";
+  return (
+    <div className="px-4 py-3" style={{ borderRight: "1px solid hsl(var(--border) / .06)" }}>
+      <div className="flex items-center gap-1.5">
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: `hsl(${color})` }} />
+        <span className="tiny-label">{label}</span>
+      </div>
+      <div className="mt-1 font-mono text-[17px] font-semibold tabular-nums text-foreground">
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function VideoRow({
   video,
   onOpen,
@@ -617,9 +662,8 @@ function VideoRow({
 
   return (
     <div
-      className="group relative grid items-center gap-4 px-5 py-3 transition-colors hover:bg-[hsl(var(--bg-raised)/.5)]"
+      className="group relative grid grid-cols-1 lg:grid-cols-[72px_minmax(0,2.2fr)_minmax(0,1.4fr)_130px_minmax(0,1fr)_100px] items-center gap-3 lg:gap-4 px-5 py-3 transition-colors hover:bg-[hsl(var(--bg-raised)/.5)]"
       style={{
-        gridTemplateColumns: "72px minmax(0,2.2fr) minmax(0,1.4fr) 130px minmax(0,1fr) 100px",
         borderTop: "1px solid hsl(var(--border) / .04)",
       }}
     >
@@ -635,7 +679,7 @@ function VideoRow({
         <span
           className="font-mono uppercase text-[9.5px] font-semibold px-1.5 py-0.5 rounded inline-flex items-center gap-1"
           style={{
-            letterSpacing: "0.14em",
+            letterSpacing: "0",
             color: `hsl(${accentVar})`,
             background: `hsl(${accentVar} / .10)`,
             border: `1px solid hsl(${accentVar} / .25)`,
@@ -652,7 +696,7 @@ function VideoRow({
 
       {/* Título + descripción */}
       <div className="min-w-0">
-        <div className="font-medium text-[13.5px] text-foreground line-clamp-1 tracking-tight">
+        <div className="font-medium text-[13.5px] text-foreground line-clamp-1">
           {video.title || "(sin título)"}
         </div>
         {video.description && (
@@ -800,14 +844,14 @@ function SummaryItem({
         />
         <span
           className="font-mono uppercase text-[10px] font-semibold text-muted-foreground"
-          style={{ letterSpacing: "0.18em" }}
+          style={{ letterSpacing: "0" }}
         >
           {label}
         </span>
       </div>
       <span
         className={
-          "font-mono text-[15px] font-semibold tracking-tight tabular-nums truncate " +
+          "font-mono text-[15px] font-semibold tabular-nums truncate " +
           (highlight ? "text-primary" : "text-foreground")
         }
       >

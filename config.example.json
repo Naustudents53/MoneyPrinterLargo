@@ -11,7 +11,7 @@
   "ollama_base_url": "http://127.0.0.1:11434",
   "ollama_model": "gemma4:31b-cloud",
   "ollama_models": [
-    "gemma4-31b:cloud",
+    "gemma4:31b-cloud",
     "deepseek-v4-pro:cloud",
     "deepseek-v4-flash:cloud",
     "glm-5.1:cloud"

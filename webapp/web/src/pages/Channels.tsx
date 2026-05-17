@@ -83,11 +83,11 @@ export function Channels() {
   return (
     <>
       <Header
-        eyebrow="· canales"
+        eyebrow="Canales"
         title="YouTube"
         description="Tu rack de canales activos"
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             <Button
               variant="outline"
               size="sm"
@@ -102,47 +102,43 @@ export function Channels() {
       />
 
       <PageShell>
-        {/* Hero strip — title + telemetry + search + new btn */}
-        <div className="flex items-end justify-between gap-4 flex-wrap">
-          <div>
-            <span className="eyebrow block mb-1.5">· canales · youtube</span>
-            <h1 className="font-display text-[36px] font-semibold tracking-[-0.02em] text-foreground leading-tight">
-              Tu rack de canales
-            </h1>
-            <p className="text-[13px] text-muted-foreground mt-1.5">
-              {channels.length} activos · {totalVideos} vídeos en historial
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div
-              className="flex items-center gap-2 h-9 px-3 rounded-lg bg-surface text-muted-foreground"
-              style={{ border: "1px solid hsl(var(--border) / .07)" }}
-            >
-              <Search className="h-3.5 w-3.5" />
-              <input
-                placeholder="Filtrar por canal o nicho…"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                className="bg-transparent border-0 outline-none text-foreground text-[13px] w-60 placeholder:text-muted-foreground"
-              />
+        <section className="page-hero">
+          <div className="page-hero-inner">
+            <div>
+              <span className="eyebrow block mb-2">YouTube studio</span>
+              <h1 className="page-title">
+                Tu rack de <span className="brand-text">canales</span>
+              </h1>
+              <p className="page-subtitle">
+                {channels.length} canales activos, {totalVideos} videos en historial y
+                sincronizacion directa con YouTube.
+              </p>
             </div>
-            <Button
-              variant="brand"
-              size="sm"
-              className="gap-2"
-              onClick={() => setCreating(true)}
-            >
-              <Plus className="h-4 w-4" /> Nuevo canal
-            </Button>
+            <div className="flex items-center gap-2 flex-wrap justify-end w-full sm:w-auto">
+              <div className="command-strip flex h-10 min-w-0 flex-1 sm:w-72 sm:flex-none items-center gap-2 rounded-xl px-3 text-muted-foreground">
+                <Search className="h-4 w-4 shrink-0" />
+                <input
+                  placeholder="Filtrar por canal o nicho..."
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  className="min-w-0 flex-1 bg-transparent border-0 outline-none text-foreground text-[13px] placeholder:text-muted-foreground"
+                />
+              </div>
+              <Button
+                variant="brand"
+                size="sm"
+                className="h-10 gap-2"
+                onClick={() => setCreating(true)}
+              >
+                <Plus className="h-4 w-4" /> Nuevo canal
+              </Button>
+            </div>
           </div>
-        </div>
+        </section>
 
         {/* Grid */}
         {loading ? (
-          <div
-            className="grid gap-3.5"
-            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}
-          >
+          <div className="app-card-grid">
             {Array.from({ length: 4 }).map((_, i) => (
               <Skeleton key={i} className="h-[286px]" />
             ))}
@@ -158,11 +154,14 @@ export function Channels() {
               </Button>
             }
           />
+        ) : visible.length === 0 ? (
+          <EmptyState
+            icon={Search}
+            title="Sin coincidencias"
+            description="Prueba con otro canal, nicho o idioma."
+          />
         ) : (
-          <div
-            className="grid gap-3.5"
-            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}
-          >
+          <div className="app-card-grid">
             {visible.map((c, i) => (
               <ChannelCard
                 key={c.id}
@@ -271,12 +270,12 @@ function ChannelCard({
         className="absolute top-0 left-0 right-0"
         style={{ height: 3, background: `hsl(${accentVar})`, opacity: 0.85 }}
       />
-      {/* Soft corner glow */}
+      {/* Top wash */}
       <div
         aria-hidden
-        className="absolute -top-10 -right-10 w-40 h-40 pointer-events-none"
+        className="absolute inset-x-0 top-0 h-20 pointer-events-none"
         style={{
-          background: `radial-gradient(circle, hsl(${accentVar} / .14), transparent 70%)`,
+          background: `linear-gradient(135deg, hsl(${accentVar} / .13), transparent 62%)`,
         }}
       />
 
@@ -325,7 +324,7 @@ function ChannelCard({
               style={{
                 color: `hsl(${accentVar})`,
                 fontSize: 24,
-                letterSpacing: "-0.04em",
+                letterSpacing: "0",
               }}
             >
               {initial}
@@ -342,7 +341,7 @@ function ChannelCard({
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 mb-0.5">
-              <span className="font-display text-[16px] font-semibold tracking-[-0.02em] text-foreground truncate">
+              <span className="font-display text-[16px] font-semibold text-foreground truncate">
                 {channel.nickname}
               </span>
               {flag && (
@@ -356,13 +355,7 @@ function ChannelCard({
         </div>
 
         {/* Telemetry strip — shorts / longs / último */}
-        <div
-          className="grid grid-cols-3 mx-[18px] rounded-lg"
-          style={{
-            background: "hsl(var(--bg-raised) / .5)",
-            border: "1px solid hsl(var(--border) / .05)",
-          }}
-        >
+        <div className="metric-strip grid-cols-3 mx-[18px]">
           <ChannelStat label="Shorts" value={shortCount} accentVar="var(--primary)" />
           <ChannelStat
             label="Largos"
@@ -493,14 +486,14 @@ function ChannelStat({
         />
         <span
           className="font-mono uppercase text-[9px] font-semibold text-muted-foreground"
-          style={{ letterSpacing: "0.18em" }}
+          style={{ letterSpacing: "0" }}
         >
           {label}
         </span>
       </div>
       <span
         className={cn(
-          "font-mono font-semibold tabular-nums text-foreground tracking-tight truncate",
+          "font-mono font-semibold tabular-nums text-foreground truncate",
           small ? "text-[12px]" : "text-[15px]",
         )}
         title={`${value}`}
@@ -523,7 +516,7 @@ function RecentVideoRow({ video, first }: { video: ChannelVideo; first: boolean 
       <span
         className="font-mono uppercase text-[8.5px] font-semibold px-1 py-px rounded shrink-0"
         style={{
-          letterSpacing: "0.12em",
+          letterSpacing: "0",
           color: isShort ? "hsl(var(--primary))" : "hsl(var(--violeta))",
           background: isShort
             ? "hsl(var(--primary) / .10)"
@@ -547,10 +540,10 @@ function NewChannelCard({ onClick }: { onClick: () => void }) {
     <button
       onClick={onClick}
       className={cn(
-        "min-h-[286px] rounded-xl bg-transparent text-muted-foreground flex flex-col items-center justify-center gap-2.5 transition-all",
-        "hover:text-primary hover:bg-primary/[0.06]",
+        "min-h-[286px] rounded-xl text-muted-foreground flex flex-col items-center justify-center gap-2.5 transition-all",
+        "soft-panel hover:text-primary hover:bg-primary/[0.06]",
       )}
-      style={{ border: "1px dashed hsl(var(--border) / .12)" }}
+      style={{ borderStyle: "dashed" }}
       onMouseEnter={(e) => {
         e.currentTarget.style.borderColor = "hsl(var(--primary) / .35)";
       }}
@@ -564,7 +557,7 @@ function NewChannelCard({ onClick }: { onClick: () => void }) {
       >
         <Plus className="h-5 w-5" />
       </span>
-      <span className="text-[13px] font-medium tracking-tight">Nuevo canal</span>
+      <span className="text-[13px] font-medium">Nuevo canal</span>
     </button>
   );
 }
@@ -575,11 +568,11 @@ function NewChannelCard({ onClick }: { onClick: () => void }) {
 function flagFromLang(lang: string): string {
   const l = (lang || "").toLowerCase();
   if (!l) return "";
-  if (l.includes("mx")) return "🇲🇽";
-  if (l.includes("es") || l.includes("español")) return "🇪🇸";
-  if (l.includes("ar")) return "🇦🇷";
-  if (l.includes("co")) return "🇨🇴";
-  if (l.includes("us") || l.includes("en")) return "🇺🇸";
+  if (l.includes("mx")) return "MX";
+  if (l.includes("es") || l.includes("español")) return "ES";
+  if (l.includes("ar")) return "AR";
+  if (l.includes("co")) return "CO";
+  if (l.includes("us") || l.includes("en")) return "US";
   return "";
 }
 

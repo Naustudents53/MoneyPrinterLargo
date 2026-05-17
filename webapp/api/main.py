@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -42,6 +42,7 @@ SRC_DIR = ROOT_DIR / "src"
 MP_DIR = ROOT_DIR / ".mp"
 THUMB_DIR = ROOT_DIR / "thumbnails"
 CONFIG_PATH = ROOT_DIR / "config.json"
+PHOTO_UPLOAD_DIR = MP_DIR / "photo_uploads"
 
 # Make MoneyPrinterLargo importable. The original config.py computes ROOT_DIR as
 # os.path.dirname(sys.path[0]) which only works when invoked as `python src/main.py`
@@ -236,10 +237,21 @@ def _twitter_out(acc: dict) -> dict:
     return {
         "id": acc.get("id", ""),
         "nickname": acc.get("nickname", ""),
-        "firefox_profile": acc.get("firefox_profile", ""),
+        "firefox_profile": acc.get("firefox_profile", "") or _default_firefox_profile(),
         "topic": acc.get("topic", ""),
         "posts_count": len(acc.get("posts", []) or []),
     }
+
+
+def _default_firefox_profile() -> str:
+    return str(_read_config().get("firefox_profile", "") or "")
+
+
+def _twitter_payload_record(payload: TwitterAccountIn) -> dict:
+    record = payload.model_dump()
+    if not record.get("firefox_profile"):
+        record["firefox_profile"] = _default_firefox_profile()
+    return record
 
 
 def _read_config() -> dict:
@@ -439,6 +451,25 @@ def list_channel_videos(channel_id: str):
     raise HTTPException(404, "Channel not found")
 
 
+@app.get("/api/retention-lab")
+def retention_lab(channel_id: str = ""):
+    """Local retention analysis built from the cached YouTube history."""
+    from classes.RetentionLab import RetentionLab
+
+    accounts = get_accounts("youtube")
+    if channel_id:
+        account = next((a for a in accounts if a.get("id") == channel_id), None)
+        if not account:
+            raise HTTPException(404, "Channel not found")
+        accounts = [account]
+    return RetentionLab.analyze_accounts(accounts)
+
+
+@app.get("/api/channels/{channel_id}/retention-lab")
+def channel_retention_lab(channel_id: str):
+    return retention_lab(channel_id=channel_id)
+
+
 @app.delete("/api/channels/{channel_id}/videos")
 def delete_channel_video(channel_id: str, url: Optional[str] = None, date: Optional[str] = None):
     """Delete a video from the channel's history (by url + date — both must match)."""
@@ -549,7 +580,7 @@ def list_twitter_accounts():
 @app.post("/api/twitter/accounts", status_code=201)
 def create_twitter_account(payload: TwitterAccountIn):
     new_id = str(uuid.uuid4())
-    record = {"id": new_id, **payload.model_dump(), "posts": []}
+    record = {"id": new_id, **_twitter_payload_record(payload), "posts": []}
     add_account("twitter", record)
     return _twitter_out(record)
 
@@ -559,7 +590,7 @@ def update_twitter_account(account_id: str, payload: TwitterAccountIn):
     raw = _read_twitter_raw()
     for acc in raw.get("accounts", []):
         if acc.get("id") == account_id:
-            acc.update(payload.model_dump())
+            acc.update(_twitter_payload_record(payload))
             _write_twitter_raw(raw)
             return _twitter_out(acc)
     raise HTTPException(404, "Account not found")
@@ -677,19 +708,21 @@ _OPENAI_MODEL_CATALOG = [
 ]
 
 _GEMINI_MODEL_CATALOG = [
+    {"id": "gemini-3-pro-preview", "label": "Gemini 3 Pro Preview", "provider": "gemini",
+     "description": "Mayor calidad para guiones largos y razonamiento."},
     {"id": "gemini-3-flash-preview", "label": "Gemini 3 Flash (preview)", "provider": "gemini",
      "description": "Default — más reciente, mejor balance velocidad/calidad."},
     {"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash", "provider": "gemini",
      "description": "Probado, alta calidad para texto."},
     {"id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite", "provider": "gemini",
      "description": "Más rápido y barato; 10 RPM free tier."},
-    {"id": "gemini-3.1-flash-lite", "label": "Gemini 3.1 Flash Lite", "provider": "gemini",
+    {"id": "gemini-2.0-flash", "label": "Gemini 2.0 Flash", "provider": "gemini",
      "description": "500 RPD free tier — buen volumen."},
     {"id": "gemini-2.5-pro", "label": "Gemini 2.5 Pro", "provider": "gemini",
      "description": "Mayor calidad (requiere billing)."},
-    {"id": "gemma-4-31b", "label": "Gemma 4 31B", "provider": "gemini",
+    {"id": "gemma-4-31b-it", "label": "Gemma 4 31B IT", "provider": "gemini",
      "description": "Open model: 1.5K RPD free tier, TPM ilimitado."},
-    {"id": "gemma-4-26b", "label": "Gemma 4 26B", "provider": "gemini",
+    {"id": "gemma-4-26b-a4b-it", "label": "Gemma 4 26B A4B IT", "provider": "gemini",
      "description": "Más ligero: 1.5K RPD free tier."},
 ]
 
@@ -1246,7 +1279,8 @@ def suggest_topics(channel_id: str, n: int = 5, model: str = ""):
     # Apply per-job model override (same env-var trick used by the runner)
     saved_override = os.environ.get("MP_GEMINI_MODEL_OVERRIDE", "")
     if model and (model.startswith("gemini-") or model.startswith("gemma-")):
-        os.environ["MP_GEMINI_MODEL_OVERRIDE"] = model
+        from llm_provider import normalize_gemini_model_id
+        os.environ["MP_GEMINI_MODEL_OVERRIDE"] = normalize_gemini_model_id(model) or model
     try:
         from llm_provider import generate_text  # lazy import — keeps API startup fast
         raw_out = generate_text(prompt, temperature=0.9)
@@ -1287,7 +1321,9 @@ async def preview_script(
     custom_topic: str = "",
     model: str = "",
     sentence_length: int = 0,
+    duration_seconds: int = 0,
     hook_style: str = "",
+    retention_mode: str = "",
 ):
     """Run only the subject + script generation steps and stream progress as
     SSE. The runner writes the result to a .mp/.preview-<uuid>.txt file; the
@@ -1298,6 +1334,17 @@ async def preview_script(
         raise HTTPException(404, "Channel not found")
     if kind not in ("short",):
         raise HTTPException(400, "Preview only supports kind='short' for now")
+    if duration_seconds:
+        from classes.duration_presets import ALLOWED_SHORT_DURATIONS
+        if duration_seconds not in ALLOWED_SHORT_DURATIONS:
+            raise HTTPException(
+                400,
+                f"duration_seconds must be one of {list(ALLOWED_SHORT_DURATIONS)}",
+            )
+    from classes.MaxRetention import MAX_RETENTION_MODE, is_known_retention_mode, normalize_retention_mode
+    retention_mode_norm = normalize_retention_mode(retention_mode)
+    if retention_mode and not is_known_retention_mode(retention_mode):
+        raise HTTPException(400, "retention_mode must be 'standard' or 'maxima_retencion'")
 
     args = ["preview-script", "--channel-id", channel_id]
     if custom_topic:
@@ -1306,8 +1353,12 @@ async def preview_script(
         args += ["--model", model]
     if sentence_length and sentence_length > 0:
         args += ["--sentence-length", str(sentence_length)]
+    if duration_seconds:
+        args += ["--duration", str(duration_seconds)]
     if hook_style:
         args += ["--hook-style", hook_style]
+    if retention_mode_norm == MAX_RETENTION_MODE:
+        args += ["--retention-mode", retention_mode_norm]
 
     title = f"Previa de script — {ch.get('nickname', channel_id)}"
     job = _spawn_job(args, title=title, channel_id=channel_id, kind="short")
@@ -1361,6 +1412,50 @@ def save_preview(preview_id: str, payload: PreviewSave):
 # Generation endpoints
 # ---------------------------------------------------------------------------
 
+_PHOTO_VIDEO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+
+
+def _safe_photo_upload_dir(upload_id: str) -> Path:
+    upload_id = (upload_id or "").strip()
+    if not re.fullmatch(r"[a-f0-9]{32}", upload_id):
+        raise HTTPException(400, "Invalid photo_upload_id")
+    path = PHOTO_UPLOAD_DIR / upload_id
+    if not path.is_dir():
+        raise HTTPException(400, "Photo upload not found")
+    return path
+
+
+@app.post("/api/photo-video/uploads")
+async def upload_photo_video_files(files: list[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(400, "At least one photo is required")
+
+    upload_id = uuid.uuid4().hex
+    target = PHOTO_UPLOAD_DIR / upload_id
+    target.mkdir(parents=True, exist_ok=False)
+
+    saved: list[str] = []
+    for idx, file in enumerate(files, 1):
+        original = Path(file.filename or f"photo-{idx}.jpg").name
+        ext = Path(original).suffix.lower()
+        if ext not in _PHOTO_VIDEO_EXTENSIONS:
+            raise HTTPException(400, f"Unsupported photo format: {original}")
+
+        data = await file.read()
+        if not data:
+            raise HTTPException(400, f"Empty uploaded file: {original}")
+
+        safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(original).stem).strip("._-")
+        if not safe_stem:
+            safe_stem = f"photo_{idx}"
+        name = f"{idx:03d}_{safe_stem}{ext}"
+        out = target / name
+        out.write_bytes(data)
+        saved.append(name)
+
+    return {"id": upload_id, "count": len(saved), "files": saved}
+
+
 @app.get("/api/channels/{channel_id}/generate")
 async def generate_video(
     channel_id: str,
@@ -1378,6 +1473,8 @@ async def generate_video(
     sentence_length: int = 0,
     hook_style: str = "",
     script_file: str = "",
+    photo_upload_id: str = "",
+    retention_mode: str = "",
 ):
     ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
     if not ch:
@@ -1413,6 +1510,11 @@ async def generate_video(
     if kind == "short" and render_profile and render_profile not in ("quality", "fast", "turbo"):
         raise HTTPException(400, "render_profile must be 'quality', 'fast', or 'turbo'")
 
+    from classes.MaxRetention import MAX_RETENTION_MODE, is_known_retention_mode, normalize_retention_mode
+    retention_mode_norm = normalize_retention_mode(retention_mode)
+    if retention_mode and not is_known_retention_mode(retention_mode):
+        raise HTTPException(400, "retention_mode must be 'standard' or 'maxima_retencion'")
+
     args = [
         "generate",
         "--channel-id", channel_id,
@@ -1441,6 +1543,8 @@ async def generate_video(
         args += ["--sentence-length", str(sentence_length)]
     if hook_style:
         args += ["--hook-style", hook_style]
+    if kind == "short" and retention_mode_norm == MAX_RETENTION_MODE:
+        args += ["--retention-mode", retention_mode_norm]
     if script_file:
         # Resolve the script ref to a real .mp/ path. The frontend only sees
         # the opaque preview id (a uuid) returned by /preview-script — we
@@ -1449,6 +1553,9 @@ async def generate_video(
         if not script_path.is_file():
             raise HTTPException(400, f"Preview script {script_file!r} not found")
         args += ["--script-file", str(script_path)]
+    if photo_upload_id:
+        photo_dir = _safe_photo_upload_dir(photo_upload_id)
+        args += ["--photo-input", str(photo_dir)]
 
     label = "Short" if kind == "short" else "Long video"
     title = f"Generando {label} — {ch.get('nickname', channel_id)}"
@@ -1467,6 +1574,7 @@ class BatchJobItem(BaseModel):
     sentence_length: int = 0
     hook_style: str = ""
     render_profile: str = ""
+    retention_mode: str = ""
 
 
 class BatchGeneratePayload(BaseModel):
@@ -1511,6 +1619,15 @@ def generate_batch(payload: BatchGeneratePayload):
                 "error": f"invalid render_profile {item.render_profile!r}",
             })
             continue
+        from classes.MaxRetention import MAX_RETENTION_MODE, is_known_retention_mode, normalize_retention_mode
+        retention_mode_norm = normalize_retention_mode(item.retention_mode)
+        if item.retention_mode and not is_known_retention_mode(item.retention_mode):
+            out.append({
+                "channel_id": item.channel_id,
+                "ok": False,
+                "error": f"invalid retention_mode {item.retention_mode!r}",
+            })
+            continue
 
         ch = next((a for a in get_accounts("youtube") if a.get("id") == item.channel_id), None)
         args = [
@@ -1533,6 +1650,8 @@ def generate_batch(payload: BatchGeneratePayload):
             args += ["--hook-style", item.hook_style]
         if item.kind == "short" and item.render_profile:
             args += ["--render-profile", item.render_profile]
+        if item.kind == "short" and retention_mode_norm == MAX_RETENTION_MODE:
+            args += ["--retention-mode", retention_mode_norm]
 
         nick = (ch or {}).get("nickname", item.channel_id)
         label = "Short" if item.kind == "short" else "Long"

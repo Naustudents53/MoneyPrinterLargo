@@ -44,28 +44,31 @@ export function StatCard({
   return (
     <div
       className={cn(
-        "group relative overflow-hidden studio-surface studio-hover px-[18px] pt-[18px] pb-4",
+        "group relative overflow-hidden studio-surface studio-hover px-[18px] pt-[18px] pb-4 min-h-[132px]",
         className,
       )}
     >
       {/* Top accent stripe */}
       <span
         aria-hidden
-        className="absolute top-0 left-0 right-0 h-[3px]"
-        style={{ background: `hsl(${accentVar})`, opacity: 0.85 }}
+        className="absolute top-0 left-0 right-0 h-[2px]"
+        style={{
+          background: `linear-gradient(90deg, hsl(${accentVar}), transparent 72%)`,
+          opacity: 0.9,
+        }}
       />
       {/* Soft corner glow */}
       <div
         aria-hidden
-        className="absolute -top-8 -right-8 w-36 h-36 pointer-events-none"
+        className="absolute inset-x-0 bottom-0 h-16 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity"
         style={{
-          background: `radial-gradient(circle, hsl(${accentVar} / .18), transparent 70%)`,
+          background: `linear-gradient(0deg, hsl(${accentVar} / .10), transparent)`,
         }}
       />
 
       <div className="relative flex items-start justify-between mb-2">
         <span
-          className="font-mono uppercase font-semibold text-[10px] tracking-[0.24em]"
+          className="font-mono uppercase font-semibold text-[10px]"
           style={{ color: `hsl(${accentVar})` }}
         >
           {label}
@@ -74,7 +77,7 @@ export function StatCard({
       </div>
 
       <div className="relative flex items-baseline gap-2">
-        <span className="font-display font-semibold text-[34px] leading-none tabular-nums tracking-tight text-foreground">
+        <span className="font-mono font-semibold text-[32px] leading-none tabular-nums text-foreground">
           {value}
         </span>
         {delta && (

@@ -122,58 +122,53 @@ export function Settings() {
       />
 
       <PageShell>
-        {/* Hero strip */}
-        <div className="flex items-end justify-between gap-3.5 flex-wrap">
-          <div>
-            <span className="eyebrow block mb-1.5">· config.json · editor visual</span>
-            <h1 className="font-display text-[36px] font-semibold tracking-[-0.02em] text-foreground leading-tight">
-              Configuración
-            </h1>
-            <p className="text-[13px] text-muted-foreground mt-1.5">
-              ~/MoneyPrinterLargo/config.json · {fieldCount} campos
-            </p>
+        <section className="page-hero">
+          <div className="page-hero-inner">
+            <div>
+              <span className="eyebrow block mb-2">config.json visual</span>
+              <h1 className="page-title">
+                Configuracion <span className="brand-text">sin miedo</span>
+              </h1>
+              <p className="page-subtitle">
+                Editor por secciones para {fieldCount} campos del proyecto, con secretos
+                protegidos y auto-sync en el mismo flujo.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap justify-end w-full sm:w-auto">
+              <label className="command-strip flex h-10 items-center gap-2 rounded-xl px-3 text-[12.5px] text-muted-foreground cursor-pointer">
+                <span>Mostrar secrets</span>
+                <Switch checked={showSecrets} onCheckedChange={setShowSecrets} />
+              </label>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={load}
+                className="h-10 gap-2"
+                disabled={loading}
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+                Recargar
+              </Button>
+              <Button
+                variant="brand"
+                size="sm"
+                onClick={save}
+                disabled={!dirty || saving}
+                className="h-10 gap-2"
+              >
+                {saving ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Save className="h-3.5 w-3.5" />
+                )}
+                Guardar cambios
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-[12.5px] text-muted-foreground cursor-pointer">
-              <span>Mostrar secrets</span>
-              <Switch checked={showSecrets} onCheckedChange={setShowSecrets} />
-            </label>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={load}
-              className="gap-2"
-              disabled={loading}
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-              Recargar
-            </Button>
-            <Button
-              variant="brand"
-              size="sm"
-              onClick={save}
-              disabled={!dirty || saving}
-              className="gap-2"
-            >
-              {saving ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Save className="h-3.5 w-3.5" />
-              )}
-              Guardar cambios
-            </Button>
-          </div>
-        </div>
+        </section>
 
         {dirty && (
-          <div
-            className="rounded-lg px-4 py-2.5 text-[12.5px] flex items-center justify-between"
-            style={{
-              border: "1px solid hsl(var(--warning) / .35)",
-              background: "hsl(var(--warning) / .10)",
-              color: "hsl(var(--foreground))",
-            }}
-          >
+          <div className="command-strip rounded-xl px-4 py-3 text-[12.5px] flex items-center justify-between gap-3">
             <span>
               <span style={{ color: "hsl(var(--warning))" }}>●</span> Tienes cambios sin
               guardar.
@@ -202,17 +197,15 @@ export function Settings() {
             style={{ background: "hsl(var(--card))" }}
           >
             <div
-              className="grid"
-              style={{
-                gridTemplateColumns: "240px 1fr",
-                minHeight: 540,
-              }}
+              className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)]"
+              style={{ minHeight: 540 }}
             >
               {/* Left column — section nav */}
               <div
-                className="px-2.5 py-3.5 flex flex-col gap-0.5"
+                className="px-2.5 py-3.5 flex flex-col gap-0.5 xl:sticky xl:top-0 xl:self-start"
                 style={{
                   borderRight: "1px solid hsl(var(--border) / .07)",
+                  borderBottom: "1px solid hsl(var(--border) / .07)",
                   background: "hsl(var(--bg-raised))",
                 }}
               >
@@ -263,7 +256,7 @@ export function Settings() {
                       <div className="flex-1 min-w-0">
                         <div
                           className={cn(
-                            "text-[13px] tracking-tight truncate",
+                            "text-[13px] truncate",
                             active ? "font-medium" : "font-normal",
                           )}
                         >
@@ -288,10 +281,10 @@ export function Settings() {
               </div>
 
               {/* Right column — field editor */}
-              <div className="px-7 py-6">
-                <div className="mb-[18px] flex items-center gap-2.5">
+              <div className="px-4 py-5 sm:px-7 sm:py-6">
+                <div className="mb-[18px] flex items-center gap-2.5 flex-wrap">
                   <span className="eyebrow">· {section.toLowerCase()}</span>
-                  <span className="font-display text-[18px] font-semibold tracking-[-0.02em] text-foreground">
+                  <span className="font-display text-[18px] font-semibold text-foreground">
                     {section}
                   </span>
                   {currentDesc && (
@@ -351,9 +344,8 @@ function ConfigFieldRow({
 
   return (
     <div
-      className="grid items-center gap-[18px] py-3"
+      className="grid grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)] items-center gap-2 sm:gap-[18px] py-3"
       style={{
-        gridTemplateColumns: "200px 1fr",
         borderBottom: "1px solid hsl(var(--border) / .04)",
       }}
     >

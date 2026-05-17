@@ -304,7 +304,7 @@ function VoiceSelect({ id, value, voices, onChange }: VoiceSelectProps) {
         )}
         {languages.map((lang) => (
           <div key={lang}>
-            <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <div className="px-2 py-1 text-[10px] uppercase text-muted-foreground">
               {lang}
             </div>
             {grouped[lang].map((v) => (

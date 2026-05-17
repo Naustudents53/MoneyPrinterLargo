@@ -19,6 +19,7 @@ import argparse
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -62,9 +63,43 @@ def python_exe() -> str:
     return str(venv) if venv.is_file() else sys.executable
 
 
-def npm_cmd() -> str:
-    """Resolve npm: must use npm.cmd on Windows when not going through a shell."""
-    return shutil.which("npm.cmd") or shutil.which("npm") or "npm"
+def pnpm_cmd() -> str:
+    """Resolve pnpm: must use pnpm.cmd on Windows when not going through a shell."""
+    return shutil.which("pnpm.cmd") or shutil.which("pnpm") or "pnpm"
+
+
+def port_available(host: str, port: int) -> tuple[bool, str]:
+    """Return whether a TCP port can be bound by this process."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((host, int(port)))
+        return True, ""
+    except OSError as e:
+        return False, str(e)
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+
+def choose_port(host: str, preferred: int, label: str, strict: bool = False) -> int:
+    ok, reason = port_available(host, preferred)
+    if ok:
+        return preferred
+    if strict:
+        raise RuntimeError(f"{label} port {preferred} is unavailable: {reason}")
+
+    for port in range(preferred + 1, preferred + 60):
+        ok, _reason = port_available(host, port)
+        if ok:
+            print(color(
+                "sys",
+                f"[sys] {label} port {preferred} unavailable ({reason}); using {port}.",
+            ))
+            return port
+    raise RuntimeError(f"No free {label} port found near {preferred}. Last error: {reason}")
 
 
 def stream(proc: subprocess.Popen, tag: str, stop: threading.Event) -> None:
@@ -150,6 +185,7 @@ def main() -> int:
     ap.add_argument("--no-reload", action="store_true")
     ap.add_argument("--no-web", action="store_true")
     ap.add_argument("--no-api", action="store_true")
+    ap.add_argument("--strict-ports", action="store_true", help="Fail instead of auto-picking the next free port")
     args = ap.parse_args()
 
     if args.no_api and args.no_web:
@@ -161,7 +197,7 @@ def main() -> int:
         print(color("err", f"[sys] webapp/web not found at {WEB_DIR}"))
         return 2
     if not args.no_web and not (WEB_DIR / "node_modules").is_dir():
-        print(color("sys", "[sys] node_modules missing — run `npm install` inside webapp/web first."))
+        print(color("sys", "[sys] node_modules missing — run `pnpm install` inside webapp first."))
 
     print(color("sys", "═══ MoneyPrinter Largo launcher ═══"))
     print(color("sys", f"[sys] Python: {python_exe()}"))
@@ -169,11 +205,18 @@ def main() -> int:
 
     procs: list[tuple[str, subprocess.Popen]] = []
     stop = threading.Event()
+    host = "127.0.0.1"
+    try:
+        api_port = args.api_port if args.no_api else choose_port(host, args.api_port, "API", args.strict_ports)
+        web_port = args.web_port if args.no_web else choose_port(host, args.web_port, "Web", args.strict_ports)
+    except RuntimeError as e:
+        print(color("err", f"[sys] {e}"))
+        return 2
 
     if not args.no_api:
         api_cmd = [
             python_exe(), "-m", "uvicorn", "webapp.api.main:app",
-            "--host", "127.0.0.1", "--port", str(args.api_port),
+            "--host", host, "--port", str(api_port),
         ]
         if not args.no_reload:
             # Scope the watcher to ONLY the API + the project src/ that the API
@@ -185,7 +228,7 @@ def main() -> int:
                 "--reload-dir", str(ROOT / "webapp" / "api"),
                 "--reload-dir", str(ROOT / "src"),
             ]
-        print(color("sys", f"[sys] API → http://127.0.0.1:{args.api_port}"))
+        print(color("sys", f"[sys] API -> http://{host}:{api_port}"))
         api_proc = spawn(api_cmd, cwd=ROOT, env={"PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"})
         procs.append(("api", api_proc))
         threading.Thread(target=stream, args=(api_proc, "api", stop), daemon=True).start()
@@ -194,9 +237,20 @@ def main() -> int:
         # Brief stagger so the API banner prints first.
         if not args.no_api:
             time.sleep(1.0)
-        web_cmd = [npm_cmd(), "run", "dev", "--", "--port", str(args.web_port)]
-        print(color("sys", f"[sys] Web → http://127.0.0.1:{args.web_port}"))
-        web_proc = spawn(web_cmd, cwd=WEB_DIR)
+            if api_proc.poll() is not None:
+                print(color("err", f"[api] exited rc={api_proc.returncode} before web startup."))
+                return api_proc.returncode or 1
+        web_cmd = [
+            pnpm_cmd(), "exec", "vite",
+            "--host", host,
+            "--port", str(web_port),
+            "--strictPort",
+        ]
+        print(color("sys", f"[sys] Web -> http://{host}:{web_port}"))
+        web_env = {}
+        if not args.no_api:
+            web_env["VITE_API_TARGET"] = f"http://{host}:{api_port}"
+        web_proc = spawn(web_cmd, cwd=WEB_DIR, env=web_env)
         procs.append(("web", web_proc))
         threading.Thread(target=stream, args=(web_proc, "web", stop), daemon=True).start()
 

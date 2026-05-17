@@ -96,13 +96,21 @@ def _select_llm_provider(override_provider: str = "", override_model: str = "", 
     from config import (
         get_llm_provider, get_ollama_model,
     )
-    from llm_provider import select_model, set_llm_provider, list_models, set_user_override
+    from llm_provider import (
+        normalize_gemini_model_id,
+        select_model,
+        set_llm_provider,
+        list_models,
+        set_user_override,
+    )
 
     if override_provider:
         provider = override_provider
         set_llm_provider(provider)
         set_user_override(True)
         if override_model:
+            if provider == "gemini":
+                override_model = normalize_gemini_model_id(override_model) or override_model
             select_model(override_model)
             print(f"[runner] User override: provider={provider}, model={override_model}", flush=True)
         else:
@@ -112,6 +120,7 @@ def _select_llm_provider(override_provider: str = "", override_model: str = "", 
     if model_override:
         inferred = _classify_model(model_override)
         if inferred == "gemini":
+            model_override = normalize_gemini_model_id(model_override) or model_override
             set_llm_provider("gemini")
             # Tell the gemini code path to start with this model. We do it by
             # prepending it to the in-process gemini_models list via env var.
@@ -318,6 +327,10 @@ def cmd_generate(args):
     if args.kind == "short":
         _apply_short_render_profile(getattr(args, "render_profile", ""))
 
+    retention_mode = (getattr(args, "retention_mode", "") or "").strip()
+    if args.kind == "short" and retention_mode:
+        print(f"[runner] Retention mode: {retention_mode}", flush=True)
+
     print(f"[runner] Initializing channel '{acc.get('nickname')}'", flush=True)
     youtube = YouTube(
         acc["id"],
@@ -331,6 +344,7 @@ def cmd_generate(args):
         hook_profile=effective_hook,
         voice_drama=acc.get("voice_drama", False),
         target_duration_seconds=target_duration,
+        retention_mode=retention_mode,
     )
     if hook_profile_override:
         print(f"[runner] Hook profile override: {hook_profile_override}", flush=True)
@@ -359,9 +373,38 @@ def cmd_generate(args):
             print(f"[runner] WARN: could not load script file {script_file}: {e}", flush=True)
 
     topic = args.topic or ""
+    photo_input = (getattr(args, "photo_input", "") or "").strip()
+    if preset_subject and not topic:
+        topic = preset_subject
+
     if args.kind == "long":
         if args.series_id and topic and not topic.lstrip().startswith("["):
             topic = f"[{args.series_id}] {topic}"
+
+    if photo_input:
+        from classes.PhotoVideo import PhotoVideoGenerator, PhotoVideoRequest, collect_photo_paths
+
+        photo_paths = collect_photo_paths(photo_input)
+        if not photo_paths:
+            print(f"[runner] ERROR: no valid photos found in {photo_input!r}", flush=True)
+            sys.exit(2)
+        label = "LONG video" if args.kind == "long" else "SHORT"
+        print(
+            f"[runner] Generating {label} from {len(photo_paths)} uploaded photo(s). "
+            f"Topic: {topic or '(auto from photos)'}",
+            flush=True,
+        )
+        path = PhotoVideoGenerator(youtube).generate(
+            tts,
+            PhotoVideoRequest(
+                kind=args.kind,
+                photo_paths=photo_paths,
+                topic=topic,
+                script=preset_script,
+                auto_analyze=True,
+            ),
+        )
+    elif args.kind == "long":
         print(f"[runner] Generating LONG video. Topic: {topic or '(auto)'}", flush=True)
         path = youtube.generate_long_video(tts, custom_topic=topic)
     else:
@@ -421,7 +464,22 @@ def cmd_preview_script(args):
         os.environ["MP_HOOK_STYLE_OVERRIDE"] = hook_override
         print(f"[runner] Override: hook_style={hook_override}", flush=True)
 
+    retention_mode = (getattr(args, "retention_mode", "") or "").strip()
+    if retention_mode:
+        print(f"[runner] Retention mode: {retention_mode}", flush=True)
+
     print(f"[runner] Preview for channel '{acc.get('nickname')}'", flush=True)
+    target_duration: int | None = None
+    if getattr(args, "duration", 0):
+        from classes.duration_presets import ALLOWED_SHORT_DURATIONS
+        if args.duration in ALLOWED_SHORT_DURATIONS:
+            target_duration = args.duration
+            print(f"[runner] Preview duration preset: {target_duration}s", flush=True)
+        else:
+            print(
+                f"[runner] WARN: preview duration {args.duration}s not in {ALLOWED_SHORT_DURATIONS}; using default",
+                flush=True,
+            )
     youtube = YouTube(
         acc["id"], acc["nickname"], acc.get("firefox_profile", ""),
         acc.get("niche", ""), acc.get("language", "español"),
@@ -430,6 +488,8 @@ def cmd_preview_script(args):
         long_voice=acc.get("long_voice", ""),
         hook_profile=acc.get("hook_profile", ""),
         voice_drama=acc.get("voice_drama", False),
+        target_duration_seconds=target_duration,
+        retention_mode=retention_mode,
     )
 
     # Subject — custom or auto. We DON'T enforce dedupe here so the user can
@@ -659,13 +719,15 @@ def cmd_sync_yt(args):
 
 def cmd_tweet(args):
     from cache import get_accounts
+    from config import get_firefox_profile_path
     from classes.Twitter import Twitter
 
     acc = next((a for a in get_accounts("twitter") if a.get("id") == args.account_id), None)
     if not acc:
         print(f"[runner] ERROR: twitter account {args.account_id} not found", flush=True)
         sys.exit(2)
-    tw = Twitter(acc["id"], acc["nickname"], acc.get("firefox_profile", ""), acc.get("topic", ""))
+    firefox_profile = acc.get("firefox_profile", "") or get_firefox_profile_path()
+    tw = Twitter(acc["id"], acc["nickname"], firefox_profile, acc.get("topic", ""))
     tw.post()
     print("[runner] Tweet posted", flush=True)
 
@@ -701,16 +763,22 @@ def main():
                        help="Override the per-run hook style. Format: '<profile>::<style_name>'.")
     p_gen.add_argument("--render-profile", choices=["quality", "fast", "turbo"], default="",
                        help="Override Short render profile for this job only.")
+    p_gen.add_argument("--retention-mode", choices=["standard", "maxima_retencion"], default="",
+                       help="Short creative mode. Use maxima_retencion for tighter hooks, faster pacing and more visuals.")
     p_gen.add_argument("--script-file", default="",
                        help="Path to a pre-approved script file. When set, generation skips "
                             "subject + script steps and reuses what's in the file.")
+    p_gen.add_argument("--photo-input", default="",
+                       help="Folder or file list of user-uploaded photos to use as the only visuals.")
 
     p_pv = sub.add_parser("preview-script")
     p_pv.add_argument("--channel-id", required=True)
     p_pv.add_argument("--topic", default="")
     p_pv.add_argument("--model", default="")
     p_pv.add_argument("--sentence-length", type=int, default=0)
+    p_pv.add_argument("--duration", type=int, default=0)
     p_pv.add_argument("--hook-style", default="")
+    p_pv.add_argument("--retention-mode", choices=["standard", "maxima_retencion"], default="")
 
     p_ul = sub.add_parser("upload-last")
     p_ul.add_argument("--channel-id", required=True)

@@ -9,6 +9,7 @@ import {
   CloudUpload,
   ExternalLink,
   CheckCheck,
+  Archive,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
@@ -79,6 +80,7 @@ export function Storage() {
   return (
     <>
       <Header
+        eyebrow="Biblioteca"
         title="Archivos de video"
         description="Limpia los .mp4 cacheados en .mp/ para liberar espacio."
         actions={
@@ -95,12 +97,40 @@ export function Storage() {
       />
 
       <PageShell>
+        <section className="page-hero">
+          <div className="page-hero-inner">
+            <div>
+              <span className="eyebrow block mb-2">Storage local</span>
+              <h1 className="page-title">
+                Videos listos, <span className="brand-text">sin desorden</span>
+              </h1>
+              <p className="page-subtitle">
+                {files.length} archivos detectados, {totalMb.toFixed(1)} MB usados y
+                estado de subida separado para revisar rapido.
+              </p>
+            </div>
+            <div className="metric-strip grid-cols-3 w-full sm:w-auto sm:min-w-[420px]">
+              <StorageMetric label="Pendientes" value={files.filter((f) => !f.uploaded).length} tone="warning" />
+              <StorageMetric label="Subidos" value={files.filter((f) => f.uploaded).length} tone="success" />
+              <StorageMetric label="Peso" value={`${totalMb.toFixed(1)} MB`} tone="primary" />
+            </div>
+          </div>
+        </section>
+
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <HardDrive className="h-4 w-4 text-primary" />
-              Total: {files.length} archivo(s) — {totalMb.toFixed(1)} MB
-            </CardTitle>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <span className="eyebrow">Libreria .mp</span>
+                <CardTitle className="mt-1 flex items-center gap-2">
+                  <HardDrive className="h-4 w-4 text-primary" />
+                  {files.length} archivo(s)
+                </CardTitle>
+              </div>
+              <Badge variant="outline" className="gap-1">
+                <Archive className="h-3 w-3" /> {totalMb.toFixed(1)} MB
+              </Badge>
+            </div>
           </CardHeader>
           <CardContent>
             {loading ? (
@@ -123,13 +153,13 @@ export function Storage() {
                 const renderRow = (f: Mp4FileEntry) => (
                   <li
                     key={f.name}
-                    className="flex items-center gap-3 px-4 py-3 hover:bg-muted/30"
+                    className="list-row flex flex-wrap items-center gap-3 rounded-xl px-4 py-3"
                   >
                     <div
                       className={
                         f.uploaded
-                          ? "rounded-md bg-emerald-400/10 p-2 text-emerald-400"
-                          : "rounded-md bg-amber-400/10 p-2 text-amber-400"
+                          ? "rounded-lg bg-success/10 p-2 text-success"
+                          : "rounded-lg bg-warning/10 p-2 text-warning"
                       }
                     >
                       <FileVideo className="h-4 w-4" />
@@ -142,11 +172,11 @@ export function Storage() {
                       </div>
                     </div>
                     {f.uploaded ? (
-                      <Badge variant="outline" className="gap-1 text-emerald-400 border-emerald-400/40 bg-emerald-400/10">
+                      <Badge variant="outline" className="gap-1 text-success border-success/40 bg-success/10">
                         <CheckCircle2 className="h-3 w-3" /> Subido
                       </Badge>
                     ) : (
-                      <Badge variant="outline" className="gap-1 text-amber-400 border-amber-400/40 bg-amber-400/10">
+                      <Badge variant="outline" className="gap-1 text-warning border-warning/40 bg-warning/10">
                         <CloudUpload className="h-3 w-3" /> Listo para subir
                       </Badge>
                     )}
@@ -214,12 +244,12 @@ export function Storage() {
                   tone: "amber" | "emerald";
                   children: React.ReactNode;
                 }) => (
-                  <div className="rounded-lg border border-border/60 overflow-hidden">
+                  <div className="soft-panel overflow-hidden p-2">
                     <div
-                      className={`px-4 py-2 text-xs uppercase tracking-wider font-semibold flex items-center gap-2 ${
+                      className={`px-3 py-2 text-xs uppercase font-semibold flex items-center gap-2 ${
                         tone === "amber"
-                          ? "bg-amber-400/5 text-amber-300"
-                          : "bg-emerald-400/5 text-emerald-300"
+                          ? "text-warning"
+                          : "text-success"
                       }`}
                     >
                       {tone === "amber" ? (
@@ -232,7 +262,7 @@ export function Storage() {
                         ({count})
                       </span>
                     </div>
-                    <ul className="divide-y divide-border/60">{children}</ul>
+                    <ul className="space-y-2">{children}</ul>
                   </div>
                 );
 
@@ -297,5 +327,28 @@ export function Storage() {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+function StorageMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string | number;
+  tone: "warning" | "success" | "primary";
+}) {
+  const color = tone === "warning" ? "var(--warning)" : tone === "success" ? "var(--success)" : "var(--primary)";
+  return (
+    <div className="px-4 py-3" style={{ borderRight: "1px solid hsl(var(--border) / .06)" }}>
+      <div className="flex items-center gap-1.5">
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: `hsl(${color})` }} />
+        <span className="tiny-label">{label}</span>
+      </div>
+      <div className="mt-1 font-mono text-[17px] font-semibold tabular-nums text-foreground">
+        {value}
+      </div>
+    </div>
   );
 }

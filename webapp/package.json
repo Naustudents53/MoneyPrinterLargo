@@ -2,13 +2,17 @@
   "name": "moneyprinter-largo",
   "private": true,
   "version": "1.0.0",
+  "packageManager": "pnpm@10.28.2",
   "description": "MoneyPrinter Largo — orchestrator: runs FastAPI backend + Vite frontend in one terminal, both with hot-reload.",
   "scripts": {
-    "dev": "concurrently -n api,web -c \"blue.bold,green.bold\" --kill-others-on-fail --prefix \"[{name}]\" \"npm:dev:api\" \"npm:dev:web\"",
+    "dev": "concurrently -n api,web -c \"blue.bold,green.bold\" --kill-others-on-fail --prefix \"[{name}]\" \"pnpm run dev:api\" \"pnpm run dev:web\"",
     "dev:api": "cd .. && python -m uvicorn webapp.api.main:app --host 127.0.0.1 --port 8000 --reload",
-    "dev:web": "npm --prefix web run dev",
-    "build": "npm --prefix web run build",
-    "install:all": "npm install && npm --prefix web install && pip install -r api/requirements.txt"
+    "dev:web": "pnpm --dir web run dev",
+    "build": "pnpm --dir web run build",
+    "install:all": "pnpm install && pip install -r api/requirements.txt"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

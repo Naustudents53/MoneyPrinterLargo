@@ -138,6 +138,7 @@ export function Thumbnails() {
   return (
     <>
       <Header
+        eyebrow="Assets"
         title="Thumbnails"
         description="Genera, revisa y administra las miniaturas. Todas se guardan en thumbnails/."
         actions={
@@ -154,9 +155,34 @@ export function Thumbnails() {
       />
 
       <PageShell>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <section className="page-hero">
+          <div className="page-hero-inner">
+            <div>
+              <span className="eyebrow block mb-2">Image lab</span>
+              <h1 className="page-title">
+                Miniaturas con <span className="brand-text">presencia</span>
+              </h1>
+              <p className="page-subtitle">
+                Crea thumbnails, revisa el archivo final y administra la galeria local
+                sin salir del estudio.
+              </p>
+            </div>
+            <div className="metric-strip grid-cols-2 w-full sm:w-auto sm:min-w-[320px]">
+              <div className="px-4 py-3">
+                <span className="tiny-label">Total</span>
+                <div className="mt-1 font-mono text-[17px] font-semibold">{items.length}</div>
+              </div>
+              <div className="px-4 py-3" style={{ borderLeft: "1px solid hsl(var(--border) / .06)" }}>
+                <span className="tiny-label">Peso</span>
+                <div className="mt-1 font-mono text-[17px] font-semibold">{(totalKb / 1024).toFixed(1)} MB</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div className="grid grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)] gap-5">
           {/* Generator form — sticky on desktop, accent stripe */}
-          <Card className="lg:col-span-1 lg:sticky lg:top-24 self-start overflow-hidden">
+          <Card className="lg:sticky lg:top-24 self-start overflow-hidden">
             <span
               aria-hidden
               className="block h-[3px] w-full"
@@ -175,7 +201,7 @@ export function Thumbnails() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="topic" className="text-[11px] uppercase tracking-wider font-mono text-muted-foreground">
+                <Label htmlFor="topic" className="text-[11px] uppercase font-mono text-muted-foreground">
                   Tema del video
                 </Label>
                 <Input
@@ -186,7 +212,7 @@ export function Thumbnails() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="text" className="text-[11px] uppercase tracking-wider font-mono text-muted-foreground">
+                <Label htmlFor="text" className="text-[11px] uppercase font-mono text-muted-foreground">
                   Texto overlay
                 </Label>
                 <Input
@@ -194,14 +220,14 @@ export function Thumbnails() {
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   placeholder="EL PATRON OCULTO"
-                  className="font-display tracking-tight"
+                  className="font-display"
                 />
                 <p className="text-[11px] text-muted-foreground">
                   Se convierte a mayúsculas. Máx ~3 líneas con auto-shrink.
                 </p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="visual" className="text-[11px] uppercase tracking-wider font-mono text-muted-foreground">
+                <Label htmlFor="visual" className="text-[11px] uppercase font-mono text-muted-foreground">
                   Prompt visual <span className="lowercase tracking-normal opacity-70">(opcional)</span>
                 </Label>
                 <Textarea
@@ -222,7 +248,7 @@ export function Thumbnails() {
               >
                 <Sparkles className="h-4 w-4" /> Generar thumbnail
               </Button>
-              <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground pt-2 border-t border-border/30">
+              <div className="flex items-center justify-between text-[10px] font-mono uppercase text-muted-foreground pt-2 border-t border-border/30">
                 <span>1280 × 720</span>
                 <span>JPEG · ~120 KB</span>
               </div>
@@ -230,7 +256,7 @@ export function Thumbnails() {
           </Card>
 
           {/* Gallery */}
-          <Card className="lg:col-span-2">
+          <Card>
             <CardHeader className="pb-3">
               <div className="flex items-baseline justify-between flex-wrap gap-2">
                 <div className="flex flex-col gap-0.5">
@@ -359,7 +385,7 @@ function ThumbCard({
   onDelete: () => void;
 }) {
   return (
-    <div className="group relative rounded-lg border border-border/40 overflow-hidden bg-card hover:border-primary/40 hover:shadow-[0_18px_55px_-46px_hsl(var(--foreground)/.55)] transition-all">
+    <div className="media-card group relative">
       <button
         type="button"
         onClick={onPreview}
@@ -373,7 +399,7 @@ function ThumbCard({
         />
         {/* Hover overlay with quick-preview affordance */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-start p-3">
-          <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-white/90">
+          <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase text-white/90">
             <Eye className="h-3 w-3" /> Ver
           </span>
         </div>
@@ -386,7 +412,7 @@ function ThumbCard({
           <span>{relativeTime(item.mtime)}</span>
           <span>{item.size_kb} KB</span>
         </div>
-        <div className="flex items-center gap-0.5 pt-1.5 border-t border-border/30 -mx-1">
+        <div className="flex items-center gap-0.5 pt-1.5 border-t border-border/10 -mx-1">
           <Button variant="ghost" size="icon" onClick={onPreview} className="h-7 w-7" title="Ver">
             <Eye className="h-3.5 w-3.5" />
           </Button>
@@ -396,7 +422,7 @@ function ThumbCard({
           <Button variant="ghost" size="icon" onClick={onDownload} className="h-7 w-7" title="Descargar">
             <Download className="h-3.5 w-3.5" />
           </Button>
-          <span className="ml-auto text-[9px] font-mono uppercase tracking-wider text-muted-foreground/70 pr-1">
+          <span className="ml-auto text-[9px] font-mono uppercase text-muted-foreground/70 pr-1">
             {formatDate(item.mtime)}
           </span>
           <Button
