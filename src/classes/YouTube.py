@@ -20,6 +20,7 @@ from .Tts import TTS
 from .Retention import CosmicRetentionEngine
 from .MaxRetention import MaxRetentionEngine, is_max_retention, normalize_retention_mode
 from .RetentionLab import RetentionLab
+from .NarrationVoice import NarrationVoice
 from llm_provider import generate_text
 from config import *
 from status import *
@@ -329,6 +330,7 @@ class YouTube:
         self.visual_beat_map: list = []
         self.visual_beat_report: dict = {}
         self.visual_preflight: dict = {}
+        self.retention_plan: dict = {}
 
         # Initialize the Firefox profile
         self.options: Options = Options()
@@ -890,6 +892,7 @@ MAXIMA RETENCION HOOK LAB - mandatory:
             if is_max_retention(getattr(self, "_retention_mode", ""))
             else ""
         )
+        voice_directive = NarrationVoice.short_generation_directive(self.language)
 
         prompt = f"""Write a narration script for a short video in EXACTLY {sentence_length} sentences.
 {duration_clause}
@@ -897,6 +900,7 @@ MAXIMA RETENCION HOOK LAB - mandatory:
 TOPIC: {self.subject}
 {cosmic_directive}
 {max_retention_directive}
+{voice_directive}
 {hook_lab_directive}
 
 NARRATIVE STRUCTURE (follow this order):
@@ -1486,6 +1490,31 @@ Example format:
         self.images.append(image_path)
         return image_path
 
+    def _should_use_codex_cli_images(self) -> bool:
+        try:
+            from llm_provider import get_active_provider
+            return (
+                get_active_provider() == "openai"
+                and get_openai_use_codex_cli()
+                and get_codex_cli_generate_images()
+            )
+        except Exception:
+            return False
+
+    def _try_codex_cli_image(self, prompt: str, width: int = 1080, height: int = 1920) -> bytes:
+        """Ask the locally authenticated Codex CLI to create a visual asset."""
+        from codex_image_provider import generate_image_bytes_with_codex
+        from llm_provider import get_active_model
+
+        print(colored(f"    [Codex CLI Image] Generating...", "cyan"), flush=True)
+        active_model = get_active_model()
+        return generate_image_bytes_with_codex(
+            prompt,
+            width=width,
+            height=height,
+            model=active_model if isinstance(active_model, str) else "",
+        )
+
     def _try_huggingface(self, prompt: str) -> bytes:
         """Try HuggingFace Inference API. Requires free HF token."""
         from config import get_hf_api_key
@@ -1696,6 +1725,7 @@ Example format:
         subject: str | None = None,
         generate_thumbnail: bool = False,
         is_long: bool | None = None,
+        upload: bool = True,
     ) -> bool:
         """Re-upload an already-rendered .mp4 by reusing the standard
         ``upload_video`` Selenium flow.
@@ -1710,7 +1740,8 @@ Example format:
         If ``generate_thumbnail`` is true, generate a custom thumbnail when
         one is not already restored from the sidecar.
 
-        Returns whatever ``upload_video`` returns.
+        If ``upload`` is false, only recover/persist metadata and return True.
+        Otherwise returns whatever ``upload_video`` returns.
         """
         if not os.path.isfile(video_path):
             error(f"Cannot re-upload: file not found at '{video_path}'.")
@@ -1744,6 +1775,8 @@ Example format:
             self._persist_metadata_sidecar(is_long=effective_is_long)
             info(" => Loaded saved metadata from sidecar.")
             success(f" => Title: {self.metadata['title']}")
+            if not upload:
+                return True
             return self.upload_video()
 
         # 2) Subject provided â†’ ask the LLM for title + description.
@@ -1809,6 +1842,8 @@ Example format:
         # Detect long-vs-short from existing sidecar if any; default short.
         self._persist_metadata_sidecar(is_long=effective_is_long)
 
+        if not upload:
+            return True
         return self.upload_video()
 
     def _persist_metadata_sidecar(self, is_long: bool) -> None:
@@ -1837,6 +1872,7 @@ Example format:
                 "visual_beat_map": getattr(self, "visual_beat_map", []) or [],
                 "visual_beat_report": getattr(self, "visual_beat_report", {}) or {},
                 "visual_preflight": getattr(self, "visual_preflight", {}) or {},
+                "retention_plan": getattr(self, "retention_plan", {}) or {},
             }
             with open(sidecar, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -1845,6 +1881,57 @@ Example format:
         except Exception as e:
             if get_verbose():
                 warning(f"Could not write upload sidecar: {e}")
+
+    def _build_retention_plan(self, video_path: str = "") -> dict:
+        if not is_max_retention(getattr(self, "_retention_mode", "")):
+            self.retention_plan = {}
+            return {}
+        script = getattr(self, "script", "") or ""
+        if not script.strip():
+            self.retention_plan = {}
+            return {}
+        try:
+            history_videos = self.get_videos()
+        except Exception:
+            history_videos = []
+        try:
+            plan = RetentionLab.build_retention_plan(
+                script=script,
+                topic=getattr(self, "subject", "") or "",
+                niche=getattr(self, "niche", "") or "",
+                language=getattr(self, "language", "") or "",
+                retention_mode=getattr(self, "_retention_mode", "") or "",
+                video_path=os.path.abspath(video_path or getattr(self, "video_path", "") or ""),
+                retention_preflight=getattr(self, "retention_preflight", {}) or {},
+                retention_hook_lab=getattr(self, "retention_hook_lab", {}) or {},
+                visual_beat_map=getattr(self, "visual_beat_map", []) or [],
+                visual_beat_report=getattr(self, "visual_beat_report", {}) or {},
+                visual_preflight=getattr(self, "visual_preflight", {}) or {},
+                history_videos=history_videos,
+            )
+            self.retention_plan = plan
+            if get_verbose():
+                info(
+                    " => Retencion Pro: "
+                    f"{plan.get('status', 'unknown')} "
+                    f"score={plan.get('overall_score', 0)}/10"
+                )
+            return plan
+        except Exception as exc:
+            self.retention_plan = {}
+            if get_verbose():
+                warning(f"Could not build Retencion Pro plan: {exc}")
+            return {}
+
+    def _persist_retention_plan(self) -> None:
+        try:
+            plan = getattr(self, "retention_plan", {}) or {}
+            video_path = getattr(self, "video_path", "") or ""
+            if plan and video_path:
+                RetentionLab.persist_retention_plan(video_path, plan)
+        except Exception as exc:
+            if get_verbose():
+                warning(f"Could not persist Retencion Pro plan: {exc}")
 
     # Default visual baseline applied when a channel has NO `image_style`
     # configured. Goal: keep all images uniform (same realism level) and let
@@ -3049,9 +3136,13 @@ RULES:
                         "photos" â†’ Wikimedia / stock photos first, AI as last-resort fallback.
         """
         self._image_mode = image_mode
+        codex_providers = []
+        if self._should_use_codex_cli_images():
+            codex_providers.append(("Codex CLI Image", self._try_codex_cli_image, "ai"))
+
         if image_mode == "photos":
             print(colored(f"\n  [Images] Fetching {len(prompts)} real photos...", "blue"))
-            providers = [
+            providers = codex_providers + [
                 # Tier 1: deterministic entity-based lookup. Wikidata maps the
                 # query to a concrete entity (Q-id) and returns the curated
                 # lead image (P18) plus a sample of files from its Commons
@@ -3078,7 +3169,7 @@ RULES:
             ]
         else:
             print(colored(f"\n  [Images] Generating {len(prompts)} images...", "blue"))
-            providers = [
+            providers = codex_providers + [
                 # Tier 1: High-quality AI generator
                 ("Leonardo AI", self._try_leonardo, "ai"),
                 # Tier 2: HuggingFace fallback
@@ -3127,7 +3218,10 @@ RULES:
         Returns:
             path (str): The path to the generated image.
         """
-        providers = [
+        providers = []
+        if self._should_use_codex_cli_images():
+            providers.append(("Codex CLI Image", self._try_codex_cli_image))
+        providers += [
             ("HuggingFace", self._try_huggingface),
         ]
 
@@ -3414,6 +3508,15 @@ RULES:
         line_spacing = 0  # ascent+descent already provides natural spacing
         max_words_per_group = caption_cfg.max_words_per_group if caption_cfg else 5
         max_lines = 2 if max_mode else 3
+        hot_word_set = set()
+        if max_mode:
+            try:
+                hot_word_set = set(RetentionLab.hot_words(getattr(self, "script", "") or "", getattr(self, "subject", "") or ""))
+            except Exception:
+                hot_word_set = set()
+
+        def _caption_key(text: str) -> str:
+            return RetentionLab.normalize(text)
 
         # Measure height of a single line using full font metrics (ascent + descent)
         # plus stroke so descenders (g, y, p) and strokes never get clipped
@@ -3498,7 +3601,8 @@ RULES:
                         draw.text((x, y), t, fill=(255, 215, 0), font=font,
                                   stroke_width=6, stroke_fill="black")
                     else:
-                        draw.text((x, y), t, fill="white", font=font,
+                        fill = (255, 95, 70) if _caption_key(t) in hot_word_set else "white"
+                        draw.text((x, y), t, fill=fill, font=font,
                                   stroke_width=6, stroke_fill="black")
                     x += tw + word_spacing
                     word_counter += 1
@@ -4032,6 +4136,7 @@ RULES:
         self.visual_beat_map = []
         self.visual_beat_report = {}
         self.visual_preflight = {}
+        self.retention_plan = {}
         # Shorts upload fast â€” no need for the long-video patient wait.
         self._is_long_video = False
 
@@ -4086,6 +4191,7 @@ RULES:
             info(f" => Generated Video: {path}")
 
         self.video_path = os.path.abspath(path)
+        self._build_retention_plan(self.video_path)
         self._persist_metadata_sidecar(is_long=False)
 
         try:
@@ -4098,6 +4204,7 @@ RULES:
             )
         except Exception as _e:
             warning(f"Could not record upload manifest: {_e}")
+        self._persist_retention_plan()
 
         return path
 
@@ -4296,6 +4403,7 @@ RULES:
             self.niche,
             lang,
         )
+        voice_block = NarrationVoice.long_generation_directive(lang)
 
         prompt = f"""Eres un narrador experto de documentales y guionista profesional especializado en RETENCIÃ“N: tu trabajo es que el espectador NO se vaya en los primeros 5 minutos y aguante hasta el final.
 Escribe un GUION COMPLETO de narraciÃ³n cautivador de 15 a 20 minutos sobre el siguiente tema.
@@ -4303,6 +4411,7 @@ Escribe un GUION COMPLETO de narraciÃ³n cautivador de 15 a 20 minutos sobre el
 Tema: {self.subject}
 {brief_block}
 {retention_block}
+{voice_block}
 ARQUITECTURA DE RETENCIÃ“N â€” LEE ESTO ANTES DE EMPEZAR:
 - Los primeros 5 minutos (INTRO + SECTION 1 + SECTION 2) son un MOTOR DE GANCHO: cold open cinematogrÃ¡fico â†’ viÃ±eta inmersiva â†’ siembra del MISTERIO PRINCIPAL del video.
 - ESTÃ PROHIBIDO mencionar "me gusta" o "like" en el INTRO, en la SECTION 1 o en la SECTION 2. La invitaciÃ³n al like aparece SOLO al INICIO de la SECTION 3, cuando el espectador ya estÃ¡ enganchado.
@@ -4395,6 +4504,7 @@ REGLAS DE ESTILO:
             self.niche,
             lang,
         )
+        voice_block = NarrationVoice.long_generation_directive(lang)
 
         def _ask_section(prompt: str, min_words: int) -> str:
             """Call the LLM with retries until we hit min_words AND the content is clean."""
@@ -4425,7 +4535,7 @@ REGLAS DE ESTILO:
 
         # ---- INTRO â€” cold open + open loops (NO like-ask here) ----
         intro_prompt = f"""Eres un narrador experto de documentales especializado en RETENCIÃ“N. Escribe SOLO la INTRODUCCIÃ“N de un guion documental sobre: {self.subject}
-{brief_block}{retention_block}
+{brief_block}{retention_block}{voice_block}
 OBJETIVO DE LA INTRO: enganchar al espectador en los primeros 30 segundos para que aguante los 20 minutos. NO menciones "me gusta" ni "like" â€” esa invitaciÃ³n va en otra secciÃ³n posterior, NUNCA aquÃ­.
 
 ESTRUCTURA OBLIGATORIA (5-7 oraciones, 130-180 palabras):
@@ -4491,7 +4601,7 @@ REGLAS DE ESTILO:
                 loops_block = ""
 
             section_prompt = f"""Eres un narrador experto de documentales especializado en retenciÃ³n. EstÃ¡s escribiendo la SECCIÃ“N {i} de 10 de un guion sobre: {self.subject}
-{brief_block}{retention_block}{loops_block}
+{brief_block}{retention_block}{voice_block}{loops_block}
 Esto es lo Ãºltimo que ya se narrÃ³ (NO lo repitas, continÃºa el flujo natural):
 \"\"\"
 {tail}
@@ -4517,7 +4627,7 @@ Escribe SOLO la SECCIÃ“N {i}:
         prior = "\n\n".join(parts)
         tail = " ".join(prior.split()[-300:])
         closing_prompt = f"""Eres un narrador experto de documentales. EstÃ¡s escribiendo el CIERRE de un guion sobre: {self.subject}
-{brief_block}{retention_block}
+{brief_block}{retention_block}{voice_block}
 Esto es lo Ãºltimo que se narrÃ³:
 \"\"\"
 {tail}
@@ -4924,16 +5034,18 @@ Return ONLY the JSON. No markdown, no explanation."""
             overlay_words = " ".join(topic_words).upper() if topic_words else "DESCUBRE LA VERDAD"
             warning(f"Thumbnail: using topic-derived overlay text: {overlay_words}")
 
-        # Step 2: render the background image (Leonardo AI).
+        # Step 2: render the background image.
         # Append the channel's image_style suffix so the thumbnail matches the video's look.
         styled_visual_prompt = self._apply_channel_style(visual_prompt)
         if get_verbose() and styled_visual_prompt != visual_prompt:
             info(" => Thumbnail: applied channel art style")
 
         bg_bytes = None
-        for name, fn in (
-            ("Leonardo AI", self._try_leonardo_landscape),
-        ):
+        thumb_providers = []
+        if self._should_use_codex_cli_images():
+            thumb_providers.append(("Codex CLI Image", lambda p: self._try_codex_cli_image(p, 1280, 720)))
+        thumb_providers.append(("Leonardo AI", self._try_leonardo_landscape))
+        for name, fn in thumb_providers:
             try:
                 bg_bytes = fn(styled_visual_prompt)
                 if bg_bytes and len(bg_bytes) > 5000:
@@ -5408,10 +5520,14 @@ No markdown. No explanation. Just the JSON array."""
             # Apply per-channel style suffix to AI prompts.
             styled_prompt = self._apply_channel_style(prompt)
 
-            for name, fn in [
+            providers = []
+            if self._should_use_codex_cli_images():
+                providers.append(("Codex CLI Image", lambda p: self._try_codex_cli_image(p, 1920, 1080)))
+            providers += [
                 ("Leonardo AI", lambda p: self._try_leonardo_landscape(p)),
                 ("HuggingFace", self._try_huggingface),
-            ]:
+            ]
+            for name, fn in providers:
                 try:
                     img_bytes = fn(styled_prompt)
                     if img_bytes and len(img_bytes) > 1000:
@@ -5825,6 +5941,12 @@ No markdown. No explanation. Just the JSON array."""
 
         # Mark this as a long video so upload_video knows to wait longer for the upload to finish.
         self._is_long_video = True
+        self.retention_plan = {}
+        self.retention_preflight = {}
+        self.retention_hook_lab = {}
+        self.visual_beat_map = []
+        self.visual_beat_report = {}
+        self.visual_preflight = {}
 
         # Step 1: Generate Topic (or use the user-provided one)
         info("\n[1/7] Generating topic...")
@@ -6141,6 +6263,12 @@ No markdown. No explanation. Just the JSON array."""
                 except Exception:
                     pass
 
+    def _extract_channel_id_from_url(self, url: str) -> str:
+        match = re.search(r"/channel/([^/?#]+)", url or "")
+        if match:
+            return match.group(1)
+        return ""
+
     def get_channel_id(self) -> str:
         """
         Gets the Channel ID of the YouTube Account.
@@ -6149,12 +6277,34 @@ No markdown. No explanation. Just the JSON array."""
             channel_id (str): The Channel ID.
         """
         driver = self.browser
-        driver.get("https://studio.youtube.com")
+        existing_channel_id = getattr(self, "channel_id", "") or ""
+        try:
+            driver.set_page_load_timeout(75)
+        except Exception:
+            pass
+        try:
+            driver.get("https://studio.youtube.com")
+        except Exception as e:
+            warning(f"Could not fully load YouTube Studio while resolving channel ID: {e}")
+            try:
+                driver.execute_script("window.stop();")
+            except Exception:
+                pass
+        finally:
+            try:
+                driver.set_page_load_timeout(300)
+            except Exception:
+                pass
         time.sleep(2)
-        channel_id = driver.current_url.split("/")[-1]
-        self.channel_id = channel_id
+        channel_id = self._extract_channel_id_from_url(getattr(driver, "current_url", "") or "")
+        if channel_id:
+            self.channel_id = channel_id
+            return channel_id
+        if existing_channel_id:
+            return existing_channel_id
+        warning("Could not resolve YouTube channel ID from Studio URL; upload will continue.")
 
-        return channel_id
+        return ""
 
     def _get_channel_id_safe(self) -> str:
         """
@@ -6184,9 +6334,20 @@ No markdown. No explanation. Just the JSON array."""
                 return getattr(self, "channel_id", "") or ""
             status_handle = new_handles[0]
             driver.switch_to.window(status_handle)
-            driver.get("https://studio.youtube.com")
+            try:
+                driver.set_page_load_timeout(75)
+            except Exception:
+                pass
+            try:
+                driver.get("https://studio.youtube.com")
+            except Exception as e:
+                warning(f"Safe channel_id Studio load timed out: {e}")
+                try:
+                    driver.execute_script("window.stop();")
+                except Exception:
+                    pass
             time.sleep(3)
-            channel_id = driver.current_url.split("/")[-1]
+            channel_id = self._extract_channel_id_from_url(getattr(driver, "current_url", "") or "")
             if channel_id:
                 self.channel_id = channel_id
                 return channel_id
@@ -6195,6 +6356,10 @@ No markdown. No explanation. Just the JSON array."""
             warning(f"Safe channel_id resolve failed: {e}")
             return getattr(self, "channel_id", "") or ""
         finally:
+            try:
+                driver.set_page_load_timeout(300)
+            except Exception:
+                pass
             try:
                 if status_handle and status_handle in driver.window_handles:
                     driver.switch_to.window(status_handle)
@@ -6251,6 +6416,9 @@ No markdown. No explanation. Just the JSON array."""
         info("\t   (polling in a SEPARATE tab so the upload tab is never disturbed)")
 
         deadline = time.time() + max_wait_s
+        if not getattr(self, "channel_id", None):
+            warning("\t=> Cannot poll YouTube Studio listing because channel ID was not resolved.")
+            return False
         if listing_tab == "short":
             listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/short"
         else:
@@ -6751,6 +6919,10 @@ No markdown. No explanation. Just the JSON array."""
                 info("\t=> Navigating to upload page...")
             driver.get("https://www.youtube.com/upload")
             time.sleep(3)
+            if not getattr(self, "channel_id", None):
+                channel_id = self._extract_channel_id_from_url(getattr(driver, "current_url", "") or "")
+                if channel_id:
+                    self.channel_id = channel_id
 
             # Step 3: Upload the video file
             if verbose:
@@ -7054,6 +7226,14 @@ No markdown. No explanation. Just the JSON array."""
                 "first_image_score": (
                     ((getattr(self, "visual_preflight", {}) or {}).get("first_image") or {}).get("score")
                 ),
+                "platform_uploads": {
+                    "youtube": {
+                        "status": "pending",
+                        "url": None,
+                        "updated_at": None,
+                        "error": "",
+                    }
+                },
             }
             try:
                 self.add_video(cache_entry)
@@ -7069,12 +7249,9 @@ No markdown. No explanation. Just the JSON array."""
             # differences are the listing URL and the timeouts.
             if not getattr(self, "channel_id", None):
                 try:
-                    if is_long_video:
-                        # NEVER navigate the upload tab during a long-video upload.
-                        # Resolve channel_id on a side tab instead.
-                        self._get_channel_id_safe()
-                    else:
-                        self.get_channel_id()
+                    # NEVER navigate the upload tab during an in-flight upload.
+                    # Resolve channel_id on a side tab instead.
+                    self._get_channel_id_safe()
                 except Exception as e:
                     warning(f"Could not resolve channel_id before upload wait: {e}")
 
@@ -7128,41 +7305,44 @@ No markdown. No explanation. Just the JSON array."""
             else:
                 # Shorts: original behavior (navigate the same tab â€” Firefox is
                 # about to be closed anyway when the short upload is confirmed).
-                try:
-                    driver.get(
-                        f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
-                    )
-                    time.sleep(3)
+                if not getattr(self, "channel_id", None):
+                    warning("Could not get video URL: channel ID was not resolved.")
+                else:
+                    try:
+                        driver.get(
+                            f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+                        )
+                        time.sleep(3)
 
-                    target_title = (self.metadata.get("title") or "").strip()
-                    videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
+                        target_title = (self.metadata.get("title") or "").strip()
+                        videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
 
-                    chosen_href = None
-                    for row in videos[:15]:
-                        try:
-                            row_text = row.text.strip()
-                        except Exception:
-                            row_text = ""
-                        if target_title and target_title[:50] in row_text:
+                        chosen_href = None
+                        for row in videos[:15]:
                             try:
-                                chosen_href = row.find_element(By.TAG_NAME, "a").get_attribute("href")
-                                break
+                                row_text = row.text.strip()
                             except Exception:
-                                continue
+                                row_text = ""
+                            if target_title and target_title[:50] in row_text:
+                                try:
+                                    chosen_href = row.find_element(By.TAG_NAME, "a").get_attribute("href")
+                                    break
+                                except Exception:
+                                    continue
 
-                    if not chosen_href and videos:
-                        try:
-                            chosen_href = videos[0].find_element(By.TAG_NAME, "a").get_attribute("href")
-                        except Exception:
-                            chosen_href = None
+                        if not chosen_href and videos:
+                            try:
+                                chosen_href = videos[0].find_element(By.TAG_NAME, "a").get_attribute("href")
+                            except Exception:
+                                chosen_href = None
 
-                    if chosen_href:
-                        if verbose:
-                            info(f"\t=> Found URL: {chosen_href}")
-                        video_id = chosen_href.split("/")[-2]
-                        url = build_url(video_id)
-                except Exception as e:
-                    warning(f"Could not get video URL: {e}")
+                        if chosen_href:
+                            if verbose:
+                                info(f"\t=> Found URL: {chosen_href}")
+                            video_id = chosen_href.split("/")[-2]
+                            url = build_url(video_id)
+                    except Exception as e:
+                        warning(f"Could not get video URL: {e}")
 
             if url:
                 self.uploaded_video_url = url
@@ -7215,14 +7395,17 @@ No markdown. No explanation. Just the JSON array."""
                     warning("   then close Firefox manually.")
                     warning("=" * 60)
 
-            try:
-                from upload_tracker import mark_uploaded, cleanup_uploaded
-                if mark_uploaded(self.video_path, getattr(self, "uploaded_video_url", None)):
-                    removed = cleanup_uploaded()
-                    if removed and get_verbose():
-                        info(f" => Cleaned up {removed} uploaded asset(s) from .mp/")
-            except Exception as _e:
-                warning(f"Post-upload cleanup skipped: {_e}")
+            if getattr(self, "_defer_upload_cleanup", False):
+                info(" => Post-upload cleanup deferred until the remaining selected platforms finish.")
+            else:
+                try:
+                    from upload_tracker import mark_uploaded, cleanup_uploaded
+                    if mark_uploaded(self.video_path, getattr(self, "uploaded_video_url", None)):
+                        removed = cleanup_uploaded()
+                        if removed and get_verbose():
+                            info(f" => Cleaned up {removed} uploaded asset(s) from .mp/")
+                except Exception as _e:
+                    warning(f"Post-upload cleanup skipped: {_e}")
 
             return True
 
@@ -7250,6 +7433,13 @@ No markdown. No explanation. Just the JSON array."""
                 for video in account.get("videos", []):
                     if video.get("date") == date_marker and video.get("url") in ("uploading...", "", None):
                         video["url"] = new_url
+                        statuses = video.setdefault("platform_uploads", {})
+                        statuses["youtube"] = {
+                            "status": "uploaded",
+                            "url": new_url,
+                            "updated_at": datetime.utcnow().isoformat() + "Z",
+                            "error": "",
+                        }
                         break
             with open(cache, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)

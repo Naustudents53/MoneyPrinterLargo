@@ -146,6 +146,7 @@ Configura, como mínimo:
 - `firefox_profile`: perfil de Firefox ya logueado en YouTube/X.
 - `imagemagick_path`: ruta de ImageMagick si no está en el PATH.
 - `llm_provider`: proveedor de texto.
+- Para usar tu cuenta local de Codex como backend de OpenAI: `llm_provider: "openai"`, `openai_use_codex_cli: true` y `codex_cli_generate_images: true`.
 - API keys necesarias según el proveedor elegido.
 - Proveedor de imágenes.
 - Proveedor de TTS/STT.
@@ -224,7 +225,7 @@ MoneyPrinterLargo-public/
 │   ├── main.py                CLI interactivo
 │   ├── config.py              Lectura de config.json
 │   ├── cache.py               Persistencia local en .mp/
-│   ├── llm_provider.py        Dispatch Gemini / Ollama / Pollinations
+│   ├── llm_provider.py        Dispatch OpenAI / Codex CLI / Gemini / Ollama / Pollinations
 │   └── classes/
 │       ├── YouTube.py         Pipeline de videos
 │       ├── Twitter.py         Automatización de X/Twitter

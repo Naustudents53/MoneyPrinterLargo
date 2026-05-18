@@ -41,6 +41,15 @@ export const SHORT_RENDER_PROFILE_OPTIONS = ["quality", "fast", "turbo"] as cons
 export type ShortRenderProfile = (typeof SHORT_RENDER_PROFILE_OPTIONS)[number];
 export const RETENTION_MODE_OPTIONS = ["standard", "maxima_retencion"] as const;
 export type RetentionMode = (typeof RETENTION_MODE_OPTIONS)[number];
+export const UPLOAD_PLATFORM_OPTIONS = ["youtube", "tiktok", "facebook"] as const;
+export type UploadPlatform = (typeof UPLOAD_PLATFORM_OPTIONS)[number];
+
+export interface PlatformUploadState {
+  status: "pending" | "uploaded" | "failed" | string;
+  url?: string | null;
+  updated_at?: string | null;
+  error?: string;
+}
 
 export interface Channel {
   id: string;
@@ -89,6 +98,7 @@ export interface ChannelVideo {
   comment_count?: number;
   dislike_count?: number;
   stats_synced_at?: string;
+  platform_uploads?: Partial<Record<UploadPlatform, PlatformUploadState>>;
 }
 
 export interface RetentionLabVideo {
@@ -224,6 +234,37 @@ export interface Mp4FileEntry {
   uploaded?: boolean;
   uploaded_url?: string | null;
   subject?: string | null;
+  platform_uploads?: Partial<Record<UploadPlatform, PlatformUploadState>>;
+  social_summary?: {
+    quality_gate?: {
+      status?: string;
+      score?: number;
+      width?: number;
+      height?: number;
+      duration_seconds?: number;
+      checks?: { name: string; status: string; message: string }[];
+    };
+    safe_zone?: { status?: string };
+    trend_terms?: string[];
+    caption_scores?: Partial<Record<UploadPlatform, number>>;
+  };
+  retention_summary?: {
+    version?: number;
+    generated_at?: string;
+    status?: string;
+    score?: number;
+    hook?: string;
+    hook_score?: number;
+    intro_status?: string;
+    loop_status?: string;
+    hot_words?: string[];
+    micro_hooks_count?: number;
+    visual_status?: string;
+    analytics?: {
+      winning_terms?: string[];
+      burned_terms?: string[];
+    };
+  };
 }
 
 export interface ThumbnailEntry {
@@ -490,6 +531,19 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+  scriptVoicePreviewUrl: (id: string, params: {
+    channel_id: string;
+    kind?: "short" | "long";
+    retention_mode?: RetentionMode;
+  }) => {
+    const qs = new URLSearchParams();
+    qs.set("channel_id", params.channel_id);
+    if (params.kind) qs.set("kind", params.kind);
+    if (params.retention_mode && params.retention_mode !== "standard") {
+      qs.set("retention_mode", params.retention_mode);
+    }
+    return `${BASE}/api/preview/${id}/voice?${qs.toString()}`;
+  },
 
   uploadPhotos: async (files: File[]) => {
     const body = new FormData();
@@ -574,6 +628,7 @@ export const api = {
     custom_topic?: string;
     image_mode?: "ai" | "photos";
     auto_upload?: boolean;
+    upload_platforms?: UploadPlatform[];
     series_id?: string;
     duration_seconds?: ShortDurationSeconds;
     render_profile?: ShortRenderProfile;
@@ -592,6 +647,9 @@ export const api = {
     if (params.custom_topic) qs.set("custom_topic", params.custom_topic);
     if (params.image_mode) qs.set("image_mode", params.image_mode);
     if (params.auto_upload) qs.set("auto_upload", "true");
+    if (params.upload_platforms?.length) {
+      qs.set("upload_platforms", params.upload_platforms.join(","));
+    }
     if (params.series_id) qs.set("series_id", params.series_id);
     if (params.kind === "short" && params.duration_seconds) {
       qs.set("duration_seconds", String(params.duration_seconds));
@@ -636,8 +694,16 @@ export const api = {
     }
     return `${BASE}/api/channels/${id}/preview-script?${qs.toString()}`;
   },
-  uploadLastUrl: (id: string, kind: "short" | "long" = "short") =>
-    `${BASE}/api/channels/${id}/upload-last?kind=${kind}`,
+  uploadLastUrl: (
+    id: string,
+    kind: "short" | "long" = "short",
+    uploadPlatforms: UploadPlatform[] = ["youtube"],
+  ) => {
+    const qs = new URLSearchParams();
+    qs.set("kind", kind);
+    if (uploadPlatforms.length) qs.set("upload_platforms", uploadPlatforms.join(","));
+    return `${BASE}/api/channels/${id}/upload-last?${qs.toString()}`;
+  },
   syncYouTubeUrl: (params: {
     channel_id?: string;
     prune?: boolean;

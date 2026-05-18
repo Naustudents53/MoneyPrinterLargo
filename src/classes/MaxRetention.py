@@ -12,6 +12,8 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Callable
 
+from .NarrationVoice import NarrationVoice
+
 
 STANDARD_RETENTION_MODE = "standard"
 MAX_RETENTION_MODE = "maxima_retencion"
@@ -172,6 +174,7 @@ MAXIMA RETENCION MODE - mandatory:
 - Cut filler. No generic hype, no calls to action, no classroom tone, no slow introductions.
 - The final sentence should be short enough to loop cleanly back into the first sentence.
 - Write every word in {language}.
+{NarrationVoice.short_generation_directive(language)}
 """
 
     @classmethod
@@ -208,6 +211,7 @@ Rules:
 - Use simple spoken language, short sentences, strong verbs, and concrete cosmic images.
 - Reduce textbook explanation. Increase cause -> consequence -> twist.
 - End with a memorable line that loops naturally back to the first sentence.
+{NarrationVoice.rewrite_guardrail(language)}
 - No markdown, no title, no bullets, no stage directions.
 - Return ONLY the rewritten narration."""
         try:

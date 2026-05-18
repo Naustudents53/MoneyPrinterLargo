@@ -12,6 +12,15 @@ All your configurations will be in a file in the root directory, called `config.
 - `twitter_language`: `string` - The language that will be used to generate & post tweets.
 - `nanobanana2_api_base_url`: `string` - Nano Banana 2 API base URL (default: `https://generativelanguage.googleapis.com/v1beta`).
 - `gemini_api_key`: `string` - API key for the Gemini API (used for both text generation and Nano Banana 2 image generation). If empty, MPP falls back to environment variable `GEMINI_API_KEY`.
+- `openai_api_key`: `string` - API key for the OpenAI Responses API. If empty, MPP falls back to environment variable `OPENAI_API_KEY`.
+- `openai_use_codex_cli`: `boolean` - If `true`, selecting `llm_provider: "openai"` delegates text generation to your locally logged-in `codex exec` instead of the OpenAI API key path.
+- `codex_cli_command`: `string` - Codex CLI executable name/path used by `openai_use_codex_cli` (default: `codex`).
+- `codex_cli_model`: `string` - Optional Codex CLI model override. Leave empty to use the model selected in the UI or Codex's own default.
+- `codex_cli_sandbox`: `string` - Codex CLI sandbox for text calls: `read-only`, `workspace-write`, or `danger-full-access`. `read-only` is recommended.
+- `codex_cli_timeout_seconds`: `number` - Timeout for each `codex exec` text-generation call.
+- `codex_cli_generate_images`: `boolean` - If `true`, selecting OpenAI through Codex CLI also tries Codex CLI first for generated video images and thumbnails.
+- `codex_cli_image_sandbox`: `string` - Sandbox for Codex CLI image calls. Must allow writing the generated PNG; `workspace-write` is recommended.
+- `codex_cli_image_timeout_seconds`: `number` - Timeout for each image generated through Codex CLI.
 - `nanobanana2_model`: `string` - Nano Banana 2 model name (default: `gemini-3.1-flash-image-preview`).
 - `nanobanana2_aspect_ratio`: `string` - Aspect ratio for generated images (default: `9:16`).
 - `threads`: `number` - The amount of threads that will be used to execute operations, e.g. writing to a file using MoviePy.
@@ -59,6 +68,15 @@ All your configurations will be in a file in the root directory, called `config.
   "twitter_language": "English",
   "nanobanana2_api_base_url": "https://generativelanguage.googleapis.com/v1beta",
   "gemini_api_key": "",
+  "openai_api_key": "",
+  "openai_use_codex_cli": false,
+  "codex_cli_command": "codex",
+  "codex_cli_model": "",
+  "codex_cli_sandbox": "read-only",
+  "codex_cli_timeout_seconds": 300,
+  "codex_cli_generate_images": true,
+  "codex_cli_image_sandbox": "workspace-write",
+  "codex_cli_image_timeout_seconds": 900,
   "nanobanana2_model": "gemini-3.1-flash-image-preview",
   "nanobanana2_aspect_ratio": "9:16",
   "threads": 2,
@@ -98,6 +116,10 @@ All your configurations will be in a file in the root directory, called `config.
 ## Environment Variable Fallbacks
 
 - `GEMINI_API_KEY`: used when `gemini_api_key` is empty.
+- `OPENAI_API_KEY`: used when `openai_api_key` is empty and `openai_use_codex_cli` is `false`.
+- `MP_OPENAI_USE_CODEX_CLI`: set to `true` to route the OpenAI provider through `codex exec` without editing `config.json`.
+- `MP_CODEX_CLI_COMMAND`, `MP_CODEX_CLI_MODEL`, `MP_CODEX_CLI_SANDBOX`, `MP_CODEX_CLI_TIMEOUT_SECONDS`: override Codex CLI settings.
+- `MP_CODEX_CLI_IMAGE_SANDBOX`, `MP_CODEX_CLI_IMAGE_TIMEOUT_SECONDS`: override Codex CLI image settings.
 
 Example:
 

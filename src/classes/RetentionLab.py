@@ -7,12 +7,14 @@ that already lives in .mp/youtube.json and never calls YouTube on its own.
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable
 
+from .NarrationVoice import NarrationVoice
 from .MaxRetention import MaxRetentionEngine
 
 
@@ -56,7 +58,7 @@ class RetentionLab:
             "weak": sum(ch["stats"]["weak"] for ch in channels),
         }
         return {
-            "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "aggregate": aggregate,
             "channels": channels,
         }
@@ -521,6 +523,7 @@ Rules:
 - Add a small reveal, contrast, or consequence every two sentences.
 - Use concrete visible images, not abstract textbook labels.
 - Keep the final sentence short and loopable.
+{NarrationVoice.rewrite_guardrail(language)}
 - Return ONLY the narration. No markdown, title, bullets, or stage directions.
 
 Current narration:
@@ -559,6 +562,452 @@ Current narration:
             "initial_issues": initial_report.get("issues", []),
         })
         return best_script, final_report
+
+    @classmethod
+    def build_retention_plan(
+        cls,
+        script: str,
+        topic: str = "",
+        niche: str = "",
+        language: str = "",
+        retention_mode: str = "",
+        video_path: str = "",
+        retention_preflight: dict[str, Any] | None = None,
+        retention_hook_lab: dict[str, Any] | None = None,
+        visual_beat_map: list[dict[str, Any]] | None = None,
+        visual_beat_report: dict[str, Any] | None = None,
+        visual_preflight: dict[str, Any] | None = None,
+        history_videos: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Build the Retencion Pro package stored next to generated Shorts."""
+        clean_script = cls._clean_script(script)
+        sentences = cls._sentences(clean_script)
+        preflight = retention_preflight if isinstance(retention_preflight, dict) else {}
+        hook_lab = retention_hook_lab if isinstance(retention_hook_lab, dict) else {}
+        beat_map = visual_beat_map if isinstance(visual_beat_map, list) else []
+        beat_report = visual_beat_report if isinstance(visual_beat_report, dict) else {}
+        first_image = visual_preflight if isinstance(visual_preflight, dict) else {}
+
+        score_report = preflight or cls.score_short_script(
+            clean_script,
+            topic=topic,
+            niche=niche,
+            language=language,
+            retention_mode=retention_mode,
+        )
+        pre_score = cls._score_value(score_report, "final_score", "score", "initial_score")
+        best_hook = cls._clean_line(str(hook_lab.get("best_hook") or (sentences[0] if sentences else "")))
+        hook_score = cls._score_value(hook_lab, "best_score", "score")
+        if not hook_score and best_hook:
+            hook_score = float(cls.score_hook(best_hook, topic, niche, language).get("score") or 0)
+
+        intro_guard = cls._intro_guard(sentences, topic)
+        micro_hooks = cls._micro_hooks(sentences, topic)
+        filler = cls._filler_compression(clean_script, sentences)
+        visual_pacing = cls._visual_pacing(sentences, beat_map, beat_report, first_image)
+        loop_ending = cls._loop_ending(sentences, topic)
+        hot_words = cls.hot_words(clean_script, topic, limit=18)
+        ab_tests = cls._hook_ab_tests(
+            hook_lab,
+            first_sentence=sentences[0] if sentences else "",
+            topic=topic,
+            niche=niche,
+            language=language,
+        )
+        analytics = cls._analytics_feedback(history_videos or [], niche=niche, language=language)
+
+        status_weights = {
+            "pass": 1.0,
+            "ready": 1.0,
+            "warn": 0.55,
+            "risky": 0.45,
+            "fail": 0.0,
+            "weak": 0.0,
+        }
+        component_scores = [
+            pre_score,
+            hook_score,
+            10.0 * status_weights.get(intro_guard.get("status", ""), 0.5),
+            10.0 * status_weights.get(filler.get("status", ""), 0.5),
+            10.0 * status_weights.get(visual_pacing.get("status", ""), 0.5),
+            10.0 * status_weights.get(loop_ending.get("status", ""), 0.5),
+        ]
+        overall = round(sum(component_scores) / max(1, len(component_scores)), 1)
+        if overall >= 8.0:
+            status = "pass"
+        elif overall >= 6.5:
+            status = "warn"
+        else:
+            status = "fail"
+
+        return {
+            "version": 1,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "status": status,
+            "overall_score": overall,
+            "retention_mode": retention_mode,
+            "video_path": video_path,
+            "topic": topic,
+            "niche": niche,
+            "language": language,
+            "hook_0_3s": {
+                "status": "pass" if hook_score >= cls.HOOK_SCORE_THRESHOLD else "warn",
+                "text": best_hook,
+                "score": round(float(hook_score or 0), 1),
+                "first_3s_pattern": ["0.0s shock frame", "0.8s visible consequence", "2.0s unresolved question"],
+            },
+            "intro_guard": intro_guard,
+            "micro_hooks": micro_hooks,
+            "filler_compression": filler,
+            "visual_pacing": visual_pacing,
+            "loop_ending": loop_ending,
+            "hot_words": hot_words,
+            "pre_render_score": score_report,
+            "hook_ab_tests": ab_tests,
+            "analytics_feedback": analytics,
+            "platform_focus": {
+                "youtube": "strong first sentence plus searchable metadata",
+                "tiktok": "fast hook, hot words, and loopable ending",
+                "facebook": "clear topic promise and short caption",
+            },
+        }
+
+    @classmethod
+    def persist_retention_plan(cls, video_path: str, plan: dict[str, Any]) -> None:
+        if not video_path or not plan:
+            return
+        sidecar_path = os.path.splitext(video_path)[0] + ".meta.json"
+        manifest_path = os.path.splitext(video_path)[0] + ".manifest.json"
+        sidecar = cls._read_json(sidecar_path) or {}
+        sidecar["retention_plan"] = plan
+        cls._write_json(sidecar_path, sidecar)
+
+        manifest = cls._read_json(manifest_path) or {}
+        manifest["retention_plan"] = cls.compact_retention_plan(plan)
+        cls._write_json(manifest_path, manifest)
+
+    @staticmethod
+    def compact_retention_plan(plan: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(plan, dict):
+            return {}
+        analytics = plan.get("analytics_feedback") if isinstance(plan.get("analytics_feedback"), dict) else {}
+        return {
+            "version": plan.get("version"),
+            "generated_at": plan.get("generated_at"),
+            "status": plan.get("status"),
+            "score": plan.get("overall_score"),
+            "hook": (plan.get("hook_0_3s") or {}).get("text"),
+            "hook_score": (plan.get("hook_0_3s") or {}).get("score"),
+            "intro_status": (plan.get("intro_guard") or {}).get("status"),
+            "loop_status": (plan.get("loop_ending") or {}).get("status"),
+            "hot_words": (plan.get("hot_words") or [])[:8],
+            "micro_hooks_count": len(plan.get("micro_hooks") or []),
+            "visual_status": (plan.get("visual_pacing") or {}).get("status"),
+            "analytics": {
+                "winning_terms": [x.get("term") for x in (analytics.get("winning_terms") or [])[:3] if x.get("term")],
+                "burned_terms": [x.get("term") for x in (analytics.get("burned_terms") or [])[:3] if x.get("term")],
+            },
+        }
+
+    @classmethod
+    def hot_words(cls, script: str, topic: str = "", limit: int = 18) -> list[str]:
+        normalized = cls.normalize(f"{topic} {script}")
+        seeds = (
+            "devora", "rompe", "quema", "traga", "borra", "explota", "oculta",
+            "secreto", "nunca", "nadie", "imposible", "peligro", "muerto",
+            "invisible", "prohibido", "colapso", "amenaza", "desaparece",
+            "seconds", "secret", "never", "impossible", "danger", "hidden",
+            "collapse", "vanishes", "burns", "breaks",
+        )
+        out: list[str] = []
+        seen: set[str] = set()
+        for term in list(MaxRetentionEngine.REVELATION_TERMS) + list(MaxRetentionEngine.VISUAL_TERMS) + list(seeds):
+            clean = cls.normalize(term)
+            if clean and clean in normalized and clean not in seen:
+                out.append(clean)
+                seen.add(clean)
+            if len(out) >= limit:
+                return out
+        for token in cls._keywords(topic, limit=8) + cls._keywords(script, limit=60):
+            if token not in seen:
+                out.append(token)
+                seen.add(token)
+            if len(out) >= limit:
+                break
+        return out
+
+    @classmethod
+    def _intro_guard(cls, sentences: list[str], topic: str) -> dict[str, Any]:
+        first = sentences[0] if sentences else ""
+        normalized = cls.normalize(first)
+        words = cls._words(first)
+        issues: list[str] = []
+        strengths: list[str] = []
+        if not first:
+            issues.append("missing opening sentence")
+        if any(opener in normalized for opener in MaxRetentionEngine.BANNED_OPENERS):
+            issues.append("generic opener detected")
+        else:
+            strengths.append("no generic intro")
+        if first and not (7 <= len(words) <= 13):
+            issues.append("opening is outside the 7-13 word swipe window")
+        elif first:
+            strengths.append("opening has mobile-safe length")
+        topic_tokens = cls._keywords(topic, limit=5)
+        if topic_tokens and not any(token in normalized for token in topic_tokens[:3]):
+            issues.append("opening does not name the core topic")
+        tension_hits = sum(
+            1 for term in (
+                "pero", "nunca", "nadie", "imposible", "secreto", "rompe",
+                "devora", "traga", "oculta", "peligro", "colapso",
+            )
+            if term in normalized
+        )
+        if tension_hits:
+            strengths.append("opening creates tension")
+        else:
+            issues.append("opening needs a sharper tension word")
+        if not issues:
+            status = "pass"
+        elif len(issues) <= 2:
+            status = "warn"
+        else:
+            status = "fail"
+        return {
+            "status": status,
+            "first_sentence": first,
+            "word_count": len(words),
+            "issues": issues,
+            "strengths": strengths,
+        }
+
+    @classmethod
+    def _micro_hooks(cls, sentences: list[str], topic: str) -> list[dict[str, Any]]:
+        if len(sentences) <= 2:
+            return []
+        topic_tokens = cls._keywords(topic, limit=4)
+        topic_hint = topic_tokens[0] if topic_tokens else "esto"
+        hooks: list[dict[str, Any]] = []
+        for idx in range(1, len(sentences), 2):
+            sentence = sentences[idx]
+            normalized = cls.normalize(sentence)
+            if any(term in normalized for term in ("pero", "entonces", "nadie", "nunca", "por eso")):
+                text = cls._clean_line(sentence)
+            else:
+                text = f"Pero aqui {topic_hint} cambia de forma."
+            hooks.append({
+                "after_sentence": idx,
+                "approx_second": 3 + ((idx + 1) // 2) * 6,
+                "text": cls._shorten(text, 92),
+                "purpose": "reset attention with a small reveal",
+            })
+        return hooks[:8]
+
+    @classmethod
+    def _filler_compression(cls, script: str, sentences: list[str]) -> dict[str, Any]:
+        normalized = cls.normalize(script)
+        words = cls._words(script)
+        avg_sentence_words = round(len(words) / max(1, len(sentences)), 1)
+        fillers = (
+            "basicamente", "simplemente", "realmente", "literalmente",
+            "cosas", "algo", "interesante", "muy importante", "en realidad",
+            "podria", "puede ser", "de alguna manera",
+        )
+        hits = []
+        for term in fillers:
+            count = normalized.count(term)
+            if count:
+                hits.append({"term": term, "count": count})
+        long_sentences = [
+            {"sentence": idx + 1, "words": len(cls._words(sentence)), "text": cls._shorten(sentence, 120)}
+            for idx, sentence in enumerate(sentences)
+            if len(cls._words(sentence)) > 20
+        ][:5]
+        allowed_hits = max(1, len(words) // 90)
+        status = "pass" if len(hits) <= allowed_hits and avg_sentence_words <= 18.5 else "warn"
+        if avg_sentence_words > 23 or len(hits) > allowed_hits + 3:
+            status = "fail"
+        return {
+            "status": status,
+            "filler_hits": hits,
+            "avg_sentence_words": avg_sentence_words,
+            "long_sentence_targets": long_sentences,
+            "recommendation": "cut filler and split long sentences before render" if status != "pass" else "pacing is tight",
+        }
+
+    @classmethod
+    def _visual_pacing(
+        cls,
+        sentences: list[str],
+        beat_map: list[dict[str, Any]],
+        beat_report: dict[str, Any],
+        visual_preflight: dict[str, Any],
+    ) -> dict[str, Any]:
+        beat_count = len(beat_map)
+        sentence_count = len(sentences)
+        target_beats = max(3, min(8, (sentence_count + 1) // 2))
+        first_score = cls._score_value(visual_preflight, "score")
+        status = "pass" if beat_count >= target_beats and (not first_score or first_score >= 7.0) else "warn"
+        if beat_count < max(2, target_beats - 2):
+            status = "fail"
+        return {
+            "status": status,
+            "beat_count": beat_count,
+            "target_beats": target_beats,
+            "fallback": bool(beat_report.get("fallback")),
+            "first_image_score": first_score,
+            "target_scene_seconds": 2.5,
+            "beats": [
+                {
+                    "beat": item.get("beat"),
+                    "visual_goal": item.get("visual_goal"),
+                    "motion": item.get("motion"),
+                }
+                for item in beat_map[:8]
+                if isinstance(item, dict)
+            ],
+        }
+
+    @classmethod
+    def _loop_ending(cls, sentences: list[str], topic: str) -> dict[str, Any]:
+        if not sentences:
+            return {"status": "fail", "last_sentence": "", "reason": "missing script"}
+        first = sentences[0]
+        last = sentences[-1]
+        normalized_first = cls.normalize(first)
+        normalized_last = cls.normalize(last)
+        topic_tokens = cls._keywords(topic, limit=5)
+        overlap = [
+            token for token in topic_tokens
+            if token in normalized_first and token in normalized_last
+        ]
+        last_words = len(cls._words(last))
+        loop_terms = ("por eso", "ahora", "vuelve", "otra vez", "primer", "mismo")
+        has_loop_term = any(term in normalized_last for term in loop_terms)
+        status = "pass" if (overlap or has_loop_term) and last_words <= 15 else "warn"
+        if last_words > 22:
+            status = "fail"
+        return {
+            "status": status,
+            "last_sentence": last,
+            "word_count": last_words,
+            "topic_overlap": overlap,
+            "loop_term": has_loop_term,
+            "rewrite_hint": "" if status == "pass" else "make the last sentence shorter and echo the first threat",
+        }
+
+    @classmethod
+    def _hook_ab_tests(
+        cls,
+        hook_lab: dict[str, Any],
+        first_sentence: str,
+        topic: str,
+        niche: str,
+        language: str,
+    ) -> list[dict[str, Any]]:
+        candidates: list[str] = []
+        for item in hook_lab.get("candidates") or []:
+            if isinstance(item, dict) and item.get("hook"):
+                candidates.append(str(item["hook"]))
+        if first_sentence:
+            candidates.append(first_sentence)
+        clean_topic = cls._shorten(topic, 42) or "esto"
+        if "en" in cls.normalize(language) and "espan" not in cls.normalize(language):
+            fallback = [
+                f"{clean_topic} changes in the first second.",
+                f"The smallest detail makes {clean_topic} impossible.",
+                f"This is why {clean_topic} starts to break.",
+            ]
+        else:
+            fallback = [
+                f"{clean_topic} cambia en el primer segundo.",
+                f"El detalle mas pequeno vuelve imposible a {clean_topic}.",
+                f"Por esto {clean_topic} empieza a romperse.",
+            ]
+        candidates.extend(fallback)
+        scored = []
+        seen: set[str] = set()
+        for hook in candidates:
+            clean = cls._clean_line(hook)
+            key = cls.normalize(clean)
+            if not clean or key in seen:
+                continue
+            seen.add(key)
+            report = cls.score_hook(clean, topic=topic, niche=niche, language=language)
+            scored.append({
+                "variant": chr(65 + min(len(scored), 25)),
+                "hook": report.get("hook"),
+                "score": report.get("score"),
+                "issues": report.get("issues", []),
+            })
+            if len(scored) >= 4:
+                break
+        return scored
+
+    @classmethod
+    def _analytics_feedback(
+        cls,
+        history_videos: list[dict[str, Any]],
+        niche: str = "",
+        language: str = "",
+    ) -> dict[str, Any]:
+        if not history_videos:
+            return {
+                "status": "empty",
+                "stats": {"shorts": 0, "known_views": 0, "winners": 0, "weak": 0},
+                "winning_terms": [],
+                "burned_terms": [],
+                "recommendations": ["No local analytics yet; publish variants and sync views."],
+            }
+        analysis = cls.analyze_channel({
+            "id": "",
+            "nickname": "",
+            "niche": niche,
+            "language": language,
+            "videos": history_videos,
+        })
+        return {
+            "status": "ready" if analysis["stats"]["known_views"] else "needs_views",
+            "stats": analysis["stats"],
+            "winning_terms": analysis.get("winning_terms", [])[:6],
+            "burned_terms": analysis.get("burned_topics", [])[:6],
+            "recommendations": analysis.get("recommendations", [])[:4],
+        }
+
+    @staticmethod
+    def _score_value(data: dict[str, Any], *keys: str) -> float:
+        if not isinstance(data, dict):
+            return 0.0
+        for key in keys:
+            value = data.get(key)
+            try:
+                if value is not None:
+                    return float(value)
+            except (TypeError, ValueError):
+                continue
+        return 0.0
+
+    @staticmethod
+    def _shorten(text: str, limit: int) -> str:
+        clean = re.sub(r"\s+", " ", text or "").strip()
+        if len(clean) <= limit:
+            return clean
+        return clean[: max(1, limit - 3)].rstrip() + "..."
+
+    @staticmethod
+    def _read_json(path: str) -> dict[str, Any] | None:
+        try:
+            with open(path, "r", encoding="utf-8") as file:
+                data = json.load(file)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _write_json(path: str, data: dict[str, Any]) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump(data, file, indent=2, ensure_ascii=False)
 
     @classmethod
     def _recommendations(cls, stats: dict[str, Any], term_stats: dict[str, Any]) -> list[str]:

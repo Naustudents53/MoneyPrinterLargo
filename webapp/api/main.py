@@ -457,6 +457,7 @@ def list_channel_videos(channel_id: str):
                     "comment_count": v.get("comment_count", -1),
                     "dislike_count": v.get("dislike_count", -1),
                     "stats_synced_at": v.get("stats_synced_at", ""),
+                    "platform_uploads": v.get("platform_uploads", {}),
                 }
                 for i, v in enumerate(sorted_videos)
             ]
@@ -682,6 +683,14 @@ _CONFIG_FIELD_DEFS = [
     {"key": "openai_base_url", "label": "OpenAI base URL", "type": "str", "group": "LLM"},
     {"key": "openai_model", "label": "OpenAI default model", "type": "str", "group": "LLM"},
     {"key": "openai_reasoning_effort", "label": "OpenAI reasoning effort", "type": "str", "group": "LLM"},
+    {"key": "openai_use_codex_cli", "label": "Use Codex CLI for OpenAI", "type": "bool", "group": "LLM"},
+    {"key": "codex_cli_command", "label": "Codex CLI command", "type": "str", "group": "LLM"},
+    {"key": "codex_cli_model", "label": "Codex CLI model override", "type": "str", "group": "LLM"},
+    {"key": "codex_cli_sandbox", "label": "Codex CLI sandbox", "type": "str", "group": "LLM"},
+    {"key": "codex_cli_timeout_seconds", "label": "Codex CLI timeout seconds", "type": "int", "group": "LLM"},
+    {"key": "codex_cli_generate_images", "label": "Use Codex CLI for OpenAI images", "type": "bool", "group": "LLM"},
+    {"key": "codex_cli_image_sandbox", "label": "Codex CLI image sandbox", "type": "str", "group": "LLM"},
+    {"key": "codex_cli_image_timeout_seconds", "label": "Codex CLI image timeout seconds", "type": "int", "group": "LLM"},
     {"key": "ollama_base_url", "label": "Ollama base URL", "type": "str", "group": "LLM"},
     {"key": "ollama_model", "label": "Ollama model", "type": "str", "group": "LLM"},
     # Image
@@ -1510,6 +1519,75 @@ def save_preview(preview_id: str, payload: PreviewSave):
     return {"ok": True}
 
 
+@app.get("/api/preview/{preview_id}/voice")
+def preview_script_voice(
+    preview_id: str,
+    channel_id: str,
+    kind: str = "short",
+    retention_mode: str = "",
+):
+    """Generate a voice-only WAV from a preview script.
+
+    This uses the same narration voice settings as the real render, but skips
+    image generation, video assembly, and uploads.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_\-]{4,64}", preview_id):
+        raise HTTPException(400, "Invalid preview id")
+    kind = (kind or "short").strip().lower()
+    if kind not in ("short", "long"):
+        raise HTTPException(400, "kind must be 'short' or 'long'")
+
+    ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
+    if not ch:
+        raise HTTPException(404, "Channel not found")
+
+    from classes.MaxRetention import is_known_retention_mode, normalize_retention_mode
+
+    retention_mode_norm = normalize_retention_mode(retention_mode)
+    if retention_mode and not is_known_retention_mode(retention_mode):
+        raise HTTPException(400, "retention_mode must be 'standard' or 'maxima_retencion'")
+
+    path = MP_DIR / f".preview-{preview_id}.txt"
+    if not path.is_file():
+        raise HTTPException(404, "Preview not found")
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(500, f"Could not read preview: {e}") from e
+    subject, _, script = raw.partition("\n\n")
+    subject = (subject or "").strip()
+    script = (script or "").strip()
+    if not script:
+        raise HTTPException(400, "Preview script is empty")
+
+    try:
+        from classes.ScriptVoicePreview import ScriptVoicePreview
+        from classes.Tts import TTS
+
+        preview = ScriptVoicePreview.from_channel(
+            ch,
+            retention_mode=retention_mode_norm,
+            tts_instance=TTS(),
+            output_dir=MP_DIR,
+        )
+        result = preview.synthesize(
+            subject=subject,
+            script=script,
+            kind=kind,
+            preview_id=preview_id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:
+        raise HTTPException(500, f"Could not generate voice preview: {e}") from e
+
+    return FileResponse(
+        result.audio_path,
+        media_type="audio/wav",
+        filename=f"{preview_id}-voice.wav",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Generation endpoints
 # ---------------------------------------------------------------------------
@@ -1525,6 +1603,25 @@ def _safe_photo_upload_dir(upload_id: str) -> Path:
     if not path.is_dir():
         raise HTTPException(400, "Photo upload not found")
     return path
+
+
+def _parse_upload_platforms(value: str, *, auto_upload: bool = False) -> list[str]:
+    from classes.SocialUpload import normalize_upload_platforms
+
+    platforms = normalize_upload_platforms(value)
+    if auto_upload and not platforms:
+        platforms = ["youtube"]
+    invalid = [
+        item
+        for item in re.split(r"[,;\s]+", (value or "").strip())
+        if item and item.lower() not in {"youtube", "yt", "tiktok", "tt", "facebook", "fb"}
+    ]
+    if invalid:
+        raise HTTPException(
+            400,
+            "upload_platforms must contain only youtube, tiktok, or facebook",
+        )
+    return platforms
 
 
 @app.post("/api/photo-video/uploads")
@@ -1565,6 +1662,7 @@ async def generate_video(
     custom_topic: str = "",
     image_mode: str = "ai",
     auto_upload: bool = False,
+    upload_platforms: str = "",
     series_id: str = "",
     duration_seconds: int = 0,
     render_profile: str = "",
@@ -1617,6 +1715,11 @@ async def generate_video(
     if retention_mode and not is_known_retention_mode(retention_mode):
         raise HTTPException(400, "retention_mode must be 'standard' or 'maxima_retencion'")
 
+    selected_upload_platforms = _parse_upload_platforms(
+        upload_platforms,
+        auto_upload=auto_upload,
+    )
+
     args = [
         "generate",
         "--channel-id", channel_id,
@@ -1625,8 +1728,8 @@ async def generate_video(
     ]
     if custom_topic:
         args += ["--topic", custom_topic]
-    if auto_upload:
-        args += ["--upload"]
+    if selected_upload_platforms:
+        args += ["--upload-platforms", ",".join(selected_upload_platforms)]
     if series_id:
         args += ["--series-id", series_id]
     if kind == "short" and duration_seconds:
@@ -1771,7 +1874,7 @@ def generate_batch(payload: BatchGeneratePayload):
 
 
 @app.get("/api/channels/{channel_id}/upload-last")
-async def upload_last(channel_id: str, kind: str = "short"):
+async def upload_last(channel_id: str, kind: str = "short", upload_platforms: str = "youtube"):
     """Upload the most recently generated video for this channel (post-generation)."""
     ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
     if not ch:
@@ -1815,8 +1918,20 @@ async def upload_last(channel_id: str, kind: str = "short"):
         pass
 
     label = "video largo" if effective_kind == "long" else "short"
-    title = f"Subiendo {label} — {ch.get('nickname', channel_id)}"
-    job = _spawn_job(["upload-last", "--channel-id", channel_id, "--kind", effective_kind], title=title)
+    selected_upload_platforms = _parse_upload_platforms(upload_platforms, auto_upload=True)
+    from classes.SocialUpload import format_platforms
+
+    targets = format_platforms(selected_upload_platforms)
+    title = f"Subiendo {label} a {targets} - {ch.get('nickname', channel_id)}"
+    job = _spawn_job(
+        [
+            "upload-last",
+            "--channel-id", channel_id,
+            "--kind", effective_kind,
+            "--upload-platforms", ",".join(selected_upload_platforms),
+        ],
+        title=title,
+    )
     return EventSourceResponse(_stream_job(job))
 
 
@@ -1945,6 +2060,39 @@ def _published_titles_index() -> dict:
     return idx
 
 
+def _compact_retention_summary(plan: dict) -> dict:
+    if not isinstance(plan, dict):
+        return {}
+    if "score" in plan and "hook" in plan:
+        return plan
+    analytics = plan.get("analytics_feedback") if isinstance(plan.get("analytics_feedback"), dict) else {}
+    return {
+        "version": plan.get("version"),
+        "generated_at": plan.get("generated_at"),
+        "status": plan.get("status"),
+        "score": plan.get("overall_score"),
+        "hook": (plan.get("hook_0_3s") or {}).get("text"),
+        "hook_score": (plan.get("hook_0_3s") or {}).get("score"),
+        "intro_status": (plan.get("intro_guard") or {}).get("status"),
+        "loop_status": (plan.get("loop_ending") or {}).get("status"),
+        "hot_words": (plan.get("hot_words") or [])[:8],
+        "micro_hooks_count": len(plan.get("micro_hooks") or []),
+        "visual_status": (plan.get("visual_pacing") or {}).get("status"),
+        "analytics": {
+            "winning_terms": [
+                x.get("term")
+                for x in (analytics.get("winning_terms") or [])[:3]
+                if isinstance(x, dict) and x.get("term")
+            ],
+            "burned_terms": [
+                x.get("term")
+                for x in (analytics.get("burned_terms") or [])[:3]
+                if isinstance(x, dict) and x.get("term")
+            ],
+        },
+    }
+
+
 @app.get("/api/storage/mp4")
 def list_mp4():
     if not MP_DIR.exists():
@@ -1968,8 +2116,28 @@ def list_mp4():
                         uploaded = bool(mdata.get("uploaded"))
                         uploaded_url = mdata.get("uploaded_url") or None
                         subject = mdata.get("subject") or None
+                        platform_uploads = mdata.get("platform_uploads") or {}
+                        social_summary = mdata.get("social_plan") or {}
+                        retention_summary = _compact_retention_summary(mdata.get("retention_plan") or {})
                     except Exception:
                         mdata = None
+                        platform_uploads = {}
+                        social_summary = {}
+                        retention_summary = {}
+                else:
+                    platform_uploads = {}
+                    social_summary = {}
+                    retention_summary = {}
+
+                if not retention_summary:
+                    sidecar_path = MP_DIR / f"{p.stem}.meta.json"
+                    if sidecar_path.exists():
+                        try:
+                            with sidecar_path.open("r", encoding="utf-8") as fh:
+                                sdata = json.load(fh) or {}
+                            retention_summary = _compact_retention_summary(sdata.get("retention_plan") or {})
+                        except Exception:
+                            retention_summary = {}
 
                 # Reconciliation pass: a manifest can stay `uploaded:false`
                 # forever if Selenium loses sync with Firefox during the
@@ -1984,6 +2152,19 @@ def list_mp4():
                             with sidecar_path.open("r", encoding="utf-8") as fh:
                                 sdata = json.load(fh) or {}
                             stitle = (sdata.get("metadata") or {}).get("title", "")
+                            if not platform_uploads:
+                                platform_uploads = sdata.get("platform_uploads") or {}
+                            if not social_summary:
+                                social_plan = sdata.get("social_plan") or {}
+                                social_summary = {
+                                    "quality_gate": social_plan.get("quality_gate"),
+                                    "safe_zone": social_plan.get("safe_zone"),
+                                    "trend_terms": (social_plan.get("trend_injector") or {}).get("terms", []),
+                                    "caption_scores": {
+                                        platform: item.get("score")
+                                        for platform, item in (social_plan.get("captions") or {}).items()
+                                    },
+                                } if social_plan else {}
                             tnorm = _normalize_title_for_match(stitle)
                             if tnorm:
                                 if pub_idx is None:
@@ -1995,10 +2176,17 @@ def list_mp4():
                                         cur["uploaded"] = True
                                         cur["uploaded_url"] = hit
                                         cur["uploaded_at"] = datetime.utcnow().isoformat() + "Z"
+                                        cur.setdefault("platform_uploads", {})["youtube"] = {
+                                            "status": "uploaded",
+                                            "url": hit,
+                                            "updated_at": cur["uploaded_at"],
+                                            "error": "",
+                                        }
                                         with manifest_path.open("w", encoding="utf-8") as fh:
                                             json.dump(cur, fh, indent=2)
                                         uploaded = True
                                         uploaded_url = hit
+                                        platform_uploads = cur.get("platform_uploads") or platform_uploads
                                     except Exception:
                                         pass
                         except Exception:
@@ -2010,6 +2198,9 @@ def list_mp4():
                     "uploaded": uploaded,
                     "uploaded_url": uploaded_url,
                     "subject": subject,
+                    "platform_uploads": platform_uploads,
+                    "social_summary": social_summary,
+                    "retention_summary": retention_summary,
                 })
             except OSError:
                 pass

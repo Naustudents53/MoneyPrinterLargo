@@ -8,6 +8,22 @@
     "gemini-3-flash-preview",
     "gemini-2.5-flash"
   ],
+  "openai_api_key": "",
+  "openai_base_url": "https://api.openai.com/v1",
+  "openai_model": "gpt-5.5",
+  "openai_models": [
+    "gpt-5.5",
+    "gpt-5.4"
+  ],
+  "openai_reasoning_effort": "medium",
+  "openai_use_codex_cli": false,
+  "codex_cli_command": "codex",
+  "codex_cli_model": "",
+  "codex_cli_sandbox": "read-only",
+  "codex_cli_timeout_seconds": 300,
+  "codex_cli_generate_images": true,
+  "codex_cli_image_sandbox": "workspace-write",
+  "codex_cli_image_timeout_seconds": 900,
   "ollama_base_url": "http://127.0.0.1:11434",
   "ollama_model": "gemma4:31b-cloud",
   "ollama_models": [

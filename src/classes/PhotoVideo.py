@@ -33,6 +33,7 @@ from utils import (
 )
 
 from .Retention import CosmicRetentionEngine
+from .NarrationVoice import NarrationVoice
 from .MaxRetention import MaxRetentionEngine, is_max_retention
 from .Tts import LONG_VIDEO_NARRATOR, TTS
 from .YouTube import LONG_VIDEO_SECTION_THEMES, YouTube
@@ -293,6 +294,9 @@ class PhotoVideoGenerator:
 
     def _finish_generation(self, path: str, *, is_long: bool) -> None:
         self.youtube.video_path = os.path.abspath(path)
+        build_retention_plan = getattr(self.youtube, "_build_retention_plan", None)
+        if not is_long and callable(build_retention_plan):
+            build_retention_plan(self.youtube.video_path)
         self.youtube._persist_metadata_sidecar(is_long=is_long)
         try:
             record_generation(
@@ -303,6 +307,9 @@ class PhotoVideoGenerator:
             )
         except Exception as exc:
             warning(f"Could not record upload manifest: {exc}")
+        persist_retention_plan = getattr(self.youtube, "_persist_retention_plan", None)
+        if not is_long and callable(persist_retention_plan):
+            persist_retention_plan()
 
     def _reset_video_state(self, *, is_long: bool) -> None:
         self.youtube.images = []
@@ -313,6 +320,12 @@ class PhotoVideoGenerator:
         self.youtube.thumbnail_path = ""
         self.youtube._used_stock_urls = set()
         self.youtube._is_long_video = is_long
+        self.youtube.retention_plan = {}
+        self.youtube.retention_preflight = {}
+        self.youtube.retention_hook_lab = {}
+        self.youtube.visual_beat_map = []
+        self.youtube.visual_beat_report = {}
+        self.youtube.visual_preflight = {}
 
     def _photo_analysis_prompt(
         self,
@@ -395,6 +408,7 @@ Return ONLY JSON:
                 if is_max_retention(getattr(self.youtube, "_retention_mode", ""))
                 else ""
             )
+            voice_directive = NarrationVoice.short_generation_directive(self.youtube.language)
             prompt = f"""Write a narration script for a YouTube Short made only with the user's uploaded photos.
 
 Topic: {self.youtube.subject}
@@ -411,6 +425,7 @@ Requirements:
 - Write in {self.youtube.language}.
 {directive}
 {max_directive}
+{voice_directive}
 
 Return ONLY the narration script."""
             script = _strip_wrapping_quotes(self.youtube.generate_response(prompt))
@@ -434,6 +449,11 @@ Return ONLY the narration script."""
                     generate_response=self.youtube.generate_response,
                     target_words=target_words,
                 )
+                script = self.youtube._run_max_retention_preflight(
+                    script,
+                    sentence_length=sentence_length,
+                    allow_rewrite=True,
+                )
             return script.strip()
 
         themes = CosmicRetentionEngine.long_section_themes(
@@ -447,6 +467,7 @@ Return ONLY the narration script."""
             self.youtube.niche,
             self.youtube.language,
         )
+        voice_directive = NarrationVoice.long_generation_directive(self.youtube.language)
         prompt = f"""Write a complete long-form YouTube narration script using the uploaded photos as the visual backbone.
 
 Topic: {self.youtube.subject}
@@ -465,6 +486,7 @@ Requirements:
 - Write only narration that can be read aloud by TTS.
 - Write in {self.youtube.language}.
 {directive}
+{voice_directive}
 
 Return ONLY the narration script."""
         script = _strip_wrapping_quotes(self.youtube.generate_response(prompt, temperature=0.75))

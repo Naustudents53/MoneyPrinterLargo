@@ -305,8 +305,18 @@ def _cleanup_after_upload(video_path: str, is_long: bool, channel_id: str = "") 
         print(f"[runner] WARN: cleanup failed: {e}", flush=True)
 
 
+def _upload_platforms_from_args(args) -> list[str]:
+    from classes.SocialUpload import normalize_upload_platforms
+
+    raw = getattr(args, "upload_platforms", "") or ""
+    if getattr(args, "upload", False):
+        raw = f"youtube,{raw}" if raw else "youtube"
+    return normalize_upload_platforms(raw)
+
+
 def cmd_generate(args):
     from cache import get_accounts
+    from classes.SocialUpload import SocialUploader, format_platforms
     from classes.YouTube import YouTube
     from classes.Tts import TTS
 
@@ -447,11 +457,37 @@ def cmd_generate(args):
     print(f"[runner] Generated: {path}", flush=True)
     _write_channel_ref(args.channel_id, path)
 
-    if args.upload:
-        print("[runner] Starting YouTube upload...", flush=True)
-        ok = youtube.upload_video()
-        print(f"[runner] Upload result: {ok}", flush=True)
-        if not ok:
+    upload_platforms = _upload_platforms_from_args(args)
+    try:
+        from classes.SocialOptimizer import SUPPORTED_SOCIAL_PLATFORMS, ensure_social_plan
+
+        metadata = getattr(youtube, "metadata", {}) or {}
+        plan = ensure_social_plan(
+            video_path=path,
+            title=metadata.get("title", ""),
+            description=metadata.get("description", ""),
+            subject=getattr(youtube, "subject", "") or "",
+            niche=acc.get("niche", ""),
+            language=acc.get("language", "espanol"),
+            platforms=upload_platforms or SUPPORTED_SOCIAL_PLATFORMS,
+            is_long=(args.kind == "long"),
+            thumbnail_path=getattr(youtube, "thumbnail_path", "") or "",
+            account_uuid=args.channel_id,
+        )
+        qg = plan.get("quality_gate") or {}
+        print(
+            f"[runner] Social plan ready: quality={qg.get('status', 'unknown')} "
+            f"score={qg.get('score', 'n/a')}",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"[runner] WARN: could not build social optimization plan: {exc}", flush=True)
+
+    if upload_platforms:
+        print(f"[runner] Starting upload to {format_platforms(upload_platforms)}...", flush=True)
+        results = SocialUploader.from_youtube(youtube).upload(upload_platforms)
+        print(f"[runner] Upload results: {results}", flush=True)
+        if not results or not all(results.values()):
             sys.exit(4)
         _cleanup_after_upload(path, is_long=(args.kind == "long"), channel_id=args.channel_id)
 
@@ -548,8 +584,70 @@ def cmd_preview_script(args):
     print(f"[runner] DONE — {len(script)} chars in script", flush=True)
 
 
+def cmd_preview_voice(args):
+    """Generate only the narration audio from an existing preview script."""
+    from cache import get_accounts
+    from classes.ScriptVoicePreview import ScriptVoicePreview
+    from classes.Tts import TTS
+
+    acc = next((a for a in get_accounts("youtube") if a.get("id") == args.channel_id), None)
+    if not acc:
+        print(f"[runner] ERROR: channel {args.channel_id} not found", flush=True)
+        sys.exit(2)
+
+    preview_id = (getattr(args, "preview_id", "") or "").strip()
+    script_file = (getattr(args, "script_file", "") or "").strip()
+    if preview_id:
+        script_file = os.path.join(str(ROOT_DIR), ".mp", f".preview-{preview_id}.txt")
+    if not script_file:
+        print("[runner] ERROR: --preview-id or --script-file is required", flush=True)
+        sys.exit(2)
+    if not os.path.isfile(script_file):
+        print(f"[runner] ERROR: script file not found: {script_file}", flush=True)
+        sys.exit(2)
+
+    try:
+        with open(script_file, "r", encoding="utf-8") as f:
+            raw = f.read()
+    except Exception as e:
+        print(f"[runner] ERROR: could not read script file: {e}", flush=True)
+        sys.exit(4)
+
+    subject, sep, script = raw.partition("\n\n")
+    if not sep:
+        script = subject
+        subject = ""
+    subject = subject.strip()
+    script = script.strip()
+    if not script:
+        print("[runner] ERROR: script is empty", flush=True)
+        sys.exit(3)
+
+    retention_mode = (getattr(args, "retention_mode", "") or "").strip()
+    print(f"[runner] Voice preview for channel '{acc.get('nickname')}'", flush=True)
+    if retention_mode:
+        print(f"[runner] Retention mode: {retention_mode}", flush=True)
+
+    preview = ScriptVoicePreview.from_channel(
+        acc,
+        retention_mode=retention_mode,
+        tts_instance=TTS(),
+        output_dir=os.path.join(str(ROOT_DIR), ".mp"),
+    )
+    result = preview.synthesize(
+        subject=subject,
+        script=script,
+        kind=getattr(args, "kind", "short"),
+        preview_id=preview_id,
+    )
+    print(f"[runner] AUDIO_PATH={result.audio_path}", flush=True)
+    print(f"[runner] AUDIO_DURATION={result.duration_seconds:.1f}", flush=True)
+    print("[runner] DONE - voice-only preview ready", flush=True)
+
+
 def cmd_upload_last(args):
     from cache import get_accounts
+    from classes.SocialUpload import SocialUploader, format_platforms
     from classes.YouTube import YouTube
 
     acc = next((a for a in get_accounts("youtube") if a.get("id") == args.channel_id), None)
@@ -661,15 +759,26 @@ def cmd_upload_last(args):
             flush=True,
         )
         try:
-            ok = youtube.reupload_video(youtube.video_path, subject=None)
+            ok = youtube.reupload_video(
+                youtube.video_path,
+                subject=None,
+                is_long=is_long,
+                upload=False,
+            )
         except Exception as e:
             print(f"[runner] ERROR: Whisper-based recovery failed: {type(e).__name__}: {e}", flush=True)
             sys.exit(4)
     else:
-        print(f"[runner] Uploading {'LONG' if is_long else 'SHORT'}: {youtube.video_path}", flush=True)
-        ok = youtube.upload_video()
-    print(f"[runner] Upload result: {ok}", flush=True)
-    if not ok:
+        print(f"[runner] Metadata ready for {'LONG' if is_long else 'SHORT'}: {youtube.video_path}", flush=True)
+
+    upload_platforms = _upload_platforms_from_args(args)
+    if not upload_platforms:
+        upload_platforms = ["youtube"]
+
+    print(f"[runner] Uploading to {format_platforms(upload_platforms)}: {youtube.video_path}", flush=True)
+    results = SocialUploader.from_youtube(youtube).upload(upload_platforms)
+    print(f"[runner] Upload results: {results}", flush=True)
+    if not results or not all(results.values()):
         sys.exit(4)
 
     _cleanup_after_upload(youtube.video_path, is_long=is_long, channel_id=args.channel_id)
@@ -779,6 +888,8 @@ def main():
     p_gen.add_argument("--topic", default="")
     p_gen.add_argument("--image-mode", default="ai")
     p_gen.add_argument("--upload", action="store_true")
+    p_gen.add_argument("--upload-platforms", default="",
+                       help="Comma-separated upload targets: youtube,tiktok,facebook. --upload still means youtube.")
     p_gen.add_argument("--series-id", default="")
     # Target short duration in seconds (60/120/180). 0 = use legacy default.
     p_gen.add_argument("--duration", type=int, default=0)
@@ -817,9 +928,18 @@ def main():
     p_pv.add_argument("--hook-style", default="")
     p_pv.add_argument("--retention-mode", choices=["standard", "maxima_retencion"], default="")
 
+    p_voice = sub.add_parser("preview-voice")
+    p_voice.add_argument("--channel-id", required=True)
+    p_voice.add_argument("--kind", choices=["short", "long"], default="short")
+    p_voice.add_argument("--preview-id", default="")
+    p_voice.add_argument("--script-file", default="")
+    p_voice.add_argument("--retention-mode", choices=["standard", "maxima_retencion"], default="")
+
     p_ul = sub.add_parser("upload-last")
     p_ul.add_argument("--channel-id", required=True)
     p_ul.add_argument("--kind", choices=["short", "long"], default="short")
+    p_ul.add_argument("--upload-platforms", default="",
+                      help="Comma-separated upload targets: youtube,tiktok,facebook.")
 
     p_tw = sub.add_parser("tweet")
     p_tw.add_argument("--account-id", required=True)
@@ -840,7 +960,7 @@ def main():
     args = parser.parse_args()
 
     _setup_paths()
-    if args.cmd != "thumbnail":
+    if args.cmd not in ("thumbnail", "preview-voice"):
         # The explicit (--llm-provider, --llm-model) pair from the Channel UI
         # wins over --model (single-arg, used by batch + preview). Both feed
         # the same _select_llm_provider entry point so the runner stays simple.
@@ -857,6 +977,8 @@ def main():
         cmd_generate(args)
     elif args.cmd == "preview-script":
         cmd_preview_script(args)
+    elif args.cmd == "preview-voice":
+        cmd_preview_voice(args)
     elif args.cmd == "upload-last":
         cmd_upload_last(args)
     elif args.cmd == "tweet":

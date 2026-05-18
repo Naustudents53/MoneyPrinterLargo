@@ -5,9 +5,14 @@ import requests
 from contextlib import contextmanager
 
 from config import (
+    ROOT_DIR,
     get_ollama_base_url,
     get_llm_provider,
     get_pollinations_text_model,
+    get_codex_cli_command,
+    get_codex_cli_model,
+    get_codex_cli_sandbox,
+    get_codex_cli_timeout_seconds,
     get_gemini_api_key,
     get_gemini_model,
     get_gemini_models,
@@ -16,6 +21,7 @@ from config import (
     get_openai_base_url,
     get_openai_models,
     get_openai_reasoning_effort,
+    get_openai_use_codex_cli,
 )
 
 # ---------------------------------------------------------------------------
@@ -579,8 +585,98 @@ def _openai_error_message(response: requests.Response) -> str:
         return response.text[:500]
 
 
+def _build_codex_cli_prompt(prompt: str) -> str:
+    return (
+        "You are being used as a non-interactive text-generation backend for "
+        "MoneyPrinter Largo. Do not inspect files, run commands, edit files, "
+        "or explain what you are doing. Return only the final text requested "
+        "by the user.\n\n"
+        f"Output contract:\n{_SYSTEM_PROMPT}\n\n"
+        f"User request:\n{prompt}"
+    )
+
+
+def _generate_text_codex_cli(prompt: str, model: str = None) -> str:
+    """Generate text through the locally authenticated Codex CLI account."""
+    import subprocess
+    import tempfile
+
+    cli = get_codex_cli_command()
+    selected_model = (model or get_codex_cli_model() or "").strip()
+    sandbox = get_codex_cli_sandbox()
+    timeout = get_codex_cli_timeout_seconds()
+
+    fd, output_path = tempfile.mkstemp(prefix="mp_codex_", suffix=".txt")
+    _os.close(fd)
+
+    args = [
+        cli,
+        "--ask-for-approval",
+        "never",
+        "exec",
+        "--cd",
+        str(ROOT_DIR),
+        "--sandbox",
+        sandbox,
+        "--color",
+        "never",
+        "--ephemeral",
+        "--output-last-message",
+        output_path,
+    ]
+    if selected_model:
+        args += ["--model", selected_model]
+    args.append("-")
+
+    try:
+        result = subprocess.run(
+            args,
+            input=_build_codex_cli_prompt(prompt),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+
+        text = ""
+        try:
+            with open(output_path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read().strip()
+        except FileNotFoundError:
+            pass
+
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(f"codex exec exited {result.returncode}: {detail[-1000:]}")
+
+        if not text:
+            text = (result.stdout or "").strip()
+        if not text:
+            raise RuntimeError("codex exec returned empty text")
+
+        model_label = selected_model or "codex-default"
+        print(f"  [Codex CLI] Using model: {model_label}")
+        return text
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "Codex CLI was not found on PATH. Install/login with `codex login` "
+            "or set MP_CODEX_CLI_COMMAND."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"codex exec timed out after {timeout}s") from exc
+    finally:
+        try:
+            _os.remove(output_path)
+        except OSError:
+            pass
+
+
 def _generate_text_openai(prompt: str, model: str = None, temperature: float = 0.7) -> str:
     """Generate text using the OpenAI Responses API, cascading through models."""
+    if get_openai_use_codex_cli():
+        return _generate_text_codex_cli(prompt, model=model)
+
     api_key = get_openai_api_key()
     if not api_key:
         raise RuntimeError("No OpenAI API key configured")

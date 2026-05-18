@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import shutil
 import srt_equalizer
 
 from termcolor import colored
@@ -461,6 +462,106 @@ def get_openai_api_key() -> str:
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         configured = json.load(file).get("openai_api_key", "")
         return configured or os.environ.get("OPENAI_API_KEY", "")
+
+
+def get_openai_use_codex_cli() -> bool:
+    """Returns whether the OpenAI provider should delegate text calls to Codex CLI."""
+    return _get_bool_config("openai_use_codex_cli", False)
+
+
+def get_codex_cli_command() -> str:
+    """Gets the Codex CLI executable used when OpenAI is routed through Codex."""
+    value = os.environ.get("MP_CODEX_CLI_COMMAND", "").strip()
+    if not value:
+        value = str(_get_config_value("codex_cli_command", "codex") or "").strip()
+    value = value or "codex"
+
+    # Python subprocess on Windows does not resolve PowerShell aliases/scripts
+    # exactly like an interactive PowerShell session. Prefer the npm-generated
+    # .cmd shim, and fall back to common npm locations when the web runner's
+    # PATH is narrower than the user's shell PATH.
+    candidates = []
+    root, ext = os.path.splitext(value)
+    if not ext:
+        candidates.extend([f"{value}.cmd", f"{value}.exe", value])
+    candidates.append(value)
+
+    appdata = os.environ.get("APPDATA", "")
+    if appdata:
+        npm_dir = os.path.join(appdata, "npm")
+        base = os.path.basename(root or value)
+        candidates.extend([
+            os.path.join(npm_dir, f"{base}.cmd"),
+            os.path.join(npm_dir, f"{base}.exe"),
+            os.path.join(npm_dir, base),
+        ])
+
+    for candidate in candidates:
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+        if os.path.isfile(candidate):
+            return candidate
+    return value
+
+
+def get_codex_cli_model() -> str:
+    """Gets an optional Codex CLI model override; empty means Codex default."""
+    value = os.environ.get("MP_CODEX_CLI_MODEL", "").strip()
+    if not value:
+        value = str(_get_config_value("codex_cli_model", "") or "").strip()
+    return value
+
+
+def get_codex_cli_sandbox() -> str:
+    """Gets the sandbox mode for non-interactive Codex CLI text calls."""
+    value = os.environ.get("MP_CODEX_CLI_SANDBOX", "").strip()
+    if not value:
+        value = str(_get_config_value("codex_cli_sandbox", "read-only") or "").strip()
+    if value not in {"read-only", "workspace-write", "danger-full-access"}:
+        return "read-only"
+    return value
+
+
+def get_codex_cli_timeout_seconds() -> int:
+    """Gets the timeout for a single Codex CLI text-generation call."""
+    value = os.environ.get("MP_CODEX_CLI_TIMEOUT_SECONDS", "").strip()
+    if not value:
+        value = _get_config_value("codex_cli_timeout_seconds", 300)
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = 300
+    return max(30, min(3600, seconds))
+
+
+def get_codex_cli_generate_images() -> bool:
+    """Returns whether Codex CLI should be tried first for generated visuals."""
+    return _get_bool_config("codex_cli_generate_images", True)
+
+
+def get_codex_cli_image_sandbox() -> str:
+    """Gets the sandbox mode for Codex CLI image-generation calls."""
+    value = os.environ.get("MP_CODEX_CLI_IMAGE_SANDBOX", "").strip()
+    if not value:
+        value = str(_get_config_value("codex_cli_image_sandbox", "workspace-write") or "").strip()
+    if value not in {"read-only", "workspace-write", "danger-full-access"}:
+        return "workspace-write"
+    if value == "read-only":
+        return "workspace-write"
+    return value
+
+
+def get_codex_cli_image_timeout_seconds() -> int:
+    """Gets the timeout for a single Codex CLI visual-generation call."""
+    value = os.environ.get("MP_CODEX_CLI_IMAGE_TIMEOUT_SECONDS", "").strip()
+    if not value:
+        value = _get_config_value("codex_cli_image_timeout_seconds", 900)
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = 900
+    return max(60, min(3600, seconds))
 
 
 def get_openai_model() -> str:

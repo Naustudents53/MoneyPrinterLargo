@@ -23,7 +23,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
+import { api, type UploadPlatform } from "@/lib/api";
 
 type Status = "idle" | "running" | "done" | "error";
 
@@ -42,6 +42,8 @@ interface ProgressDialogProps {
   previewOnFinish?: boolean;
   /** When true (and previewOnFinish), starts the upload-last job once the user closes the preview. */
   uploadAfterPreview?: boolean;
+  /** Upload targets used by post-render upload buttons and preview chaining. */
+  uploadPlatforms?: UploadPlatform[];
   onDone?: () => void;
 }
 
@@ -65,6 +67,7 @@ export function ProgressDialog({
   kind = "short",
   previewOnFinish = false,
   uploadAfterPreview = false,
+  uploadPlatforms = ["youtube"],
   onDone,
 }: ProgressDialogProps) {
   const [logs, setLogs] = useState<string[]>([]);
@@ -90,6 +93,14 @@ export function ProgressDialog({
   // preview should chain into upload-last.
   const previewAutoOpenedRef = useRef(false);
   const uploadOnPreviewCloseRef = useRef(false);
+  const effectiveUploadPlatforms = useMemo<UploadPlatform[]>(
+    () => (uploadPlatforms.length ? uploadPlatforms : ["youtube"]),
+    [uploadPlatforms],
+  );
+  const uploadLabel = useMemo(
+    () => formatUploadPlatforms(effectiveUploadPlatforms),
+    [effectiveUploadPlatforms],
+  );
 
   // (Re)connect when sseUrl changes (initial open OR upload-last triggered).
   useEffect(() => {
@@ -275,7 +286,7 @@ export function ProgressDialog({
   const triggerUpload = () => {
     if (!channelId) return;
     setPhase("upload");
-    setActiveUrl(api.uploadLastUrl(channelId, kind));
+    setActiveUrl(api.uploadLastUrl(channelId, kind, effectiveUploadPlatforms));
   };
 
   const handlePreviewOpenChange = (next: boolean) => {
@@ -306,7 +317,7 @@ export function ProgressDialog({
                 <DialogTitle className="flex items-center gap-2.5 text-base">
                   <StatusIcon status={status} />
                   <span className="truncate">
-                    {phase === "upload" ? "Subiendo a YouTube" : title}
+                    {phase === "upload" ? `Subiendo a ${uploadLabel}` : title}
                   </span>
                 </DialogTitle>
                 {description && (
@@ -440,7 +451,7 @@ export function ProgressDialog({
               {canUpload && (
                 <Button variant="brand" size="sm" onClick={triggerUpload} className="gap-1.5">
                   <UploadCloud className="h-3.5 w-3.5" />
-                  {status === "error" && phase === "upload" ? "Reintentar subida" : "Subir a YouTube"}
+                  {status === "error" && phase === "upload" ? "Reintentar subida" : `Subir a ${uploadLabel}`}
                 </Button>
               )}
 
@@ -469,8 +480,8 @@ export function ProgressDialog({
             <DialogTitle>Vista previa: {generatedFile}</DialogTitle>
             <DialogDescription>
               {uploadOnPreviewCloseRef.current
-                ? "Al cerrar, se inicia la subida a YouTube."
-                : "Revisa el render antes de subirlo a YouTube."}
+                ? `Al cerrar, se inicia la subida a ${uploadLabel}.`
+                : `Revisa el render antes de subirlo a ${uploadLabel}.`}
             </DialogDescription>
           </DialogHeader>
           {generatedFile && (
@@ -530,6 +541,17 @@ function StatusBadge({ status }: { status: Status }) {
       Listo
     </Badge>
   );
+}
+
+function formatUploadPlatforms(platforms: UploadPlatform[]) {
+  const labels: Record<UploadPlatform, string> = {
+    youtube: "YouTube",
+    tiktok: "TikTok",
+    facebook: "Facebook",
+  };
+  const selected = platforms.map((p) => labels[p] ?? p);
+  if (selected.length <= 1) return selected[0] || "YouTube";
+  return selected.slice(0, -1).join(", ") + " y " + selected[selected.length - 1];
 }
 
 function LogDivider({ label }: { label: string }) {

@@ -12,6 +12,9 @@ import {
   Loader2,
   X,
   Upload,
+  Youtube,
+  Music2,
+  Facebook,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
@@ -34,6 +37,7 @@ import {
   type ShortRenderProfile,
   type RetentionMode,
   type SystemInfo,
+  type UploadPlatform,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -75,7 +79,7 @@ export function Generate() {
   // Per-job hook profile override. Empty string = use the channel's configured
   // default (selectedChannel.hook_profile); otherwise overrides for THIS run.
   const [hookProfile, setHookProfile] = useState<HookProfile | "">("");
-  const [autoUpload, setAutoUpload] = useState(false);
+  const [uploadPlatforms, setUploadPlatforms] = useState<UploadPlatform[]>([]);
   const [previewAtEnd, setPreviewAtEnd] = useState(false);
   const [shortDuration, setShortDuration] = useState<ShortDurationSeconds>(60);
   const [shortRenderProfile, setShortRenderProfile] = useState<ShortRenderProfile>("fast");
@@ -170,6 +174,20 @@ export function Generate() {
 
   // Filter series to those belonging to the selected channel — when the API
   // doesn't expose a channel link on series, fall back to all series.
+  const autoUpload = uploadPlatforms.length > 0;
+  const uploadTargetLabel = useMemo(
+    () => formatUploadPlatformLabel(uploadPlatforms),
+    [uploadPlatforms],
+  );
+
+  const toggleUploadPlatform = (platform: UploadPlatform) => {
+    setUploadPlatforms((prev) =>
+      prev.includes(platform)
+        ? prev.filter((item) => item !== platform)
+        : [...prev, platform],
+    );
+  };
+
   const channelSeries = useMemo(() => {
     if (!series.length) return [];
     // SeriesEntry doesn't expose channel — until it does, show all so the user
@@ -206,12 +224,13 @@ export function Generate() {
     }
     if (imageMode === "upload" && !photoUploadId) return;
 
-    const serverAutoUpload = autoUpload && !previewAtEnd;
+    const serverUploadPlatforms = previewAtEnd ? [] : uploadPlatforms;
     const url = api.generateUrl(channelId, {
       kind,
       custom_topic: topic.trim(),
       image_mode: imageMode === "photos" ? "photos" : "ai",
-      auto_upload: serverAutoUpload,
+      auto_upload: serverUploadPlatforms.length > 0,
+      upload_platforms: serverUploadPlatforms,
       series_id: seriesId || undefined,
       duration_seconds: kind === "short" ? shortDuration : undefined,
       render_profile: kind === "short" ? shortRenderProfile : undefined,
@@ -291,12 +310,13 @@ export function Generate() {
     }
     if (imageMode === "upload" && !photoUploadId) return;
 
-    const serverAutoUpload = autoUpload && !previewAtEnd;
+    const serverUploadPlatforms = previewAtEnd ? [] : uploadPlatforms;
     const url = api.generateUrl(channelId, {
       kind: "short",
       custom_topic: topic.trim(),
       image_mode: imageMode === "photos" ? "photos" : "ai",
-      auto_upload: serverAutoUpload,
+      auto_upload: serverUploadPlatforms.length > 0,
+      upload_platforms: serverUploadPlatforms,
       series_id: seriesId || undefined,
       duration_seconds: shortDuration,
       render_profile: shortRenderProfile,
@@ -557,7 +577,7 @@ export function Generate() {
                       />
                     </Field>
                     <Field
-                      label="RetenciÃ³n"
+                      label="Retencion"
                       hint={RETENTION_MODE_META[retentionMode].hint}
                     >
                       <div className="flex items-center gap-2">
@@ -799,12 +819,28 @@ export function Generate() {
                   </div>
                 </Field>
 
-                <ToggleRow
-                  label="Auto-subir a YouTube"
-                  hint="Selenium contra YouTube Studio al terminar el render"
-                  value={autoUpload}
-                  onChange={setAutoUpload}
-                />
+                <Field label="Subida" hint={uploadTargetLabel}>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <UploadPlatformButton
+                      label="Subir a YouTube"
+                      active={uploadPlatforms.includes("youtube")}
+                      onClick={() => toggleUploadPlatform("youtube")}
+                      icon={<Youtube className="h-3.5 w-3.5" strokeWidth={1.8} />}
+                    />
+                    <UploadPlatformButton
+                      label="Subir a TikTok"
+                      active={uploadPlatforms.includes("tiktok")}
+                      onClick={() => toggleUploadPlatform("tiktok")}
+                      icon={<Music2 className="h-3.5 w-3.5" strokeWidth={1.8} />}
+                    />
+                    <UploadPlatformButton
+                      label="Subir a FB"
+                      active={uploadPlatforms.includes("facebook")}
+                      onClick={() => toggleUploadPlatform("facebook")}
+                      icon={<Facebook className="h-3.5 w-3.5" strokeWidth={1.8} />}
+                    />
+                  </div>
+                </Field>
                 <Divider />
                 <ToggleRow
                   label="Preview al final"
@@ -886,6 +922,7 @@ export function Generate() {
         kind={kind}
         previewOnFinish={previewAtEnd}
         uploadAfterPreview={autoUpload && previewAtEnd}
+        uploadPlatforms={uploadPlatforms}
       />
 
       <ScriptPreviewDialog
@@ -894,6 +931,9 @@ export function Generate() {
           setPreviewOpen(o);
           if (!o) setPreviewSseUrl(null);
         }}
+        channelId={channelId}
+        kind="short"
+        retentionMode={retentionMode}
         sseUrl={previewSseUrl}
         onApprove={onPreviewApproved}
         onRegenerate={startPreview}
@@ -906,7 +946,7 @@ export function Generate() {
         defaults={{
           kind,
           imageMode: imageMode === "photos" ? "photos" : "ai",
-          autoUpload,
+          autoUpload: uploadPlatforms.includes("youtube"),
           model: llmProvider && llmModel ? llmModel : undefined,
           renderProfile: kind === "short" ? shortRenderProfile : undefined,
           retentionMode: kind === "short" ? retentionMode : undefined,
@@ -988,6 +1028,51 @@ function TrackHeader({
 // ─────────────────────────────────────────────────────────────────────────────
 // Form primitives
 // ─────────────────────────────────────────────────────────────────────────────
+function UploadPlatformButton({
+  label,
+  active,
+  onClick,
+  icon,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "h-10 rounded-lg border px-2 text-[11px] font-medium transition-colors",
+        "inline-flex items-center justify-center gap-1.5",
+        active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+      )}
+      style={{
+        background: active ? "hsl(var(--primary) / .14)" : "hsl(var(--background))",
+        borderColor: active ? "hsl(var(--primary) / .45)" : "hsl(var(--border) / .1)",
+      }}
+      aria-pressed={active}
+      title={label}
+    >
+      {icon}
+      <span className="leading-tight">{label}</span>
+    </button>
+  );
+}
+
+function formatUploadPlatformLabel(platforms: UploadPlatform[]) {
+  if (platforms.length === 0) return "solo render";
+  const labels: Record<UploadPlatform, string> = {
+    youtube: "YouTube",
+    tiktok: "TikTok",
+    facebook: "FB",
+  };
+  const selected = platforms.map((platform) => labels[platform]);
+  if (selected.length === 1) return selected[0];
+  return selected.slice(0, -1).join(", ") + " y " + selected[selected.length - 1];
+}
+
 function Field({
   label,
   hint,

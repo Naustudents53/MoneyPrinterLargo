@@ -3,6 +3,8 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Callable
 
+from .NarrationVoice import NarrationVoice
+
 
 @dataclass(frozen=True)
 class RetentionScore:
@@ -104,6 +106,7 @@ Rules:
 - No markdown, no title, no bullets, no stage directions.
 - No "welcome", no "today we will talk about", no meta commentary.
 - Write every word in {language}.
+{NarrationVoice.rewrite_guardrail(language)}
 - Return ONLY the rewritten narration script."""
         try:
             improved = (generate_response(prompt) or "").strip()

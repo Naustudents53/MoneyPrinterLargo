@@ -19,15 +19,19 @@ import {
   RotateCw,
   Sparkles,
   PenLine,
+  Volume2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
+import { api, type RetentionMode } from "@/lib/api";
 
 type Phase = "idle" | "running" | "ready" | "saving" | "error";
 
 interface ScriptPreviewDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  channelId?: string;
+  kind?: "short" | "long";
+  retentionMode?: RetentionMode;
   /** SSE URL for /api/channels/{id}/preview-script. Null while closed. */
   sseUrl: string | null;
   /** Called when user approves the preview. Receives the preview id so the
@@ -48,6 +52,9 @@ interface ScriptPreviewDialogProps {
 export function ScriptPreviewDialog({
   open,
   onOpenChange,
+  channelId = "",
+  kind = "short",
+  retentionMode = "standard",
   sseUrl,
   onApprove,
   onRegenerate,
@@ -59,16 +66,31 @@ export function ScriptPreviewDialog({
   const [script, setScript] = useState("");
   const [originalSubject, setOriginalSubject] = useState("");
   const [originalScript, setOriginalScript] = useState("");
+  const [voiceLoading, setVoiceLoading] = useState(false);
+  const [voiceUrl, setVoiceUrl] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const logBoxRef = useRef<HTMLDivElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const previewIdRef = useRef<string | null>(null);
+  const doneRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (voiceUrl) URL.revokeObjectURL(voiceUrl);
+    };
+  }, [voiceUrl]);
 
   // Connect to SSE when the dialog opens with a fresh sseUrl.
   useEffect(() => {
     if (!open || !sseUrl) return;
     setLogs([]);
     setPreviewId(null);
+    previewIdRef.current = null;
+    doneRef.current = false;
     setSubject("");
     setScript("");
+    setVoiceUrl(null);
+    setVoiceLoading(false);
     setPhase("running");
 
     const es = new EventSource(sseUrl);
@@ -86,19 +108,23 @@ export function ScriptPreviewDialog({
         const line: string = data.line ?? "";
         // Capture the id printed by run_job.py:cmd_preview_script.
         const m = /PREVIEW_ID=([A-Za-z0-9]+)/.exec(line);
-        if (m) setPreviewId(m[1]);
+        if (m) {
+          previewIdRef.current = m[1];
+          setPreviewId(m[1]);
+        }
         append(line);
       } catch {
         append((ev as MessageEvent).data);
       }
     });
     es.addEventListener("done", async () => {
+      doneRef.current = true;
       append("──── completado ✅ ────");
       es.close();
       // Re-read the latest previewId from state via closure — but state may
       // not have flushed yet in the same tick. Pull it from the logs as a
       // fallback so we never miss it.
-      const idFromState = previewId;
+      const idFromState = previewIdRef.current || previewId;
       let id = idFromState;
       if (!id) {
         const joined = logs.concat([" "]).join(" ");
@@ -123,6 +149,7 @@ export function ScriptPreviewDialog({
       }
     });
     es.addEventListener("error", () => {
+      if (doneRef.current) return;
       append("──── error ❌ ────");
       setPhase("error");
       es.close();
@@ -151,8 +178,12 @@ export function ScriptPreviewDialog({
       setPhase("idle");
       setLogs([]);
       setPreviewId(null);
+      previewIdRef.current = null;
+      doneRef.current = false;
       setSubject("");
       setScript("");
+      setVoiceUrl(null);
+      setVoiceLoading(false);
     }
   }, [open]);
 
@@ -177,6 +208,63 @@ export function ScriptPreviewDialog({
     } catch (e) {
       toast.error("No se pudo guardar: " + (e as Error).message);
       setPhase("ready");
+    }
+  };
+
+  const listenVoice = async () => {
+    if (!previewId) {
+      toast.error("Preview no listo todavia");
+      return;
+    }
+    if (!channelId) {
+      toast.error("Selecciona un canal");
+      return;
+    }
+    const trimmedSubject = subject.trim();
+    const trimmedScript = script.trim();
+    if (!trimmedSubject || !trimmedScript) {
+      toast.error("El tema y el script son obligatorios");
+      return;
+    }
+
+    setVoiceLoading(true);
+    try {
+      const edited =
+        trimmedSubject !== originalSubject.trim() ||
+        trimmedScript !== originalScript.trim();
+      if (edited) {
+        await api.savePreview(previewId, { subject: trimmedSubject, script: trimmedScript });
+        setOriginalSubject(trimmedSubject);
+        setOriginalScript(trimmedScript);
+      }
+
+      const res = await fetch(
+        api.scriptVoicePreviewUrl(previewId, {
+          channel_id: channelId,
+          kind,
+          retention_mode: retentionMode,
+        }),
+      );
+      if (!res.ok) {
+        let detail = res.statusText;
+        try {
+          const body = await res.json();
+          detail = body.detail || JSON.stringify(body);
+        } catch {
+          // ignore
+        }
+        throw new Error(`${res.status}: ${detail}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      setVoiceUrl(url);
+      window.setTimeout(() => {
+        audioRef.current?.play().catch(() => undefined);
+      }, 50);
+    } catch (e) {
+      toast.error("No se pudo generar la voz: " + (e as Error).message);
+    } finally {
+      setVoiceLoading(false);
     }
   };
 
@@ -220,7 +308,10 @@ export function ScriptPreviewDialog({
               <Input
                 id="preview-subject"
                 value={subject}
-                onChange={(e) => setSubject(e.target.value)}
+                onChange={(e) => {
+                  setSubject(e.target.value);
+                  setVoiceUrl(null);
+                }}
                 disabled={phase === "saving"}
               />
             </div>
@@ -230,7 +321,10 @@ export function ScriptPreviewDialog({
                 id="preview-script"
                 rows={14}
                 value={script}
-                onChange={(e) => setScript(e.target.value)}
+                onChange={(e) => {
+                  setScript(e.target.value);
+                  setVoiceUrl(null);
+                }}
                 disabled={phase === "saving"}
                 className="font-mono text-[13px] leading-relaxed"
               />
@@ -239,6 +333,14 @@ export function ScriptPreviewDialog({
                 resultará más corto/largo de lo que pediste.
               </p>
             </div>
+            {voiceUrl && (
+              <audio
+                ref={audioRef}
+                src={voiceUrl}
+                controls
+                className="h-9 w-full"
+              />
+            )}
           </div>
         ) : (
           <div
@@ -263,6 +365,20 @@ export function ScriptPreviewDialog({
         <DialogFooter className="gap-2 flex-wrap">
           {phase === "ready" && (
             <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={listenVoice}
+                disabled={voiceLoading || !channelId}
+              >
+                {voiceLoading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Volume2 className="h-3.5 w-3.5" />
+                )}
+                Escuchar voz
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
