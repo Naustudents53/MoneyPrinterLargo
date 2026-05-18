@@ -70,6 +70,7 @@ def _classify_model(model_id: str) -> str:
 
     Gemini ids start with 'gemini-' or 'gemma-'; OpenAI ids start with 'gpt-'
     / 'o' / 'chatgpt-'; Ollama tags contain a colon (e.g. 'llama3:8b',
+    Claude ids/aliases start with 'claude-' or are 'sonnet' / 'opus' / 'haiku';
     'gemma4:31b-cloud'). Everything else falls back to Pollinations since its
     catalog uses short alphanumeric ids."""
     m = (model_id or "").strip().lower()
@@ -79,6 +80,8 @@ def _classify_model(model_id: str) -> str:
         return "gemini"
     if m.startswith("gpt-") or m.startswith("chatgpt-") or m.startswith(("o1", "o3", "o4")):
         return "openai"
+    if m.startswith("claude-") or m in {"sonnet", "opus", "haiku"}:
+        return "claude"
     if ":" in m:
         return "ollama"
     return "pollinations"
@@ -133,6 +136,11 @@ def _select_llm_provider(override_provider: str = "", override_model: str = "", 
             select_model(model_override)
             print(f"[runner] Override: OpenAI model {model_override}", flush=True)
             return
+        if inferred == "claude":
+            set_llm_provider("claude")
+            select_model(model_override)
+            print(f"[runner] Override: Claude model {model_override}", flush=True)
+            return
         if inferred == "ollama":
             set_llm_provider("ollama")
             select_model(model_override)
@@ -153,6 +161,9 @@ def _select_llm_provider(override_provider: str = "", override_model: str = "", 
     if provider == "openai":
         print("[runner] Using OpenAI provider", flush=True)
         return
+    if provider == "claude":
+        print("[runner] Using Claude provider", flush=True)
+        return
     if provider == "pollinations":
         print("[runner] Using Pollinations provider", flush=True)
         return
@@ -171,6 +182,30 @@ def _select_llm_provider(override_provider: str = "", override_model: str = "", 
         print(f"[runner] Using Ollama model {m}", flush=True)
     else:
         print("[runner] WARNING: no Ollama model selected", flush=True)
+
+
+def _apply_openai_reasoning_effort(effort: str = "") -> None:
+    effort = (effort or "").strip().lower()
+    if not effort:
+        return
+    allowed = {"none", "minimal", "low", "medium", "high", "xhigh"}
+    if effort not in allowed:
+        print(f"[runner] WARNING: ignoring invalid OpenAI thinking level {effort!r}", flush=True)
+        return
+    os.environ["MP_OPENAI_REASONING_EFFORT"] = effort
+    print(f"[runner] OpenAI thinking level: {effort}", flush=True)
+
+
+def _apply_image_provider(provider: str = "") -> None:
+    provider = (provider or "").strip().lower()
+    if not provider:
+        return
+    allowed = {"auto", "leonardo", "openai", "gemini"}
+    if provider not in allowed:
+        print(f"[runner] WARNING: ignoring invalid image provider {provider!r}", flush=True)
+        return
+    os.environ["MP_IMAGE_PROVIDER"] = provider
+    print(f"[runner] Image provider: {provider}", flush=True)
 
 
 def _apply_short_render_profile(profile: str) -> None:
@@ -887,6 +922,8 @@ def main():
     p_gen.add_argument("--kind", choices=["short", "long"], default="short")
     p_gen.add_argument("--topic", default="")
     p_gen.add_argument("--image-mode", default="ai")
+    p_gen.add_argument("--image-provider", default="",
+                       help="AI image provider for image_mode=ai: auto, leonardo, openai, gemini.")
     p_gen.add_argument("--upload", action="store_true")
     p_gen.add_argument("--upload-platforms", default="",
                        help="Comma-separated upload targets: youtube,tiktok,facebook. --upload still means youtube.")
@@ -897,6 +934,8 @@ def main():
     # explicit (provider, model) pair. Empty = use config defaults.
     p_gen.add_argument("--llm-provider", default="")
     p_gen.add_argument("--llm-model", default="")
+    p_gen.add_argument("--llm-reasoning-effort", default="",
+                       help="OpenAI/Codex thinking level: low, medium, high, xhigh.")
     # Per-job hook profile override (educational / storytelling / ...). Empty = use channel default.
     p_gen.add_argument("--hook-profile", default="")
     # Per-job overrides — let the UI pick a specific model and an estimated
@@ -923,6 +962,10 @@ def main():
     p_pv.add_argument("--channel-id", required=True)
     p_pv.add_argument("--topic", default="")
     p_pv.add_argument("--model", default="")
+    p_pv.add_argument("--llm-provider", default="")
+    p_pv.add_argument("--llm-model", default="")
+    p_pv.add_argument("--llm-reasoning-effort", default="",
+                      help="OpenAI/Codex thinking level: low, medium, high, xhigh.")
     p_pv.add_argument("--sentence-length", type=int, default=0)
     p_pv.add_argument("--duration", type=int, default=0)
     p_pv.add_argument("--hook-style", default="")
@@ -961,6 +1004,9 @@ def main():
 
     _setup_paths()
     if args.cmd not in ("thumbnail", "preview-voice"):
+        _apply_openai_reasoning_effort(getattr(args, "llm_reasoning_effort", "") or "")
+        if args.cmd == "generate":
+            _apply_image_provider(getattr(args, "image_provider", "") or "")
         # The explicit (--llm-provider, --llm-model) pair from the Channel UI
         # wins over --model (single-arg, used by batch + preview). Both feed
         # the same _select_llm_provider entry point so the runner stays simple.

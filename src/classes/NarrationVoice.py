@@ -12,6 +12,7 @@ NATURAL NARRATION GUIDE:
 - Let the story move through cause, consequence, and reveal. Avoid a list-of-facts cadence.
 - Use plain spoken transitions only when they fit naturally, like "pero", "lo raro es", "por eso", or their equivalent in {language}.
 - Let some sentences be calm and simple. Do not make every line sound catastrophic.
+- Never narrate internal structure labels like "primera revelacion", "segunda revelacion", "hook", "contexto", "desarrollo", "conclusion", "parte uno", or "seccion dos".
 - No calls to action inside the narration.
 """
 
@@ -23,6 +24,7 @@ NATURAL VOICE GUARDRAIL:
 - Preserve the original narrator voice while improving retention.
 - Change only what helps clarity, causality, pacing, or a stronger reveal.
 - Do not turn the script into slogans, hype phrases, or motivational trailer copy.
+- Remove any internal structure label; the narrator must not say "primera revelacion", "segunda revelacion", "hook", "contexto", "desarrollo", "conclusion", "parte uno", or "seccion dos".
 - Keep natural spoken {language}; no calls to action, no stage directions.
 """
 
@@ -35,5 +37,6 @@ DOCUMENTARY VOICE GUIDE:
 - Anchor each section in observable details, decisions, instruments, places, or physical consequences.
 - Build tension by asking better questions and following cause and effect, not by stacking dramatic adjectives.
 - Vary rhythm naturally: a few short lines, then a fuller explanation when the idea needs room.
+- Never narrate section labels or structure labels; markers like intro, section, first revelation, climax, or conclusion are private writing instructions only.
 - If an outro call to action is required, keep it warm and brief so it does not break the story.
 """

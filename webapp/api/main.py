@@ -171,6 +171,7 @@ class TwitterAccountOut(TwitterAccountIn):
 class GenerationRequest(BaseModel):
     custom_topic: str = ""
     image_mode: str = "ai"           # "ai" or "photos"
+    image_provider: str = "auto"     # "auto", "leonardo", "openai", or "gemini"
     kind: str = "short"              # "short" or "long"
     auto_upload: bool = False
     series_id: str = ""              # only used for kind="long"
@@ -286,6 +287,8 @@ def _infer_llm_provider_from_model(model_id: str) -> str:
         return "gemini"
     if m.startswith("gpt-") or m.startswith("chatgpt-") or m.startswith(("o1", "o3", "o4")):
         return "openai"
+    if m.startswith("claude-") or m in {"sonnet", "opus", "haiku"}:
+        return "claude"
     if ":" in m:
         return "ollama"
     return "pollinations"
@@ -678,7 +681,8 @@ _CONFIG_FIELD_DEFS = [
     {"key": "font", "label": "Subtitle font filename", "type": "str", "group": "Core"},
     {"key": "script_sentence_length", "label": "Script sentence length", "type": "int", "group": "Core"},
     # LLM
-    {"key": "llm_provider", "label": "LLM provider (openai / gemini / ollama / pollinations)", "type": "str", "group": "LLM"},
+    {"key": "llm_provider", "label": "LLM provider (openai / claude / gemini / ollama / pollinations)", "type": "str", "group": "LLM"},
+    {"key": "image_provider", "label": "AI image provider (auto / leonardo / openai / gemini)", "type": "str", "group": "Image"},
     {"key": "openai_api_key", "label": "OpenAI API key", "type": "secret", "group": "LLM"},
     {"key": "openai_base_url", "label": "OpenAI base URL", "type": "str", "group": "LLM"},
     {"key": "openai_model", "label": "OpenAI default model", "type": "str", "group": "LLM"},
@@ -691,6 +695,9 @@ _CONFIG_FIELD_DEFS = [
     {"key": "codex_cli_generate_images", "label": "Use Codex CLI for OpenAI images", "type": "bool", "group": "LLM"},
     {"key": "codex_cli_image_sandbox", "label": "Codex CLI image sandbox", "type": "str", "group": "LLM"},
     {"key": "codex_cli_image_timeout_seconds", "label": "Codex CLI image timeout seconds", "type": "int", "group": "LLM"},
+    {"key": "claude_cli_command", "label": "Claude CLI command", "type": "str", "group": "LLM"},
+    {"key": "claude_cli_model", "label": "Claude CLI default model", "type": "str", "group": "LLM"},
+    {"key": "claude_cli_timeout_seconds", "label": "Claude CLI timeout seconds", "type": "int", "group": "LLM"},
     {"key": "ollama_base_url", "label": "Ollama base URL", "type": "str", "group": "LLM"},
     {"key": "ollama_model", "label": "Ollama model", "type": "str", "group": "LLM"},
     # Image
@@ -699,6 +706,10 @@ _CONFIG_FIELD_DEFS = [
     {"key": "europeana_api_key", "label": "Europeana API key", "type": "secret", "group": "Image"},
     {"key": "ideogram_api_key", "label": "Ideogram API key", "type": "secret", "group": "Image"},
     {"key": "leonardo_api_key", "label": "Leonardo API key", "type": "secret", "group": "Image"},
+    {"key": "nanobanana2_api_base_url", "label": "Nano Banana API base URL", "type": "str", "group": "Image"},
+    {"key": "nanobanana2_api_key", "label": "Nano Banana API key", "type": "secret", "group": "Image"},
+    {"key": "nanobanana2_model", "label": "Nano Banana model", "type": "str", "group": "Image"},
+    {"key": "nanobanana2_aspect_ratio", "label": "Nano Banana aspect ratio", "type": "str", "group": "Image"},
     {"key": "hf_api_key", "label": "HuggingFace API key", "type": "secret", "group": "Image"},
     # TTS / STT
     {"key": "tts_voice", "label": "Default TTS voice", "type": "str", "group": "Audio"},
@@ -711,6 +722,21 @@ _CONFIG_FIELD_DEFS = [
     # Twitter
     {"key": "twitter_language", "label": "Twitter language", "type": "str", "group": "Twitter"},
 ]
+
+
+_OPENAI_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
+
+
+def _normalize_openai_reasoning_effort(value: str) -> str:
+    effort = (value or "").strip().lower()
+    if not effort:
+        return ""
+    if effort not in _OPENAI_REASONING_EFFORTS:
+        raise HTTPException(
+            400,
+            "llm_reasoning_effort must be one of none, minimal, low, medium, high, or xhigh",
+        )
+    return effort
 
 
 # Curated list of LLM models the user can pick as override for a single
@@ -747,6 +773,17 @@ _GEMINI_MODEL_CATALOG = [
      "description": "Más ligero: 1.5K RPD free tier."},
 ]
 
+_CLAUDE_MODEL_CATALOG = [
+    {"id": "sonnet", "label": "Claude Sonnet (latest)", "provider": "claude",
+     "description": "Alias del Claude CLI para Sonnet actual; buen balance calidad/velocidad."},
+    {"id": "opus", "label": "Claude Opus (latest)", "provider": "claude",
+     "description": "Alias del Claude CLI para mÃ¡xima calidad."},
+    {"id": "haiku", "label": "Claude Haiku (latest)", "provider": "claude",
+     "description": "Alias del Claude CLI para respuestas rÃ¡pidas y baratas."},
+    {"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6", "provider": "claude",
+     "description": "ID completo soportado por Claude CLI si tu cuenta lo tiene habilitado."},
+]
+
 
 @app.get("/api/llm/models")
 def list_llm_models():
@@ -763,6 +800,12 @@ def list_llm_models():
             default_model = openai_models[0]
         elif cfg.get("openai_model"):
             default_model = cfg["openai_model"]
+    elif active_provider == "claude":
+        claude_models = cfg.get("claude_cli_models") or []
+        if claude_models:
+            default_model = claude_models[0]
+        elif cfg.get("claude_cli_model"):
+            default_model = cfg["claude_cli_model"]
     else:
         gem_models = cfg.get("gemini_models") or []
         if gem_models:
@@ -770,7 +813,7 @@ def list_llm_models():
         elif cfg.get("gemini_model"):
             default_model = cfg["gemini_model"]
 
-    out = list(_OPENAI_MODEL_CATALOG) + list(_GEMINI_MODEL_CATALOG)
+    out = list(_OPENAI_MODEL_CATALOG) + list(_CLAUDE_MODEL_CATALOG) + list(_GEMINI_MODEL_CATALOG)
 
     # Ollama models — combine: (a) what's actually installed/available on the
     # local Ollama server, (b) a curated catalog of cloud-hosted Ollama models
@@ -863,7 +906,11 @@ def list_llm_models():
 
     return {
         "models": out,
-        "default": default_model or ("gpt-5.5" if active_provider == "openai" else "gemini-3-flash-preview"),
+        "default": default_model or (
+            "gpt-5.5"
+            if active_provider == "openai"
+            else "sonnet" if active_provider == "claude" else "gemini-3-flash-preview"
+        ),
         "active_provider": active_provider,
     }
 
@@ -1289,7 +1336,13 @@ def _legacy_list_llm_models_unused():
 # ---------------------------------------------------------------------------
 
 @app.get("/api/channels/{channel_id}/suggest-topics")
-def suggest_topics(channel_id: str, n: int = 5, model: str = ""):
+def suggest_topics(
+    channel_id: str,
+    n: int = 5,
+    model: str = "",
+    llm_provider: str = "",
+    llm_reasoning_effort: str = "",
+):
     """Ask the LLM for `n` topic ideas tailored to the channel's niche and
     language. Returns synchronously (one LLM call, not a streaming job) so
     the UI can pop them inline. Reads the channel's recent subjects from the
@@ -1335,14 +1388,27 @@ def suggest_topics(channel_id: str, n: int = 5, model: str = ""):
         f"{avoid_block}"
     )
 
+    effort = _normalize_openai_reasoning_effort(llm_reasoning_effort)
+    if llm_provider and llm_provider not in ("ollama", "gemini", "openai", "claude", "pollinations"):
+        raise HTTPException(400, "llm_provider must be 'ollama', 'gemini', 'openai', 'claude', or 'pollinations'")
+
     # Apply per-job model override (same env-var trick used by the runner)
     saved_override = os.environ.get("MP_GEMINI_MODEL_OVERRIDE", "")
+    saved_reasoning = os.environ.get("MP_OPENAI_REASONING_EFFORT", "")
+    if effort:
+        os.environ["MP_OPENAI_REASONING_EFFORT"] = effort
     if model and (model.startswith("gemini-") or model.startswith("gemma-")):
         from llm_provider import normalize_gemini_model_id
         os.environ["MP_GEMINI_MODEL_OVERRIDE"] = normalize_gemini_model_id(model) or model
     try:
         from llm_provider import generate_text  # lazy import — keeps API startup fast
-        raw_out = generate_text(prompt, temperature=0.9)
+        provider = llm_provider or _infer_llm_provider_from_model(model)
+        if provider:
+            from llm_provider import force_provider
+            with force_provider(provider, model or None):
+                raw_out = generate_text(prompt, model_name=model or None, temperature=0.9)
+        else:
+            raw_out = generate_text(prompt, temperature=0.9)
     except Exception as e:
         raise HTTPException(500, f"LLM failure: {e}") from e
     finally:
@@ -1350,6 +1416,10 @@ def suggest_topics(channel_id: str, n: int = 5, model: str = ""):
             os.environ["MP_GEMINI_MODEL_OVERRIDE"] = saved_override
         else:
             os.environ.pop("MP_GEMINI_MODEL_OVERRIDE", None)
+        if saved_reasoning:
+            os.environ["MP_OPENAI_REASONING_EFFORT"] = saved_reasoning
+        else:
+            os.environ.pop("MP_OPENAI_REASONING_EFFORT", None)
 
     # Clean up: drop empty lines, strip bullets/numbering, dedupe.
     import re as _re
@@ -1435,6 +1505,8 @@ async def preview_script(
     duration_seconds: int = 0,
     hook_style: str = "",
     retention_mode: str = "",
+    llm_provider: str = "",
+    llm_reasoning_effort: str = "",
 ):
     """Run only the subject + script generation steps and stream progress as
     SSE. The runner writes the result to a .mp/.preview-<uuid>.txt file; the
@@ -1456,12 +1528,19 @@ async def preview_script(
     retention_mode_norm = normalize_retention_mode(retention_mode)
     if retention_mode and not is_known_retention_mode(retention_mode):
         raise HTTPException(400, "retention_mode must be 'standard' or 'maxima_retencion'")
+    effort = _normalize_openai_reasoning_effort(llm_reasoning_effort)
+    if llm_provider and llm_provider not in ("ollama", "gemini", "openai", "claude", "pollinations"):
+        raise HTTPException(400, "llm_provider must be 'ollama', 'gemini', 'openai', 'claude', or 'pollinations'")
 
     args = ["preview-script", "--channel-id", channel_id]
     if custom_topic:
         args += ["--topic", custom_topic]
     if model:
         args += ["--model", model]
+    if llm_provider:
+        args += ["--llm-provider", llm_provider]
+    if effort:
+        args += ["--llm-reasoning-effort", effort]
     if sentence_length and sentence_length > 0:
         args += ["--sentence-length", str(sentence_length)]
     if duration_seconds:
@@ -1661,6 +1740,7 @@ async def generate_video(
     kind: str = "short",
     custom_topic: str = "",
     image_mode: str = "ai",
+    image_provider: str = "auto",
     auto_upload: bool = False,
     upload_platforms: str = "",
     series_id: str = "",
@@ -1668,6 +1748,7 @@ async def generate_video(
     render_profile: str = "",
     llm_provider: str = "",
     llm_model: str = "",
+    llm_reasoning_effort: str = "",
     hook_profile: str = "",
     model: str = "",
     sentence_length: int = 0,
@@ -1692,8 +1773,12 @@ async def generate_video(
                 f"duration_seconds must be one of {list(ALLOWED_SHORT_DURATIONS)}",
             )
 
-    if llm_provider and llm_provider not in ("ollama", "gemini", "openai", "pollinations"):
-        raise HTTPException(400, "llm_provider must be 'ollama', 'gemini', 'openai', or 'pollinations'")
+    if llm_provider and llm_provider not in ("ollama", "gemini", "openai", "claude", "pollinations"):
+        raise HTTPException(400, "llm_provider must be 'ollama', 'gemini', 'openai', 'claude', or 'pollinations'")
+    image_provider_norm = (image_provider or "auto").strip().lower()
+    if image_provider_norm not in ("auto", "leonardo", "openai", "gemini"):
+        raise HTTPException(400, "image_provider must be 'auto', 'leonardo', 'openai', or 'gemini'")
+    effort = _normalize_openai_reasoning_effort(llm_reasoning_effort)
 
     # Validate hook_profile against the canonical list in YouTube.py so a typo
     # from the UI fails fast instead of silently falling back to "educational"
@@ -1726,6 +1811,8 @@ async def generate_video(
         "--kind", kind,
         "--image-mode", image_mode,
     ]
+    if image_provider_norm != "auto":
+        args += ["--image-provider", image_provider_norm]
     if custom_topic:
         args += ["--topic", custom_topic]
     if selected_upload_platforms:
@@ -1740,6 +1827,8 @@ async def generate_video(
         args += ["--llm-provider", llm_provider]
     if llm_model:
         args += ["--llm-model", llm_model]
+    if effort:
+        args += ["--llm-reasoning-effort", effort]
     if hook_profile_norm:
         args += ["--hook-profile", hook_profile_norm]
     if model:
@@ -1773,6 +1862,7 @@ class BatchJobItem(BaseModel):
     kind: str = "short"
     custom_topic: str = ""
     image_mode: str = "ai"
+    image_provider: str = "auto"
     auto_upload: bool = False
     series_id: str = ""
     model: str = ""
@@ -1841,6 +1931,9 @@ def generate_batch(payload: BatchGeneratePayload):
             "--kind", item.kind,
             "--image-mode", item.image_mode or "ai",
         ]
+        image_provider_norm = (item.image_provider or "auto").strip().lower()
+        if image_provider_norm in ("leonardo", "openai", "gemini"):
+            args += ["--image-provider", image_provider_norm]
         if item.custom_topic:
             args += ["--topic", item.custom_topic]
         if item.auto_upload:

@@ -14,6 +14,8 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from utils import has_narration_structure_labels, strip_narration_structure_labels
+
 from .NarrationVoice import NarrationVoice
 from .MaxRetention import MaxRetentionEngine
 
@@ -183,17 +185,42 @@ class RetentionLab:
         generate_response: Callable[[str], str],
         history_videos: list[dict[str, Any]] | None = None,
         candidates: int = 8,
+        max_rounds: int = 1,
+        educational_anchor: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         candidates = max(4, min(int(candidates or 8), 10))
+        max_rounds = max(1, min(int(max_rounds or 1), 30))
         history_videos = history_videos or []
         burned_block = cls.burned_topic_directive(history_videos, limit=5)
         winning_block = cls.winning_topic_directive(history_videos, limit=5)
-        prompt = f"""Generate EXACTLY {candidates} first-sentence hooks for a YouTube Short.
+        scoring_block = cls._hook_scoring_directive(topic, educational_anchor=educational_anchor)
+        anchor_block = cls._educational_hook_anchor_directive(topic, language) if educational_anchor else ""
+        scored_by_key: dict[str, dict[str, Any]] = {}
+        rounds = 0
+        best = cls.score_hook("", topic, niche, language, require_subject_anchor=educational_anchor)
+
+        for round_index in range(max_rounds):
+            retry_block = ""
+            if round_index > 0:
+                issue_block = "\n".join(
+                    f"- {issue}" for issue in (best.get("issues") or [])
+                )
+                retry_block = f"""
+
+RETRY MODE:
+- The previous best hook scored only {best.get('score', 0)}/10.
+- Minimum score required: {cls.HOOK_SCORE_THRESHOLD}/10.
+- Previous best: {best.get('hook', '') or '(none)'}
+- Fix these problems:
+{issue_block or "- Add stronger visible action, topic anchoring, and immediate tension."}
+- Do not repeat any previous hook. Make every new line sharper than the previous best.
+"""
+            prompt = f"""Generate EXACTLY {candidates} first-sentence hooks for a YouTube Short.
 
 Topic: {topic}
 Channel niche: {niche}
 Language: {language}
-{burned_block}{winning_block}
+{burned_block}{winning_block}{retry_block}{anchor_block}{scoring_block}
 Rules:
 - Each hook is one spoken sentence, 8 to 12 words.
 - Make it concrete, visual, and slightly unsettling.
@@ -201,27 +228,245 @@ Rules:
 - The hook must create one immediate question: danger, contradiction, impossible scale, hidden force, or visible consequence.
 - Write every hook in {language}.
 - Return only the hooks, one per line. No numbering, bullets, quotes, markdown, or explanations."""
-        try:
-            raw = generate_response(prompt) or ""
-        except Exception:
-            raw = ""
+            rounds += 1
+            try:
+                raw = generate_response(prompt) or ""
+            except Exception:
+                raw = ""
 
-        hooks = cls._parse_lines(raw)
-        scored = [
-            cls.score_hook(hook, topic=topic, niche=niche, language=language)
-            for hook in hooks
-        ]
-        scored = [item for item in scored if item["hook"]]
-        scored.sort(key=lambda item: item["score"], reverse=True)
-        best = scored[0] if scored else cls.score_hook("", topic, niche, language)
+            for hook in cls._parse_lines(raw):
+                report = cls.score_hook(
+                    hook,
+                    topic=topic,
+                    niche=niche,
+                    language=language,
+                    require_subject_anchor=educational_anchor,
+                )
+                if not report["hook"]:
+                    continue
+                key = cls.normalize(report["hook"])
+                if key not in scored_by_key or report["score"] > scored_by_key[key]["score"]:
+                    scored_by_key[key] = report
+
+            scored = sorted(
+                scored_by_key.values(),
+                key=lambda item: item["score"],
+                reverse=True,
+            )
+            best = scored[0] if scored else best
+            if best.get("score", 0) >= cls.HOOK_SCORE_THRESHOLD:
+                break
+
+        fallback_used = False
+        if best.get("score", 0) < cls.HOOK_SCORE_THRESHOLD:
+            for hook in cls._fallback_hook_candidates(topic, language, educational_anchor=educational_anchor):
+                report = cls.score_hook(
+                    hook,
+                    topic=topic,
+                    niche=niche,
+                    language=language,
+                    require_subject_anchor=educational_anchor,
+                )
+                if not report["hook"]:
+                    continue
+                key = cls.normalize(report["hook"])
+                if key not in scored_by_key or report["score"] > scored_by_key[key]["score"]:
+                    scored_by_key[key] = report
+
+        scored = sorted(
+            scored_by_key.values(),
+            key=lambda item: item["score"],
+            reverse=True,
+        )
+        best = scored[0] if scored else best
+        fallback_keys = {
+            cls.normalize(hook)
+            for hook in cls._fallback_hook_candidates(topic, language, educational_anchor=educational_anchor)
+        }
+        fallback_used = cls.normalize(best.get("hook", "")) in fallback_keys
         report = {
             "best_hook": best.get("hook", ""),
             "best_score": best.get("score", 0),
             "accepted": best.get("score", 0) >= cls.HOOK_SCORE_THRESHOLD,
             "candidates": scored[:candidates],
             "candidate_count": len(scored),
+            "rounds": rounds,
+            "max_rounds": max_rounds,
+            "threshold": cls.HOOK_SCORE_THRESHOLD,
+            "exhausted": rounds >= max_rounds and best.get("score", 0) < cls.HOOK_SCORE_THRESHOLD,
+            "fallback_used": fallback_used,
+            "educational_anchor": educational_anchor,
         }
         return best.get("hook", ""), report
+
+    @classmethod
+    def _hook_scoring_directive(cls, topic: str, educational_anchor: bool = False) -> str:
+        topic_words = cls._keywords(topic, limit=6)
+        topic_hint = ", ".join(topic_words[:5]) or cls._shorten(topic, 60) or "the topic"
+        preference = (
+            "- In educational mode, prefer hooks that begin by naming the real subject or common name, then explain what it is if needed.\n"
+            "- Avoid opening with vague mystery words before the subject, such as \"Nadie\", \"Nunca\", \"Pero\", \"Esta estrella\", \"Eso\", or \"Algo\".\n"
+            if educational_anchor
+            else "- Prefer a hook that starts with \"Nadie\", \"Nunca\", \"Pero\", or ends with a question mark.\n"
+        )
+        return f"""
+
+HOOK LAB PASS CHECK:
+- Target score: {cls.HOOK_SCORE_THRESHOLD}/10 or higher.
+- Include at least one exact topic word from: {topic_hint}.
+- Include at least two concrete visual/tension words such as: luz, sombra, nube, cometa, planeta, orbita, rompe, borra, devora, oculta, imposible, nunca, nadie, revela.
+{preference.rstrip()}
+- Avoid vague phrases that could fit any video.
+"""
+
+    @classmethod
+    def _topic_lead(cls, topic: str) -> str:
+        clean = re.sub(r"\s+", " ", topic or "").strip(" .")
+        if not clean:
+            return "El tema"
+        lead = re.split(r"\s*[:;|—–]\s*", clean, maxsplit=1)[0].strip()
+        lead_words = lead.split()
+        if 1 <= len(lead_words) <= 6:
+            return lead
+
+        stop_at = {
+            "es", "son", "fue", "era", "were", "was", "is", "are",
+            "que", "donde", "cuando", "why", "how",
+        }
+        kept: list[str] = []
+        for word in clean.split():
+            if len(kept) >= 2 and cls.normalize(word) in stop_at:
+                break
+            kept.append(word)
+            if len(kept) >= 5:
+                break
+        return " ".join(kept).strip(" .,:;") or clean
+
+    @classmethod
+    def _topic_category_phrase(cls, topic: str, language: str = "") -> str:
+        text = cls.normalize(topic)
+        english = "en" in cls.normalize(language) and "espan" not in cls.normalize(language)
+        categories = [
+            ("agujero negro", "a black hole", "un agujero negro"),
+            ("black hole", "a black hole", "un agujero negro"),
+            ("estrella vampiro", "a vampire star", "una estrella vampiro"),
+            ("estrella", "a star", "una estrella"),
+            ("star", "a star", "una estrella"),
+            ("planeta", "a planet", "un planeta"),
+            ("planet", "a planet", "un planeta"),
+            ("cometa", "a comet", "un cometa"),
+            ("comet", "a comet", "un cometa"),
+            ("sonda", "a space probe", "una sonda"),
+            ("probe", "a space probe", "una sonda"),
+            ("telescopio", "a telescope", "un telescopio"),
+            ("telescope", "a telescope", "un telescopio"),
+            ("galaxia", "a galaxy", "una galaxia"),
+            ("galaxy", "a galaxy", "una galaxia"),
+            ("mision", "a space mission", "una misión"),
+            ("mission", "a space mission", "una misión"),
+            ("senal", "a signal", "una señal"),
+            ("signal", "a signal", "una señal"),
+            ("pulsar", "a pulsar", "un púlsar"),
+            ("magnetar", "a magnetar", "un magnetar"),
+            ("supernova", "a supernova", "una supernova"),
+            ("nova", "a nova system", "un sistema de nova"),
+        ]
+        for needle, en_value, es_value in categories:
+            if needle in text:
+                return en_value if english else es_value
+        return "a real phenomenon" if english else "un fenómeno real"
+
+    @classmethod
+    def _subject_anchor_metrics(cls, hook: str, topic: str) -> dict[str, bool]:
+        hook_tokens = cls._words(cls.normalize(hook))
+        topic_tokens = cls._keywords(topic, limit=8)
+        lead_tokens = cls._keywords(cls._topic_lead(topic), limit=5)
+        anchor_tokens = [tok for tok in lead_tokens + topic_tokens if len(tok) > 2]
+        early_tokens = hook_tokens[:8]
+        anchored_early = bool(anchor_tokens and any(tok in early_tokens for tok in anchor_tokens))
+
+        category_terms = {
+            "agujero", "negro", "estrella", "planeta", "cometa", "sonda",
+            "telescopio", "galaxia", "mision", "senal", "pulsar", "magnetar",
+            "supernova", "nova", "sistema", "fenomeno", "black", "hole",
+            "star", "planet", "comet", "probe", "telescope", "galaxy",
+            "mission", "signal", "phenomenon",
+        }
+        category_hit = any(tok in hook_tokens[:12] for tok in category_terms)
+        first = hook_tokens[0] if hook_tokens else ""
+        vague_opening = first in {
+            "nadie", "nunca", "pero", "esta", "este", "ese", "esa", "eso",
+            "algo", "aquella", "aquel", "detectaron", "buscaban", "no",
+            "never", "nobody", "but", "this", "that", "something",
+        }
+        return {
+            "anchored_early": anchored_early,
+            "category_hit": category_hit,
+            "vague_opening": vague_opening,
+        }
+
+    @classmethod
+    def _educational_hook_anchor_directive(cls, topic: str, language: str = "") -> str:
+        lead = cls._topic_lead(topic)
+        return f"""
+
+EDUCATIONAL ANCHOR MODE:
+- The first words should clearly identify the subject, not hide it behind suspense.
+- Start with the common or technical name when that sounds natural: "{lead}".
+- If the name is technical, immediately add the category: black hole, star, planet, comet, probe, galaxy, mission, event, or phenomenon.
+- Write catalog numbers in a speakable way when useful, e.g. "TON seis dieciocho", "Voyager uno", "Kepler cuatrocientos cincuenta y dos b".
+- Good shape, not a fixed template: "[subject] es/was [category] que/that [strange action or consequence]."
+"""
+
+    @classmethod
+    def _fallback_hook_candidates(
+        cls,
+        topic: str,
+        language: str = "",
+        educational_anchor: bool = False,
+    ) -> list[str]:
+        if educational_anchor:
+            lead = cls._topic_lead(topic)
+            category = cls._topic_category_phrase(topic, language)
+            if "en" in cls.normalize(language) and "espan" not in cls.normalize(language):
+                return [
+                    f"{lead} is {category} hiding a dangerous cycle.",
+                    f"{lead} is {category} that changes before anyone notices.",
+                    f"{lead} is {category} where pressure becomes impossible.",
+                ]
+            return [
+                f"{lead} es {category} que esconde un ciclo peligroso.",
+                f"{lead} es {category} que cambia cuando nadie mira.",
+                f"{lead} es {category} donde la presión se vuelve imposible.",
+            ]
+
+        normalized_topic = cls.normalize(topic)
+        anchor = ""
+        for candidate in sorted(MaxRetentionEngine.VISUAL_ANCHORS, key=len, reverse=True):
+            if candidate in normalized_topic:
+                anchor = candidate
+                break
+        if not anchor:
+            generic = {
+                "sistema", "observatorios", "astronomicos", "tierra", "julio",
+                "historia", "secreto", "misterio", "datos",
+            }
+            for token in cls._keywords(topic, limit=8):
+                if token not in generic:
+                    anchor = token
+                    break
+        anchor = anchor or cls._keywords(topic, limit=1)[0] if cls._keywords(topic, limit=1) else "esto"
+        if "en" in cls.normalize(language) and "espan" not in cls.normalize(language):
+            return [
+                f"No one sees {anchor} break until it reveals an impossible shadow.",
+                f"But {anchor} reveals the hidden cloud that breaks the sky?",
+                f"Never watch {anchor} hide the light before it breaks.",
+            ]
+        return [
+            f"Nadie ve {anchor} romperse hasta que revela una sombra imposible.",
+            f"Pero {anchor} revela una nube que rompe el cielo?",
+            f"Nunca {anchor} oculta una sombra imposible sin romper la luz.",
+        ]
 
     @classmethod
     def score_hook(
@@ -230,6 +475,7 @@ Rules:
         topic: str = "",
         niche: str = "",
         language: str = "",
+        require_subject_anchor: bool = False,
     ) -> dict[str, Any]:
         clean = cls._clean_line(hook)
         normalized = cls.normalize(clean)
@@ -272,6 +518,18 @@ Rules:
             issues.append("hook does not clearly name the topic")
         if clean.endswith("?") or any(term in normalized for term in ("pero", "nadie", "nunca", "por eso")):
             score += 1.0
+        anchor_metrics = cls._subject_anchor_metrics(clean, topic)
+        if require_subject_anchor:
+            if anchor_metrics["anchored_early"]:
+                score += 2.2
+            else:
+                score -= 2.0
+                issues.append("educational hook does not anchor the subject early")
+            if anchor_metrics["category_hit"]:
+                score += 0.8
+            if anchor_metrics["vague_opening"]:
+                score -= 1.4
+                issues.append("educational hook opens vaguely before naming the subject")
 
         return {
             "hook": clean,
@@ -282,6 +540,9 @@ Rules:
                 "reveal_hits": reveal_hits,
                 "visual_hits": visual_hits,
                 "tension_hits": tension_hits,
+                "anchored_early": anchor_metrics["anchored_early"],
+                "category_hit": anchor_metrics["category_hit"],
+                "vague_opening": anchor_metrics["vague_opening"],
             },
             "topic": topic,
             "niche": niche,
@@ -419,6 +680,10 @@ Rules:
         issues: list[str] = []
         strengths: list[str] = []
 
+        if has_narration_structure_labels(script):
+            issues.append("Narration contains structural labels that would be spoken aloud.")
+            score -= 1.5
+
         if not sentences:
             issues.append("Script is empty or has no sentence boundaries.")
         if first_sentence:
@@ -492,7 +757,7 @@ Rules:
         max_attempts: int = 2,
     ) -> tuple[str, dict[str, Any]]:
         threshold = float(threshold or cls.SCORE_THRESHOLD)
-        best_script = (script or "").strip()
+        best_script = strip_narration_structure_labels((script or "").strip())
         initial_report = cls.score_short_script(best_script, topic, niche, language, "maxima_retencion")
         best_report = dict(initial_report)
         attempts = 0
@@ -524,6 +789,7 @@ Rules:
 - Use concrete visible images, not abstract textbook labels.
 - Keep the final sentence short and loopable.
 {NarrationVoice.rewrite_guardrail(language)}
+- Never announce the structure. Do not write labels like "primera revelacion", "segunda revelacion", "hook", "contexto", "desarrollo", "conclusion", "parte uno", or "seccion dos".
 - Return ONLY the narration. No markdown, title, bullets, or stage directions.
 
 Current narration:
@@ -531,7 +797,9 @@ Current narration:
 {best_script}
 \"\"\""""
                 try:
-                    candidate = cls._clean_script(generate_response(prompt) or "")
+                    candidate = strip_narration_structure_labels(
+                        cls._clean_script(generate_response(prompt) or "")
+                    )
                 except Exception:
                     continue
                 if not candidate:

@@ -41,6 +41,7 @@ def test_generate_image_bytes_with_codex_reads_created_png(monkeypatch):
     monkeypatch.setattr(codex_image_provider, "get_codex_cli_model", lambda: "")
     monkeypatch.setattr(codex_image_provider, "get_codex_cli_image_sandbox", lambda: "workspace-write")
     monkeypatch.setattr(codex_image_provider, "get_codex_cli_image_timeout_seconds", lambda: 321)
+    monkeypatch.setattr(codex_image_provider, "get_openai_reasoning_effort", lambda: "high")
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     data = codex_image_provider.generate_image_bytes_with_codex(
@@ -51,7 +52,8 @@ def test_generate_image_bytes_with_codex_reads_created_png(monkeypatch):
     )
 
     assert data.startswith(b"\x89PNG")
-    assert captured["args"][:4] == ["codex", "--ask-for-approval", "never", "exec"]
+    assert captured["args"][:3] == ["codex", "-c", 'model_reasoning_effort="high"']
+    assert captured["args"][captured["args"].index("--ask-for-approval") + 1] == "never"
     assert captured["args"][captured["args"].index("--sandbox") + 1] == "workspace-write"
     assert captured["args"][captured["args"].index("--model") + 1] == "gpt-test"
     assert captured["kwargs"]["timeout"] == 321

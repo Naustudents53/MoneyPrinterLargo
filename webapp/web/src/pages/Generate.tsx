@@ -31,7 +31,10 @@ import {
   SHORT_RENDER_PROFILE_OPTIONS,
   type Channel,
   type HookProfile,
+  type ImageProvider,
+  type LLMProvider,
   type LLMModel,
+  type OpenAIReasoningEffort,
   type SeriesEntry,
   type ShortDurationSeconds,
   type ShortRenderProfile,
@@ -61,6 +64,19 @@ const RETENTION_MODE_META: Record<RetentionMode, {
 };
 
 type VisualSource = "ai" | "photos" | "upload";
+
+const OPENAI_REASONING_OPTIONS: Array<{ value: OpenAIReasoningEffort; label: string }> = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "XHigh" },
+];
+
+const IMAGE_PROVIDER_OPTIONS: Array<{ value: ImageProvider; label: string }> = [
+  { value: "leonardo", label: "Leonardo API" },
+  { value: "openai", label: "OpenAI · Codex Image 2" },
+  { value: "gemini", label: "Gemini · Nano Banana" },
+];
 
 export function Generate() {
   const [params] = useSearchParams();
@@ -94,18 +110,21 @@ export function Generate() {
   const [pace, setPace] = useState(50);
   const [seed, setSeed] = useState("");
 
-  const [llmProvider, setLlmProvider] = useState<"" | "ollama" | "gemini" | "openai" | "pollinations">("");
+  const [llmProvider, setLlmProvider] = useState<"" | LLMProvider>("");
   const [llmModel, setLlmModel] = useState<string>("");
+  const [openaiReasoningEffort, setOpenaiReasoningEffort] = useState<OpenAIReasoningEffort>("xhigh");
+  const [imageProvider, setImageProvider] = useState<ImageProvider>("auto");
   // Rich model catalog from /api/llm/models — keeps `label` + `description` so
   // the dropdown can show human-readable names instead of raw ids like
   // "gemini-2.5-flash-lite" or "kimi-k2.6:cloud".
   const [llmCatalog, setLlmCatalog] = useState<LLMModel[]>([]);
 
   const llmModels = useMemo(() => {
-    const buckets: Record<"ollama" | "gemini" | "openai" | "pollinations", LLMModel[]> = {
+    const buckets: Record<LLMProvider, LLMModel[]> = {
       ollama: [],
       gemini: [],
       openai: [],
+      claude: [],
       pollinations: [],
     };
     for (const m of llmCatalog) {
@@ -166,6 +185,19 @@ export function Generate() {
     if (list.length === 0) setLlmModel("");
     else if (!list.some((m) => m.id === llmModel)) setLlmModel(list[0].id);
   }, [llmProvider, llmModels, llmModel]);
+
+  const showImageProviderSelector = llmProvider === "openai" || llmProvider === "claude";
+
+  useEffect(() => {
+    if (showImageProviderSelector) {
+      if (imageMode !== "ai") setImageMode("ai");
+      if (imageProvider === "auto") {
+        setImageProvider(llmProvider === "openai" ? "openai" : "leonardo");
+      }
+      return;
+    }
+    if (imageProvider !== "auto") setImageProvider("auto");
+  }, [showImageProviderSelector, llmProvider, imageMode, imageProvider]);
 
   const selectedChannel = useMemo(
     () => channels.find((c) => c.id === channelId),
@@ -229,6 +261,7 @@ export function Generate() {
       kind,
       custom_topic: topic.trim(),
       image_mode: imageMode === "photos" ? "photos" : "ai",
+      image_provider: showImageProviderSelector ? imageProvider : undefined,
       auto_upload: serverUploadPlatforms.length > 0,
       upload_platforms: serverUploadPlatforms,
       series_id: seriesId || undefined,
@@ -236,6 +269,7 @@ export function Generate() {
       render_profile: kind === "short" ? shortRenderProfile : undefined,
       llm_provider: llmProvider || undefined,
       llm_model: llmProvider && llmModel ? llmModel : undefined,
+      llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
       hook_profile: hookProfile || undefined,
       photo_upload_id: photoUploadId || undefined,
       retention_mode: kind === "short" ? retentionMode : undefined,
@@ -255,6 +289,8 @@ export function Generate() {
       const { topics } = await api.suggestTopics(channelId, {
         n: 6,
         model: llmProvider && llmModel ? llmModel : undefined,
+        llm_provider: llmProvider || undefined,
+        llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
       });
       setTopicIdeas(topics || []);
       if (!topics?.length) toast.info("El LLM no devolvió ideas — prueba otro modelo");
@@ -289,6 +325,8 @@ export function Generate() {
     const url = api.previewScriptUrl(channelId, {
       custom_topic: topic.trim(),
       model: llmProvider && llmModel ? llmModel : undefined,
+      llm_provider: llmProvider || undefined,
+      llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
       duration_seconds: shortDuration,
       retention_mode: retentionMode,
     });
@@ -315,6 +353,7 @@ export function Generate() {
       kind: "short",
       custom_topic: topic.trim(),
       image_mode: imageMode === "photos" ? "photos" : "ai",
+      image_provider: showImageProviderSelector ? imageProvider : undefined,
       auto_upload: serverUploadPlatforms.length > 0,
       upload_platforms: serverUploadPlatforms,
       series_id: seriesId || undefined,
@@ -322,6 +361,7 @@ export function Generate() {
       render_profile: shortRenderProfile,
       llm_provider: llmProvider || undefined,
       llm_model: llmProvider && llmModel ? llmModel : undefined,
+      llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
       script_file: data.previewId,
       photo_upload_id: photoUploadId || undefined,
       retention_mode: retentionMode,
@@ -621,8 +661,11 @@ export function Generate() {
                 <Field label="Fuente de imágenes">
                   <Segmented
                     value={imageMode}
-                    onChange={(v) => setImageMode(v as VisualSource)}
+                    onChange={(v) => {
+                      if (!showImageProviderSelector) setImageMode(v as VisualSource);
+                    }}
                     accentVar="var(--accent)"
+                    disabled={showImageProviderSelector}
                     options={[
                       { value: "ai", label: "AI · Nano Banana" },
                       { value: "photos", label: "Stock fotos" },
@@ -631,7 +674,18 @@ export function Generate() {
                   />
                 </Field>
 
-                {imageMode === "upload" && (
+                {showImageProviderSelector && (
+                  <Field label="Fotos AI" hint={imageProvider}>
+                    <SelectMini
+                      value={imageProvider}
+                      onChange={(v) => setImageProvider(v as ImageProvider)}
+                      options={IMAGE_PROVIDER_OPTIONS}
+                      icon={<Sparkles className="h-3 w-3" strokeWidth={1.5} />}
+                    />
+                  </Field>
+                )}
+
+                {imageMode === "upload" && !showImageProviderSelector && (
                   <Field
                     label="Fotos subidas"
                     hint={photoFiles.length ? `${photoFiles.length} archivos` : "jpg/png/webp"}
@@ -772,7 +826,7 @@ export function Generate() {
                         setLlmProvider(
                           v === "auto"
                             ? ""
-                            : (v as "ollama" | "gemini" | "openai" | "pollinations"),
+                            : (v as LLMProvider),
                         )
                       }
                       options={[
@@ -793,6 +847,12 @@ export function Generate() {
                           value: "openai",
                           label: `OpenAI${
                             llmModels.openai.length ? ` (${llmModels.openai.length})` : ""
+                          }`,
+                        },
+                        {
+                          value: "claude",
+                          label: `Claude${
+                            llmModels.claude.length ? ` (${llmModels.claude.length})` : ""
                           }`,
                         },
                         {
@@ -818,6 +878,16 @@ export function Generate() {
                     )}
                   </div>
                 </Field>
+                {llmProvider === "openai" && (
+                  <Field label="Thinking" hint={openaiReasoningEffort}>
+                    <SelectMini
+                      value={openaiReasoningEffort}
+                      onChange={(v) => setOpenaiReasoningEffort(v as OpenAIReasoningEffort)}
+                      options={OPENAI_REASONING_OPTIONS}
+                      icon={<Sparkles className="h-3 w-3" strokeWidth={1.5} />}
+                    />
+                  </Field>
+                )}
 
                 <Field label="Subida" hint={uploadTargetLabel}>
                   <div className="grid grid-cols-3 gap-1.5">
@@ -946,6 +1016,7 @@ export function Generate() {
         defaults={{
           kind,
           imageMode: imageMode === "photos" ? "photos" : "ai",
+          imageProvider: showImageProviderSelector ? imageProvider : undefined,
           autoUpload: uploadPlatforms.includes("youtube"),
           model: llmProvider && llmModel ? llmModel : undefined,
           renderProfile: kind === "short" ? shortRenderProfile : undefined,
@@ -1163,11 +1234,13 @@ function Segmented({
   value,
   onChange,
   accentVar,
+  disabled = false,
 }: {
   options: { value: string; label: string }[];
   value: string;
   onChange: (v: string) => void;
   accentVar: string;
+  disabled?: boolean;
 }) {
   return (
     <div
@@ -1183,9 +1256,11 @@ function Segmented({
           <button
             key={opt.value || "_"}
             type="button"
+            disabled={disabled}
             onClick={() => onChange(opt.value)}
             className={cn(
               "px-3 py-1.5 rounded-md text-[12px] cursor-pointer",
+              disabled && "cursor-not-allowed opacity-50",
               active
                 ? "bg-surface text-foreground font-medium"
                 : "bg-transparent text-muted-foreground hover:text-foreground",

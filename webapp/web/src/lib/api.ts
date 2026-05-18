@@ -299,7 +299,7 @@ export interface Voice {
 export interface LLMModel {
   id: string;
   label: string;
-  provider: "gemini" | "ollama" | "openai" | "pollinations";
+  provider: "gemini" | "ollama" | "openai" | "claude" | "pollinations";
   description: string;
 }
 
@@ -308,6 +308,10 @@ export interface LLMModelList {
   default: string;
   active_provider: string;
 }
+
+export type OpenAIReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type LLMProvider = "ollama" | "gemini" | "openai" | "claude" | "pollinations";
+export type ImageProvider = "auto" | "leonardo" | "openai" | "gemini";
 
 export interface HookStyle {
   id: string;       // "<profile>::<name>" — round-trips via MP_HOOK_STYLE_OVERRIDE
@@ -321,6 +325,7 @@ export interface BatchJobItem {
   kind: "short" | "long";
   custom_topic?: string;
   image_mode?: "ai" | "photos";
+  image_provider?: ImageProvider | "";
   auto_upload?: boolean;
   series_id?: string;
   model?: string;
@@ -369,7 +374,7 @@ export interface PhotoPromptRequest {
   style?: string;
   aspect_ratio?: string;
   language?: string;
-  llm_provider?: "ollama" | "gemini" | "openai" | "pollinations" | "";
+  llm_provider?: LLMProvider | "";
   llm_model?: string;
   retention_mode?: RetentionMode;
 }
@@ -515,10 +520,17 @@ export const api = {
   listHookStyles: () => request<{ styles: HookStyle[] }>("/api/llm/hook-styles"),
 
   // Topic suggestions — returns N ideas tailored to the channel's niche.
-  suggestTopics: (channelId: string, params: { n?: number; model?: string } = {}) => {
+  suggestTopics: (channelId: string, params: {
+    n?: number;
+    model?: string;
+    llm_provider?: LLMProvider | "";
+    llm_reasoning_effort?: OpenAIReasoningEffort | "";
+  } = {}) => {
     const qs = new URLSearchParams();
     if (params.n) qs.set("n", String(params.n));
     if (params.model) qs.set("model", params.model);
+    if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
+    if (params.llm_reasoning_effort) qs.set("llm_reasoning_effort", params.llm_reasoning_effort);
     return request<{ topics: string[] }>(
       `/api/channels/${channelId}/suggest-topics?${qs.toString()}`,
     );
@@ -610,10 +622,11 @@ export const api = {
   // New code should use `listLLMModels()` and group by `provider` directly.
   listLlmModels: async () => {
     const data = await request<LLMModelList>("/api/llm/models");
-    const buckets: { ollama: string[]; gemini: string[]; openai: string[]; pollinations: string[] } = {
+    const buckets: { ollama: string[]; gemini: string[]; openai: string[]; claude: string[]; pollinations: string[] } = {
       ollama: [],
       gemini: [],
       openai: [],
+      claude: [],
       pollinations: [],
     };
     for (const m of data.models || []) {
@@ -627,13 +640,15 @@ export const api = {
     kind: "short" | "long";
     custom_topic?: string;
     image_mode?: "ai" | "photos";
+    image_provider?: ImageProvider | "";
     auto_upload?: boolean;
     upload_platforms?: UploadPlatform[];
     series_id?: string;
     duration_seconds?: ShortDurationSeconds;
     render_profile?: ShortRenderProfile;
-    llm_provider?: "ollama" | "gemini" | "openai" | "pollinations" | "";
+    llm_provider?: LLMProvider | "";
     llm_model?: string;
+    llm_reasoning_effort?: OpenAIReasoningEffort | "";
     hook_profile?: HookProfile | "";
     model?: string;
     sentence_length?: number;
@@ -646,6 +661,7 @@ export const api = {
     qs.set("kind", params.kind);
     if (params.custom_topic) qs.set("custom_topic", params.custom_topic);
     if (params.image_mode) qs.set("image_mode", params.image_mode);
+    if (params.image_provider) qs.set("image_provider", params.image_provider);
     if (params.auto_upload) qs.set("auto_upload", "true");
     if (params.upload_platforms?.length) {
       qs.set("upload_platforms", params.upload_platforms.join(","));
@@ -659,6 +675,7 @@ export const api = {
     }
     if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
     if (params.llm_model) qs.set("llm_model", params.llm_model);
+    if (params.llm_reasoning_effort) qs.set("llm_reasoning_effort", params.llm_reasoning_effort);
     if (params.hook_profile) qs.set("hook_profile", params.hook_profile);
     if (params.model) qs.set("model", params.model);
     if (params.sentence_length && params.sentence_length > 0) {
@@ -675,6 +692,8 @@ export const api = {
   previewScriptUrl(id: string, params: {
     custom_topic?: string;
     model?: string;
+    llm_provider?: LLMProvider | "";
+    llm_reasoning_effort?: OpenAIReasoningEffort | "";
     sentence_length?: number;
     duration_seconds?: ShortDurationSeconds;
     hook_style?: string;
@@ -684,6 +703,8 @@ export const api = {
     qs.set("kind", "short");
     if (params.custom_topic) qs.set("custom_topic", params.custom_topic);
     if (params.model) qs.set("model", params.model);
+    if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
+    if (params.llm_reasoning_effort) qs.set("llm_reasoning_effort", params.llm_reasoning_effort);
     if (params.sentence_length && params.sentence_length > 0) {
       qs.set("sentence_length", String(params.sentence_length));
     }

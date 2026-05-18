@@ -171,6 +171,7 @@ MAXIMA RETENCION MODE - mandatory:
 - Every 2 sentences must add a new reason to keep watching: a twist, a scale jump, a consequence, or a more precise image.
 - Structure the Short like this: sentence 1 shock, sentences 2-3 simple setup, sentences 4-{midpoint} escalation, sentences {midpoint + 1}-{max(midpoint + 2, sentence_length - 2)} explanation, final sentences payoff and echo.
 - Prefer strong verbs over labels: se acerca, rompe, dobla, arrastra, borra, ilumina, oculta, dispara, devora.
+- These structure words are private instructions only. Never say labels like "primera revelacion", "segunda revelacion", "hook", "contexto", "desarrollo", "conclusion", "parte uno", or "seccion dos" in the narration.
 - Cut filler. No generic hype, no calls to action, no classroom tone, no slow introductions.
 - The final sentence should be short enough to loop cleanly back into the first sentence.
 - Write every word in {language}.
@@ -207,7 +208,8 @@ Rules:
 - Keep EXACTLY {sentence_length} sentences.
 {target_clause}- Sentence one: 8 to 12 words, concrete, visual, unsettling, and tied to the topic.
 - No "Sabias que", "En este video", "Hoy vamos", "Descubre", "Acompaname", welcome, or meta commentary.
-- Keep one continuous story, but add a mini-revelation every 2 sentences.
+- Keep one continuous story, but add a new twist or consequence every 2 sentences.
+- Never announce the structure. Do not write labels like "primera revelacion", "segunda revelacion", "hook", "contexto", "desarrollo", "conclusion", "parte uno", or "seccion dos".
 - Use simple spoken language, short sentences, strong verbs, and concrete cosmic images.
 - Reduce textbook explanation. Increase cause -> consequence -> twist.
 - End with a memorable line that loops naturally back to the first sentence.

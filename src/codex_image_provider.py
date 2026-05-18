@@ -11,6 +11,7 @@ from config import (
     get_codex_cli_image_sandbox,
     get_codex_cli_image_timeout_seconds,
     get_codex_cli_model,
+    get_openai_reasoning_effort,
 )
 
 
@@ -31,7 +32,7 @@ Visual prompt:
 
 Hard requirements:
 - Create the image file at the exact path above.
-- Use your available image-generation capability for the visual when available.
+- Use your available OpenAI image-generation capability for the visual when available, preferably Image 2.
 - Do not write explanatory text into the image unless the prompt explicitly asks for text.
 - Do not create or modify any project files except the requested output image.
 - Final assistant response must be only: DONE
@@ -64,9 +65,12 @@ def generate_image_bytes_with_codex(prompt: str, *, width: int, height: int, mod
     output_path = os.path.join(mp_dir, f"codex-image-{uuid4()}.png")
     message_path = os.path.join(mp_dir, f"codex-image-{uuid4()}.txt")
     selected_model = (model or get_codex_cli_model() or "").strip()
+    effort = get_openai_reasoning_effort().lower()
 
     args = [
         get_codex_cli_command(),
+        "-c",
+        f'model_reasoning_effort="{effort}"',
         "--ask-for-approval",
         "never",
         "exec",

@@ -3,6 +3,7 @@
   "firefox_profile": "",
   "headless": false,
   "llm_provider": "gemini",
+  "image_provider": "auto",
   "gemini_api_key": "",
   "gemini_models": [
     "gemini-3-flash-preview",
@@ -24,6 +25,14 @@
   "codex_cli_generate_images": true,
   "codex_cli_image_sandbox": "workspace-write",
   "codex_cli_image_timeout_seconds": 900,
+  "claude_cli_command": "claude",
+  "claude_cli_model": "sonnet",
+  "claude_cli_models": [
+    "sonnet",
+    "opus",
+    "haiku"
+  ],
+  "claude_cli_timeout_seconds": 300,
   "ollama_base_url": "http://127.0.0.1:11434",
   "ollama_model": "gemma4:31b-cloud",
   "ollama_models": [
@@ -42,7 +51,7 @@
   "twitter_language": "English",
   "nanobanana2_api_base_url": "https://generativelanguage.googleapis.com/v1beta",
   "nanobanana2_api_key": "",
-  "nanobanana2_model": "gemini-3.1-flash-image-preview",
+  "nanobanana2_model": "gemini-2.5-flash-image",
   "nanobanana2_aspect_ratio": "9:16",
   "pexels_api_key": "",
   "pixabay_api_key": "",

@@ -9,10 +9,12 @@ All your configurations will be in a file in the root directory, called `config.
 - `headless`: `boolean` - If `true`, the application will run in headless mode. This means that the browser will not be visible.
 - `ollama_base_url`: `string` - Base URL of your local Ollama server (default: `http://127.0.0.1:11434`).
 - `ollama_model`: `string` - Ollama model to use for text generation (e.g. `llama3.2:3b`). If empty, the app queries Ollama at startup and lets you pick from the available models interactively.
+- `image_provider`: `string` - AI image backend override: `auto`, `leonardo`, `openai` (Codex CLI Image), or `gemini` (Nano Banana).
 - `twitter_language`: `string` - The language that will be used to generate & post tweets.
 - `nanobanana2_api_base_url`: `string` - Nano Banana 2 API base URL (default: `https://generativelanguage.googleapis.com/v1beta`).
 - `gemini_api_key`: `string` - API key for the Gemini API (used for both text generation and Nano Banana 2 image generation). If empty, MPP falls back to environment variable `GEMINI_API_KEY`.
 - `openai_api_key`: `string` - API key for the OpenAI Responses API. If empty, MPP falls back to environment variable `OPENAI_API_KEY`.
+- `openai_reasoning_effort`: `string` - Default OpenAI/Codex thinking level. Supported values: `low`, `medium`, `high`, `xhigh` (also `none`/`minimal` for advanced CLI/API use). The Generate UI can override this per job when OpenAI is selected.
 - `openai_use_codex_cli`: `boolean` - If `true`, selecting `llm_provider: "openai"` delegates text generation to your locally logged-in `codex exec` instead of the OpenAI API key path.
 - `codex_cli_command`: `string` - Codex CLI executable name/path used by `openai_use_codex_cli` (default: `codex`).
 - `codex_cli_model`: `string` - Optional Codex CLI model override. Leave empty to use the model selected in the UI or Codex's own default.
@@ -21,7 +23,11 @@ All your configurations will be in a file in the root directory, called `config.
 - `codex_cli_generate_images`: `boolean` - If `true`, selecting OpenAI through Codex CLI also tries Codex CLI first for generated video images and thumbnails.
 - `codex_cli_image_sandbox`: `string` - Sandbox for Codex CLI image calls. Must allow writing the generated PNG; `workspace-write` is recommended.
 - `codex_cli_image_timeout_seconds`: `number` - Timeout for each image generated through Codex CLI.
-- `nanobanana2_model`: `string` - Nano Banana 2 model name (default: `gemini-3.1-flash-image-preview`).
+- `claude_cli_command`: `string` - Claude CLI executable name/path used when selecting `claude` as LLM provider (default: `claude`).
+- `claude_cli_model`: `string` - Default Claude CLI model/alias (default: `sonnet`).
+- `claude_cli_models`: `array` - Claude CLI models/aliases shown in the Generate selector.
+- `claude_cli_timeout_seconds`: `number` - Timeout for each `claude --print` text-generation call.
+- `nanobanana2_model`: `string` - Nano Banana model name (default: `gemini-2.5-flash-image`).
 - `nanobanana2_aspect_ratio`: `string` - Aspect ratio for generated images (default: `9:16`).
 - `threads`: `number` - The amount of threads that will be used to execute operations, e.g. writing to a file using MoviePy.
 - `short_render_profile`: `string` - Short render tradeoff: `quality` keeps Ken Burns + karaoke subtitles, `fast` uses static images + karaoke subtitles, and `turbo` uses static images without burned-in karaoke for maximum render speed.
@@ -65,10 +71,13 @@ All your configurations will be in a file in the root directory, called `config.
   "headless": false,
   "ollama_base_url": "http://127.0.0.1:11434",
   "ollama_model": "",
+  "image_provider": "auto",
   "twitter_language": "English",
   "nanobanana2_api_base_url": "https://generativelanguage.googleapis.com/v1beta",
+  "nanobanana2_api_key": "",
   "gemini_api_key": "",
   "openai_api_key": "",
+  "openai_reasoning_effort": "medium",
   "openai_use_codex_cli": false,
   "codex_cli_command": "codex",
   "codex_cli_model": "",
@@ -77,7 +86,11 @@ All your configurations will be in a file in the root directory, called `config.
   "codex_cli_generate_images": true,
   "codex_cli_image_sandbox": "workspace-write",
   "codex_cli_image_timeout_seconds": 900,
-  "nanobanana2_model": "gemini-3.1-flash-image-preview",
+  "claude_cli_command": "claude",
+  "claude_cli_model": "sonnet",
+  "claude_cli_models": ["sonnet", "opus", "haiku"],
+  "claude_cli_timeout_seconds": 300,
+  "nanobanana2_model": "gemini-2.5-flash-image",
   "nanobanana2_aspect_ratio": "9:16",
   "threads": 2,
   "short_render_profile": "quality",

@@ -105,6 +105,7 @@ Rules:
 - Use mystery, scale, and scientific consequence. Avoid generic hype.
 - No markdown, no title, no bullets, no stage directions.
 - No "welcome", no "today we will talk about", no meta commentary.
+- Never announce the structure. Do not write labels like "first revelation", "second revelation", "primera revelacion", "segunda revelacion", "hook", "context", "development", or "conclusion".
 - Write every word in {language}.
 {NarrationVoice.rewrite_guardrail(language)}
 - Return ONLY the rewritten narration script."""
@@ -171,6 +172,7 @@ COSMIC RETENTION PROFILE - mandatory because this is universe / astronomy conten
 - Use the emotional engine: mystery -> simple explanation -> scale shock -> scientific twist -> memorable ending.
 - Prefer lines like "Lo inquietante es..." or "Pero aqui la fisica cambia..." over generic facts.
 - Every two or three sentences must create a new reason to keep watching.
+- These are private structure instructions. The narrator must never say labels like "primera revelacion", "segunda revelacion", "hook", "contexto", "desarrollo", or "conclusion".
 - The final sentence should feel like awe, unease, or a changed perception of the universe.
 - Write in {language}."""
 
@@ -198,7 +200,7 @@ COSMIC RETENTION PROFILE - mandatory:
         return [
             "Pregunta imposible: abre con una imagen cosmica inquietante y una pregunta que parezca romper la intuicion. No expliques demasiado; deja una grieta mental abierta.",
             "Escala emocional: compara el objeto o fenomeno con la Tierra, el Sol, el Sistema Solar o la galaxia para que el espectador sienta tamano, distancia o tiempo.",
-            "Primera revelacion parcial con like-break natural al inicio: entrega una respuesta pequena, pero abre una pregunta mas profunda sobre lo que significa fisicamente.",
+            "Respuesta parcial con like-break natural al inicio: entrega una respuesta pequena, pero abre una pregunta mas profunda sobre lo que significa fisicamente.",
             "Mecanismo invisible: explica la fisica esencial con lenguaje simple y visual, como si el espectador pudiera ver gravedad, luz, radiacion o expansion actuando.",
             "Giro cientifico: destruye una intuicion popular sobre el tema y reemplazala con una idea mas extrana, pero real.",
             "La frontera: presenta el limite fisico o conceptual del tema: horizonte, borde observable, energia, tiempo, silencio, distancia o medicion.",

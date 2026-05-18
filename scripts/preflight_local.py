@@ -44,11 +44,13 @@ def main() -> int:
 
     stt_provider = str(cfg.get("stt_provider", "local_whisper")).lower()
     llm_provider = str(cfg.get("llm_provider", "gemini")).lower()
+    image_provider = str(cfg.get("image_provider", "auto")).lower()
     openai_use_codex_cli = bool(cfg.get("openai_use_codex_cli", False))
     codex_cli_generate_images = bool(cfg.get("codex_cli_generate_images", True))
 
     ok(f"stt_provider={stt_provider}")
     ok(f"llm_provider={llm_provider}")
+    ok(f"image_provider={image_provider}")
 
     imagemagick_path = cfg.get("imagemagick_path", "")
     if imagemagick_path and os.path.exists(imagemagick_path):
@@ -106,6 +108,13 @@ def main() -> int:
         else:
             fail("openai_api_key is empty and openai_use_codex_cli is false")
             failures += 1
+    elif llm_provider == "claude":
+        claude_cmd = str(cfg.get("claude_cli_command", "claude") or "claude")
+        if shutil.which(claude_cmd) or os.path.exists(claude_cmd):
+            ok(f"Claude CLI available: {claude_cmd}")
+        else:
+            fail(f"Claude CLI command not found: {claude_cmd}")
+            failures += 1
     elif llm_provider == "gemini":
         if cfg.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY"):
             ok("gemini_api_key is set")
@@ -113,13 +122,27 @@ def main() -> int:
             fail("gemini_api_key is empty")
             failures += 1
 
-    # Leonardo AI (image generation)
+    # AI image generation
     leonardo_key = cfg.get("leonardo_api_key", "")
-    if leonardo_key:
-        ok("leonardo_api_key is set")
-    else:
-        fail("leonardo_api_key is empty")
-        failures += 1
+    if image_provider in {"auto", "leonardo"}:
+        if leonardo_key:
+            ok("leonardo_api_key is set")
+        else:
+            fail("leonardo_api_key is empty")
+            failures += 1
+    if image_provider == "openai":
+        codex_cmd = str(cfg.get("codex_cli_command", "codex") or "codex")
+        if shutil.which(codex_cmd) or os.path.exists(codex_cmd):
+            ok(f"OpenAI image provider uses Codex CLI: {codex_cmd}")
+        else:
+            fail(f"Codex CLI command not found for OpenAI image provider: {codex_cmd}")
+            failures += 1
+    if image_provider == "gemini":
+        if cfg.get("nanobanana2_api_key") or cfg.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY"):
+            ok("Nano Banana/Gemini image key is set")
+        else:
+            fail("Nano Banana image provider needs nanobanana2_api_key or gemini_api_key")
+            failures += 1
 
     if stt_provider == "local_whisper":
         try:
