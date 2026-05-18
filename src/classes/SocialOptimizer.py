@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Iterable
 
-from config import ROOT_DIR
+from cache import get_youtube_cache_path
 
 
 SUPPORTED_SOCIAL_PLATFORMS = ("youtube", "tiktok", "facebook")
@@ -227,7 +227,7 @@ def _utc_now() -> str:
 
 def _manifest_path(video_path: str) -> str:
     base = os.path.splitext(os.path.basename(video_path))[0]
-    return os.path.join(ROOT_DIR, ".mp", f"{base}.manifest.json")
+    return os.path.join(os.path.dirname(os.path.abspath(video_path)), f"{base}.manifest.json")
 
 
 def _read_json(path: str) -> dict | None:
@@ -610,7 +610,7 @@ def _compact_plan(plan: dict) -> dict:
 
 
 def _load_existing_titles(account_uuid: str = "") -> list[str]:
-    path = os.path.join(ROOT_DIR, ".mp", "youtube.json")
+    path = get_youtube_cache_path()
     raw = _read_json(path) or {}
     titles = []
     for account in raw.get("accounts", []) or []:

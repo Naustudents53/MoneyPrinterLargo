@@ -24,6 +24,7 @@ from config import (
     resolve_series,
 )
 from status import info, success, warning
+from cache import get_temp_cache_path
 from upload_tracker import record_generation
 from utils import (
     expand_regnal_numerals_tracked,
@@ -172,13 +173,13 @@ class PhotoVideoGenerator:
 
     def prepare_photo_assets(self, photo_paths: Iterable[str]) -> list[str]:
         """
-        Copy uploaded photos into .mp as normalized RGB JPEGs.
+        Copy uploaded photos into scratch space as normalized RGB JPEGs.
 
         MoviePy handles many formats, but normalizing orientation and color
         mode here prevents EXIF rotation and alpha-channel surprises during
         render.
         """
-        mp_dir = Path(ROOT_DIR) / ".mp"
+        mp_dir = Path(get_temp_cache_path(ROOT_DIR))
         mp_dir.mkdir(parents=True, exist_ok=True)
 
         prepared: list[str] = []
@@ -508,7 +509,7 @@ Return only the topic, under 90 characters. No quotes."""
             return ""
 
     def _synthesize_long_with_word_timestamps(self, tts_instance: TTS) -> str:
-        path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".wav")
+        path = os.path.join(get_temp_cache_path(ROOT_DIR), str(uuid4()) + ".wav")
         tts_script = self.youtube._clean_script_for_tts(self.youtube.script)
         if not tts_script or len(tts_script.split()) < 50:
             warning("TTS cleaning removed too much content, using raw script")

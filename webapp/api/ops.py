@@ -78,6 +78,10 @@ def _failures_dir() -> Path:
     return _MP_DIR / "upload_failures"
 
 
+def _temp_dir() -> Path:
+    return _MP_DIR / "tmp"
+
+
 # ---------------------------------------------------------------------------
 # 1) Disk monitor
 # ---------------------------------------------------------------------------
@@ -139,18 +143,30 @@ def disk_usage():
 
 @router.post("/disk/clear-temp")
 def clear_temp():
-    """Delete WAV/PNG/SRT/JPG scratch files in .mp/ root (keeps .mp4, .json
-    state, subdirs untouched)."""
+    """Delete scratch files in .mp/tmp plus legacy root WAV/PNG/SRT/JPG files."""
     if not _MP_DIR or not _MP_DIR.exists():
         return {"deleted": 0}
     deleted = 0
     bytes_freed = 0
+
+    temp = _temp_dir()
+    if temp.exists():
+        for dp, _, fns in os.walk(temp):
+            for fn in fns:
+                full = Path(dp) / fn
+                try:
+                    bytes_freed += full.stat().st_size
+                    full.unlink()
+                    deleted += 1
+                except OSError:
+                    pass
+
     for fn in os.listdir(_MP_DIR):
         full = _MP_DIR / fn
         if not full.is_file():
             continue
         ext = full.suffix.lower()
-        if ext in {".wav", ".png", ".srt", ".jpg", ".jpeg"}:
+        if ext in {".wav", ".png", ".srt", ".jpg", ".jpeg", ".txt", ".log"}:
             try:
                 bytes_freed += full.stat().st_size
                 full.unlink()
@@ -599,14 +615,28 @@ def _iter_backup_paths(include_videos: bool):
         yield _CONFIG_PATH, "config.json"
     if not _MP_DIR or not _MP_DIR.exists():
         return
-    for dp, _, fns in os.walk(_MP_DIR):
+    skip_roots = {
+        _temp_dir().resolve(),
+        (_MP_DIR / "photo_uploads").resolve(),
+        (_MP_DIR / "job_logs").resolve(),
+        (_MP_DIR / "jobs").resolve(),
+        (_MP_DIR / "checkpoints").resolve(),
+    }
+    for dp, dirs, fns in os.walk(_MP_DIR):
+        dirs[:] = [
+            d for d in dirs
+            if (Path(dp) / d).resolve() not in skip_roots
+        ]
         for fn in fns:
             full = Path(dp) / fn
             ext = full.suffix.lower()
-            # Always skip raw scratch files.
-            if ext in {".wav", ".srt"}:
+            rel = full.relative_to(_MP_DIR)
+            in_videos = rel.parts and rel.parts[0] == "videos"
+            if in_videos and not include_videos:
                 continue
             if ext == ".mp4" and not include_videos:
+                continue
+            if ext not in {".json", ".jsonl", ".mp4"}:
                 continue
             arc = "mp/" + str(full.relative_to(_MP_DIR)).replace("\\", "/")
             yield full, arc

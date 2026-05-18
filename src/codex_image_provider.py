@@ -13,6 +13,7 @@ from config import (
     get_codex_cli_model,
     get_openai_reasoning_effort,
 )
+from cache import get_temp_cache_path
 
 
 def _build_codex_image_prompt(prompt: str, output_path: str, width: int, height: int) -> str:
@@ -59,7 +60,7 @@ def _normalize_image_bytes(path: str, width: int, height: int) -> bytes:
 
 def generate_image_bytes_with_codex(prompt: str, *, width: int, height: int, model: str = "") -> bytes:
     """Ask the locally logged-in Codex CLI to generate a PNG and return its bytes."""
-    mp_dir = os.path.join(ROOT_DIR, ".mp")
+    mp_dir = get_temp_cache_path()
     os.makedirs(mp_dir, exist_ok=True)
 
     output_path = os.path.join(mp_dir, f"codex-image-{uuid4()}.png")

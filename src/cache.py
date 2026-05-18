@@ -4,7 +4,7 @@ import time
 import contextlib
 
 from typing import List
-from config import ROOT_DIR
+import config
 
 
 @contextlib.contextmanager
@@ -45,14 +45,50 @@ def json_write_lock(json_path: str, timeout: float = 15.0):
         except Exception:
             pass
 
-def get_cache_path() -> str:
+def get_cache_path(root_dir: str | None = None) -> str:
     """
     Gets the path to the cache file.
 
     Returns:
         path (str): The path to the cache folder
     """
-    return os.path.join(ROOT_DIR, '.mp')
+    path = os.path.join(root_dir or config.ROOT_DIR, '.mp')
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def _get_cache_subdir(name: str, root_dir: str | None = None) -> str:
+    path = os.path.join(get_cache_path(root_dir), name)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def get_temp_cache_path(root_dir: str | None = None) -> str:
+    """Scratch space for generated images, audio, subtitles, and previews."""
+    return _get_cache_subdir('tmp', root_dir)
+
+def get_video_cache_path(root_dir: str | None = None) -> str:
+    """Persistent rendered videos and their per-video sidecars."""
+    return _get_cache_subdir('videos', root_dir)
+
+def get_photo_uploads_path(root_dir: str | None = None) -> str:
+    """Temporary web uploads before they are normalized for MoviePy."""
+    return _get_cache_subdir('photo_uploads', root_dir)
+
+def get_job_logs_path(root_dir: str | None = None) -> str:
+    """Detailed per-job logs used by the Operations page."""
+    return _get_cache_subdir('job_logs', root_dir)
+
+def iter_video_cache_paths(root_dir: str | None = None) -> List[str]:
+    """Return current and legacy video folders, without duplicates."""
+    paths = [get_video_cache_path(root_dir), get_cache_path(root_dir)]
+    seen = set()
+    out = []
+    for path in paths:
+        norm = os.path.abspath(path)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        out.append(path)
+    return out
 
 def get_afm_cache_path() -> str:
     """

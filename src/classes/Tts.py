@@ -1,7 +1,8 @@
 import os
 import asyncio
 
-from config import ROOT_DIR, get_tts_voice, get_tts_provider
+from config import get_tts_voice, get_tts_provider
+from cache import get_temp_cache_path
 
 # Edge-TTS voice mapping (natural-sounding Microsoft voices).
 #
@@ -93,7 +94,7 @@ class TTS:
                 print("[WARNING] KittenTTS not available, falling back to edge-tts")
                 self._provider = "edge_tts"
 
-    def synthesize(self, text, output_file=os.path.join(ROOT_DIR, ".mp", "audio.wav"), voice_id=None):
+    def synthesize(self, text, output_file=os.path.join(get_temp_cache_path(), "audio.wav"), voice_id=None):
         if self._provider == "edge_tts":
             return self._synthesize_edge_tts(text, output_file, voice_id=voice_id)
         return self._synthesize_kitten(text, output_file, voice_id=voice_id)
@@ -152,7 +153,7 @@ class TTS:
 
         return output_file
 
-    def synthesize_with_timestamps(self, text, output_file=os.path.join(ROOT_DIR, ".mp", "audio.wav"), voice_id=None, rate: str = "", pitch: str = ""):
+    def synthesize_with_timestamps(self, text, output_file=os.path.join(get_temp_cache_path(), "audio.wav"), voice_id=None, rate: str = "", pitch: str = ""):
         """Synthesize audio AND return word-level timestamps.
 
         Args:

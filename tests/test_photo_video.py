@@ -58,7 +58,7 @@ class PhotoVideoTests(unittest.TestCase):
 
             self.assertEqual(len(prepared), 1)
             out = Path(prepared[0])
-            self.assertEqual(out.parent, tmp_path / ".mp")
+            self.assertEqual(out.parent, tmp_path / ".mp" / "tmp")
             self.assertEqual(out.suffix, ".jpg")
             with Image.open(out) as img:
                 self.assertEqual(img.mode, "RGB")

@@ -40,6 +40,8 @@ API_DIR = Path(__file__).resolve().parent
 ROOT_DIR = API_DIR.parent.parent
 SRC_DIR = ROOT_DIR / "src"
 MP_DIR = ROOT_DIR / ".mp"
+VIDEO_DIR = MP_DIR / "videos"
+TEMP_DIR = MP_DIR / "tmp"
 THUMB_DIR = ROOT_DIR / "thumbnails"
 CONFIG_PATH = ROOT_DIR / "config.json"
 PHOTO_UPLOAD_DIR = MP_DIR / "photo_uploads"
@@ -81,6 +83,57 @@ except ImportError:
         sys.path.insert(0, str(API_DIR))
     import ops  # type: ignore  # noqa: E402
 ops.init(ROOT_DIR, MP_DIR, CONFIG_PATH)
+VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _video_dirs() -> list[Path]:
+    out: list[Path] = []
+    for path in (VIDEO_DIR, MP_DIR):
+        if path in out:
+            continue
+        out.append(path)
+    return out
+
+
+def _iter_saved_mp4_paths() -> list[Path]:
+    videos: list[Path] = []
+    seen: set[Path] = set()
+    for directory in _video_dirs():
+        if not directory.exists():
+            continue
+        for path in directory.iterdir():
+            if path.suffix.lower() != ".mp4":
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            videos.append(path)
+    return videos
+
+
+def _resolve_mp4_path(filename: str) -> Path | None:
+    if Path(filename).name != filename:
+        return None
+    for directory in _video_dirs():
+        target = directory / filename
+        if target.parent != directory or not target.exists():
+            continue
+        if target.suffix.lower() == ".mp4":
+            return target
+    return None
+
+
+def _delete_video_sidecars(video_path: Path) -> None:
+    for suffix in (".meta.json", ".manifest.json"):
+        sidecar = video_path.with_suffix("")
+        target = sidecar.parent / f"{sidecar.name}{suffix}"
+        try:
+            if target.is_file():
+                target.unlink()
+        except OSError:
+            pass
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -331,14 +384,12 @@ def system_stats():
     # mp4 disk usage
     mp4_bytes = 0
     mp4_count = 0
-    if MP_DIR.exists():
-        for p in MP_DIR.iterdir():
-            if p.suffix.lower() == ".mp4":
-                try:
-                    mp4_bytes += p.stat().st_size
-                    mp4_count += 1
-                except OSError:
-                    pass
+    for p in _iter_saved_mp4_paths():
+        try:
+            mp4_bytes += p.stat().st_size
+            mp4_count += 1
+        except OSError:
+            pass
 
     # Recent videos across all channels
     recent: list[dict] = []
@@ -986,7 +1037,7 @@ async def preview_voice(voice_id: str, text: str | None = None):
         raise HTTPException(400, "Empty preview text")
 
     cache_key = hashlib.sha1(f"{voice_id}|{sample}".encode()).hexdigest()[:16]
-    out = MP_DIR / f".voice-preview-{cache_key}.mp3"
+    out = TEMP_DIR / f".voice-preview-{cache_key}.mp3"
 
     if not out.exists():
         MP_DIR.mkdir(parents=True, exist_ok=True)
@@ -1561,7 +1612,7 @@ def read_preview(preview_id: str):
     {subject, script}. Used by the frontend after the SSE stream finishes."""
     if not re.fullmatch(r"[A-Za-z0-9_\-]{4,64}", preview_id):
         raise HTTPException(400, "Invalid preview id")
-    path = MP_DIR / f".preview-{preview_id}.txt"
+    path = TEMP_DIR / f".preview-{preview_id}.txt"
     if not path.is_file():
         raise HTTPException(404, "Preview not found or already consumed")
     try:
@@ -1584,7 +1635,7 @@ def save_preview(preview_id: str, payload: PreviewSave):
     when the user actually modifies the textarea before clicking 'continuar'."""
     if not re.fullmatch(r"[A-Za-z0-9_\-]{4,64}", preview_id):
         raise HTTPException(400, "Invalid preview id")
-    path = MP_DIR / f".preview-{preview_id}.txt"
+    path = TEMP_DIR / f".preview-{preview_id}.txt"
     if not path.is_file():
         raise HTTPException(404, "Preview not found")
     subject = (payload.subject or "").strip()
@@ -1626,7 +1677,7 @@ def preview_script_voice(
     if retention_mode and not is_known_retention_mode(retention_mode):
         raise HTTPException(400, "retention_mode must be 'standard' or 'maxima_retencion'")
 
-    path = MP_DIR / f".preview-{preview_id}.txt"
+    path = TEMP_DIR / f".preview-{preview_id}.txt"
     if not path.is_file():
         raise HTTPException(404, "Preview not found")
     try:
@@ -1843,7 +1894,7 @@ async def generate_video(
         # Resolve the script ref to a real .mp/ path. The frontend only sees
         # the opaque preview id (a uuid) returned by /preview-script — we
         # translate it to the actual file here so the runner stays simple.
-        script_path = MP_DIR / f".preview-{script_file}.txt"
+        script_path = TEMP_DIR / f".preview-{script_file}.txt"
         if not script_path.is_file():
             raise HTTPException(400, f"Preview script {script_file!r} not found")
         args += ["--script-file", str(script_path)]
@@ -2192,13 +2243,13 @@ def list_mp4():
         return []
     out = []
     pub_idx: Optional[dict] = None  # built lazily, only if we hit a pending file
-    for p in MP_DIR.iterdir():
+    for p in _iter_saved_mp4_paths():
         if p.suffix.lower() == ".mp4":
             try:
                 stat = p.stat()
                 # Read upload state from the per-video manifest sidecar written
                 # by `record_generation()`/`mark_uploaded()` in upload_tracker.
-                manifest_path = MP_DIR / f"{p.stem}.manifest.json"
+                manifest_path = p.parent / f"{p.stem}.manifest.json"
                 uploaded = False
                 uploaded_url: Optional[str] = None
                 subject: Optional[str] = None
@@ -2223,7 +2274,7 @@ def list_mp4():
                     retention_summary = {}
 
                 if not retention_summary:
-                    sidecar_path = MP_DIR / f"{p.stem}.meta.json"
+                    sidecar_path = p.parent / f"{p.stem}.meta.json"
                     if sidecar_path.exists():
                         try:
                             with sidecar_path.open("r", encoding="utf-8") as fh:
@@ -2239,7 +2290,7 @@ def list_mp4():
                 # youtube.json history; if it matches a published video,
                 # persist the flip so subsequent listings are fast.
                 if not uploaded and manifest_path.exists():
-                    sidecar_path = MP_DIR / f"{p.stem}.meta.json"
+                    sidecar_path = p.parent / f"{p.stem}.meta.json"
                     if sidecar_path.exists():
                         try:
                             with sidecar_path.open("r", encoding="utf-8") as fh:
@@ -2306,10 +2357,10 @@ def mark_uploaded_mp4(filename: str, url: Optional[str] = None):
     """Manual override for the case where the auto-reconciliation in
     `/api/storage/mp4` can't find a title match (user edited the title on
     YouTube, video isn't on the right channel's history yet, etc.)."""
-    target = MP_DIR / filename
-    if target.parent != MP_DIR or not target.exists() or target.suffix.lower() != ".mp4":
+    target = _resolve_mp4_path(filename)
+    if not target:
         raise HTTPException(404, "File not found")
-    manifest_path = MP_DIR / f"{target.stem}.manifest.json"
+    manifest_path = target.parent / f"{target.stem}.manifest.json"
     if not manifest_path.exists():
         raise HTTPException(404, "Manifest not found for this video")
     try:
@@ -2328,23 +2379,20 @@ def mark_uploaded_mp4(filename: str, url: Optional[str] = None):
 
 @app.get("/api/storage/mp4/{filename}/raw")
 def stream_mp4(filename: str):
-    target = MP_DIR / filename
-    if target.parent != MP_DIR or not target.exists():
+    target = _resolve_mp4_path(filename)
+    if not target:
         raise HTTPException(404, "File not found")
-    if target.suffix.lower() != ".mp4":
-        raise HTTPException(400, "Only .mp4 files allowed")
     return FileResponse(str(target), media_type="video/mp4", filename=filename)
 
 
 @app.delete("/api/storage/mp4/{filename}")
 def delete_mp4(filename: str):
     # Prevent path traversal — only accept names that exist verbatim in MP_DIR
-    target = MP_DIR / filename
-    if target.parent != MP_DIR or not target.exists():
+    target = _resolve_mp4_path(filename)
+    if not target:
         raise HTTPException(404, "File not found")
-    if target.suffix.lower() != ".mp4":
-        raise HTTPException(400, "Only .mp4 files allowed")
     target.unlink()
+    _delete_video_sidecars(target)
     return {"ok": True}
 
 
@@ -2353,10 +2401,11 @@ def clear_mp4():
     if not MP_DIR.exists():
         return {"ok": True, "deleted": 0}
     deleted = 0
-    for p in MP_DIR.iterdir():
+    for p in _iter_saved_mp4_paths():
         if p.suffix.lower() == ".mp4":
             try:
                 p.unlink()
+                _delete_video_sidecars(p)
                 deleted += 1
             except OSError:
                 pass

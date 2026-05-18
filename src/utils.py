@@ -380,20 +380,21 @@ def build_url(youtube_video_id: str) -> str:
 
 def rem_temp_files() -> None:
     """
-    Removes temporary files in the `.mp` directory and MoviePy temp files in project root.
+    Removes temporary files in `.mp/tmp`, legacy scratch files in `.mp`,
+    and MoviePy temp files in project root.
 
     Returns:
         None
     """
-    # Path to the `.mp` directory
-    mp_dir = os.path.join(ROOT_DIR, ".mp")
+    from cache import get_cache_path, get_temp_cache_path
 
-    files = os.listdir(mp_dir)
+    mp_dir = get_cache_path()
+    temp_dir = get_temp_cache_path()
 
     # Keep .json (cache state) AND .mp4 (rendered videos pending re-upload).
     # MP4s are preserved so the user can pick "Re-upload last generated video"
     # in the menu even after the menu loop has cycled.
-    KEEP_EXT = (".json", ".mp4")
+    KEEP_EXT = (".json", ".jsonl", ".mp4")
     # Assets (PNG/WAV/SRT) listed in a not-yet-uploaded manifest must survive
     # cleanup so the user can retry uploads without re-running generation.
     try:
@@ -401,16 +402,36 @@ def rem_temp_files() -> None:
         protected = pending_assets()
     except Exception:
         protected = set()
-    for file in files:
-        full = os.path.join(mp_dir, file)
-        if file.lower().endswith(KEEP_EXT):
-            continue
+    def _remove_if_unprotected(full: str, keep_ext: tuple[str, ...] = ()) -> None:
+        if keep_ext and full.lower().endswith(keep_ext):
+            return
         if os.path.abspath(full) in protected:
-            continue
+            return
         try:
-            os.remove(full)
+            if os.path.isfile(full):
+                os.remove(full)
         except Exception:
             pass
+
+    # Current scratch area: delete all files unless a pending upload manifest
+    # explicitly protects them.
+    if os.path.isdir(temp_dir):
+        for current_dir, dirs, files in os.walk(temp_dir, topdown=False):
+            for file in files:
+                _remove_if_unprotected(os.path.join(current_dir, file))
+            for dirname in dirs:
+                try:
+                    os.rmdir(os.path.join(current_dir, dirname))
+                except Exception:
+                    pass
+
+    # Legacy root scratch left by older versions.
+    if os.path.isdir(mp_dir):
+        for file in os.listdir(mp_dir):
+            full = os.path.join(mp_dir, file)
+            if not os.path.isfile(full):
+                continue
+            _remove_if_unprotected(full, KEEP_EXT)
 
     # Clean MoviePy temp files from project root
     for file in os.listdir(ROOT_DIR):

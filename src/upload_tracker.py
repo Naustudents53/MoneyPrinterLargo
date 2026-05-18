@@ -18,27 +18,35 @@ import os
 from datetime import datetime
 from typing import Iterable
 
-from config import ROOT_DIR
+from cache import get_cache_path, get_video_cache_path, iter_video_cache_paths
 
 SUPPORTED_PLATFORMS = ("youtube", "tiktok", "facebook")
 
 
-_MP_DIR = os.path.join(ROOT_DIR, ".mp")
-
-
 def _manifest_path_for(video_path: str) -> str:
     base = os.path.splitext(os.path.basename(video_path))[0]
-    return os.path.join(_MP_DIR, f"{base}.manifest.json")
+    video_dir = os.path.dirname(os.path.abspath(video_path)) or get_video_cache_path()
+    return os.path.join(video_dir, f"{base}.manifest.json")
 
 
 def _list_manifests() -> list[str]:
-    if not os.path.isdir(_MP_DIR):
-        return []
-    return [
-        os.path.join(_MP_DIR, f)
-        for f in os.listdir(_MP_DIR)
-        if f.endswith(".manifest.json")
-    ]
+    out: list[str] = []
+    for directory in iter_video_cache_paths():
+        if not os.path.isdir(directory):
+            continue
+        out.extend(
+            os.path.join(directory, f)
+            for f in os.listdir(directory)
+            if f.endswith(".manifest.json")
+        )
+    # Legacy fallback for manifests left directly in .mp by older versions.
+    mp_dir = get_cache_path()
+    if os.path.isdir(mp_dir):
+        for f in os.listdir(mp_dir):
+            path = os.path.join(mp_dir, f)
+            if f.endswith(".manifest.json") and path not in out:
+                out.append(path)
+    return out
 
 
 def _read(path: str) -> dict | None:

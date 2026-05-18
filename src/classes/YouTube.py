@@ -1605,7 +1605,7 @@ Example format:
 
     def _persist_image(self, image_bytes: bytes, provider_label: str) -> str:
         """
-        Writes generated image bytes to a PNG file in .mp.
+        Writes generated image bytes to a PNG file in the .mp scratch folder.
 
         Args:
             image_bytes (bytes): Image payload
@@ -1614,7 +1614,7 @@ Example format:
         Returns:
             path (str): Absolute image path
         """
-        image_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".png")
+        image_path = os.path.join(get_temp_cache_path(), str(uuid4()) + ".png")
 
         with open(image_path, "wb") as image_file:
             image_file.write(image_bytes)
@@ -3291,7 +3291,7 @@ RULES:
             draw.text(((1080 - w) // 2, y_pos), line, fill="white", font=font)
             y_pos += 70
 
-        image_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".png")
+        image_path = os.path.join(get_temp_cache_path(), str(uuid4()) + ".png")
         img.save(image_path)
         self.images.append(image_path)
 
@@ -3421,7 +3421,7 @@ RULES:
         Returns:
             path_to_wav (str): Path to generated audio (WAV Format).
         """
-        path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".wav")
+        path = os.path.join(get_temp_cache_path(), str(uuid4()) + ".wav")
 
         # Sanitize while keeping punctuation (commas, colons, em-dashes, Â¿Â¡)
         # so Edge-TTS pauses naturally. The script we display keeps Roman
@@ -3555,7 +3555,7 @@ RULES:
             lines.append(sentence)
             lines.append("")
 
-        srt_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".srt")
+        srt_path = os.path.join(get_temp_cache_path(), str(uuid4()) + ".srt")
         with open(srt_path, "w", encoding="utf-8") as file:
             file.write("\n".join(lines))
 
@@ -3580,7 +3580,7 @@ RULES:
         transcript = transcriber.transcribe(audio_path)
         subtitles = transcript.export_subtitles_srt()
 
-        srt_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".srt")
+        srt_path = os.path.join(get_temp_cache_path(), str(uuid4()) + ".srt")
 
         with open(srt_path, "w", encoding="utf-8") as file:
             file.write(subtitles)
@@ -3648,7 +3648,7 @@ RULES:
             lines.append("")
 
         subtitles = "\n".join(lines)
-        srt_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".srt")
+        srt_path = os.path.join(get_temp_cache_path(), str(uuid4()) + ".srt")
         with open(srt_path, "w", encoding="utf-8") as file:
             file.write(subtitles)
 
@@ -4068,7 +4068,7 @@ RULES:
         Returns:
             path (str): The path to the generated MP4 File.
         """
-        combined_image_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".mp4")
+        combined_image_path = os.path.join(get_video_cache_path(), str(uuid4()) + ".mp4")
         threads = get_threads()
         render_profile = get_short_render_profile()
         render_fps = get_short_render_fps()
@@ -4523,9 +4523,9 @@ RULES:
         return text.strip()
 
     def _persist_long_script(self, script: str) -> None:
-        """Save the final long script to .mp/script_<uuid>.txt for inspection / debugging."""
+        """Save the final long script to scratch space for inspection / debugging."""
         try:
-            path = os.path.join(ROOT_DIR, ".mp", f"script_{uuid4()}.txt")
+            path = os.path.join(get_temp_cache_path(), f"script_{uuid4()}.txt")
             with open(path, "w", encoding="utf-8") as f:
                 f.write(f"# Topic: {self.subject}\n")
                 f.write(f"# Words: {len(script.split())}\n")
@@ -5766,7 +5766,7 @@ No markdown. No explanation. Just the JSON array."""
             draw.text(((1920 - w) // 2, y_pos), line, fill="white", font=font)
             y_pos += 60
 
-        image_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".png")
+        image_path = os.path.join(get_temp_cache_path(), str(uuid4()) + ".png")
         img.save(image_path)
         self.images.append(image_path)
         return image_path
@@ -5909,7 +5909,7 @@ No markdown. No explanation. Just the JSON array."""
         Combines images and audio into a long-form 16:9 landscape video.
         No subtitles, cinematic Ken Burns effect (slow zoom/pan), smooth transitions.
         """
-        combined_path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".mp4")
+        combined_path = os.path.join(get_video_cache_path(), str(uuid4()) + ".mp4")
         threads = get_threads()
         tts_clip = AudioFileClip(self.tts_path)
         max_duration = tts_clip.duration
@@ -6175,7 +6175,7 @@ No markdown. No explanation. Just the JSON array."""
 
         # Step 7: Generate TTS with natural voice
         info("\n[7/7] Generating narration audio...")
-        path = os.path.join(ROOT_DIR, ".mp", str(uuid4()) + ".wav")
+        path = os.path.join(get_temp_cache_path(), str(uuid4()) + ".wav")
 
         # Clean script for TTS: remove ALL non-narration content
         tts_script = self._clean_script_for_tts(self.script)

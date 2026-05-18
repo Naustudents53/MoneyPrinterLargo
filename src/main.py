@@ -1,5 +1,6 @@
 import schedule
 import subprocess
+import os
 from datetime import datetime
 
 # Fix Pillow 10+ compatibility with MoviePy (ANTIALIAS removed, now LANCZOS)
@@ -42,6 +43,25 @@ from config import *
 from status import *
 from uuid import uuid4
 from constants import *
+
+
+def _saved_video_paths() -> list[str]:
+    videos: list[str] = []
+    seen: set[str] = set()
+    for directory in iter_video_cache_paths():
+        try:
+            names = os.listdir(directory)
+        except FileNotFoundError:
+            continue
+        for name in names:
+            if not name.lower().endswith(".mp4"):
+                continue
+            path = os.path.abspath(os.path.join(directory, name))
+            if path in seen:
+                continue
+            seen.add(path)
+            videos.append(path)
+    return videos
 from classes.Tts import TTS
 from termcolor import colored
 from classes.Twitter import Twitter
@@ -458,13 +478,8 @@ def main():
                         else:
                             warning(" No videos found.")
                     elif user_input == 4:
-                        # Clean up saved videos (.mp4 files in .mp/)
-                        mp_dir = os.path.join(ROOT_DIR, ".mp")
-                        mp4s = [
-                            os.path.join(mp_dir, f)
-                            for f in os.listdir(mp_dir)
-                            if f.lower().endswith(".mp4")
-                        ]
+                        # Clean up saved videos (.mp4 files in .mp/videos plus legacy .mp root)
+                        mp4s = _saved_video_paths()
                         if not mp4s:
                             info(" => No saved videos to clean.")
                         else:
@@ -480,6 +495,10 @@ def main():
                                 for p in mp4s:
                                     try:
                                         os.remove(p)
+                                        for suffix in (".meta.json", ".manifest.json"):
+                                            sidecar = os.path.splitext(p)[0] + suffix
+                                            if os.path.isfile(sidecar):
+                                                os.remove(sidecar)
                                         deleted += 1
                                     except Exception as e:
                                         warning(f"   Could not delete {os.path.basename(p)}: {e}")
@@ -491,22 +510,14 @@ def main():
                         # and run the standard Selenium upload against it.
                         # If the .meta.json sidecar is present, use it; else
                         # fall back to a typed topic or Whisper transcript.
-                        mp_dir = os.path.join(ROOT_DIR, ".mp")
-                        try:
-                            mp4s = sorted(
-                                [
-                                    os.path.join(mp_dir, f)
-                                    for f in os.listdir(mp_dir)
-                                    if f.lower().endswith(".mp4")
-                                ],
-                                key=os.path.getmtime,
-                                reverse=True,
-                            )
-                        except FileNotFoundError:
-                            mp4s = []
+                        mp4s = sorted(
+                            _saved_video_paths(),
+                            key=os.path.getmtime,
+                            reverse=True,
+                        )
 
                         if not mp4s:
-                            warning(" => No saved videos found in .mp/ to re-upload.")
+                            warning(" => No saved videos found in .mp/videos to re-upload.")
                         else:
                             info(f"\n => Found {len(mp4s)} saved video(s):")
                             for i, p in enumerate(mp4s, 1):

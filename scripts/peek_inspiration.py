@@ -16,6 +16,8 @@ import time
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT_DIR, "src"))
 
+from cache import get_temp_cache_path
+
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options as FirefoxOptions
 from selenium.webdriver.firefox.service import Service
@@ -28,7 +30,7 @@ def main(url: str) -> None:
     if not os.path.isdir(src_profile):
         raise SystemExit(f"firefox_profile not found: {src_profile}")
 
-    out_dir = os.path.join(ROOT_DIR, ".mp")
+    out_dir = get_temp_cache_path()
     os.makedirs(out_dir, exist_ok=True)
     shot_path = os.path.join(out_dir, "inspiration.png")
     text_path = os.path.join(out_dir, "inspiration.txt")

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from config import ROOT_DIR
+from cache import get_temp_cache_path
 from utils import (
     clean_script_for_tts,
     expand_regnal_numerals,
@@ -75,7 +75,7 @@ class ScriptVoicePreview:
     ) -> None:
         self.config = config or ScriptVoicePreviewConfig()
         self.tts_instance = tts_instance or TTS()
-        self.output_dir = Path(output_dir or os.path.join(ROOT_DIR, ".mp"))
+        self.output_dir = Path(output_dir or get_temp_cache_path())
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     @classmethod

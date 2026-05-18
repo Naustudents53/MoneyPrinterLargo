@@ -30,6 +30,25 @@ if str(SRC_DIR) not in sys.path:
 # Force ROOT_DIR to the project root regardless of CWD/sys.path layout.
 import config as _mp_config  # noqa: E402
 _mp_config.ROOT_DIR = str(ROOT_DIR)
+from cache import (  # noqa: E402
+    get_cache_path,
+    get_temp_cache_path,
+    get_video_cache_path,
+    iter_video_cache_paths,
+)
+
+
+def _preview_script_path(preview_id: str) -> str:
+    return os.path.join(get_temp_cache_path(), f".preview-{preview_id}.txt")
+
+
+def _channel_ref_paths(channel_id: str) -> list[str]:
+    return [
+        os.path.join(get_video_cache_path(), f"{channel_id}{_CHANNEL_REF_SUFFIX}"),
+        os.path.join(get_cache_path(), f"{channel_id}{_CHANNEL_REF_SUFFIX}"),
+        os.path.join(get_cache_path(), f"{channel_id}.last_video"),
+        os.path.join(get_cache_path(), f"{channel_id}.last_video.txt"),
+    ]
 
 
 def _setup_paths():
@@ -251,19 +270,17 @@ def _apply_short_render_profile(profile: str) -> None:
     print(f"[runner] Override: short_render_profile={profile}", flush=True)
 
 
-# NOTE: the `.json` extension is load-bearing. rem_temp_files() wipes every
-# non-(.json/.mp4) file in .mp/ on each pipeline run, so a parallel job for
-# another channel would otherwise delete this pointer and upload-last would
-# fall back to the global mtime scan.
+# NOTE: the `.json` extension is load-bearing. Cleanup keeps JSON state, so a
+# parallel job for another channel does not delete this pointer and force
+# upload-last to fall back to the global mtime scan.
 _CHANNEL_REF_SUFFIX = ".last_video.json"
 
 
 def _write_channel_ref(channel_id: str, video_path: str) -> None:
     """Record the path of the just-generated video so upload-last can find it
-    without scanning the whole .mp/ directory. One file per channel so
+    without scanning the whole video directory. One file per channel so
     parallel jobs for different channels never interfere."""
-    mp_dir = os.path.join(str(ROOT_DIR), ".mp")
-    ref = os.path.join(mp_dir, f"{channel_id}{_CHANNEL_REF_SUFFIX}")
+    ref = os.path.join(get_video_cache_path(), f"{channel_id}{_CHANNEL_REF_SUFFIX}")
     try:
         with open(ref, "w", encoding="utf-8") as f:
             json.dump({"video_path": video_path, "channel_id": channel_id}, f)
@@ -273,9 +290,7 @@ def _write_channel_ref(channel_id: str, video_path: str) -> None:
 
 def _read_channel_ref(channel_id: str) -> str:
     """Return the video path recorded by the last generate run, or ''."""
-    mp_dir = os.path.join(str(ROOT_DIR), ".mp")
-    for suffix in (_CHANNEL_REF_SUFFIX, ".last_video", ".last_video.txt"):
-        ref = os.path.join(mp_dir, f"{channel_id}{suffix}")
+    for ref in _channel_ref_paths(channel_id):
         try:
             with open(ref, "r", encoding="utf-8") as f:
                 raw = f.read().strip()
@@ -323,9 +338,7 @@ def _cleanup_after_upload(video_path: str, is_long: bool, channel_id: str = "") 
 
         # Remove the per-channel ref pointer (upload consumed it).
         if channel_id:
-            mp_dir = os.path.join(str(ROOT_DIR), ".mp")
-            for suffix in (_CHANNEL_REF_SUFFIX, ".last_video", ".last_video.txt"):
-                ref = os.path.join(mp_dir, f"{channel_id}{suffix}")
+            for ref in _channel_ref_paths(channel_id):
                 if os.path.isfile(ref):
                     try:
                         os.remove(ref)
@@ -606,7 +619,7 @@ def cmd_preview_script(args):
         sys.exit(3)
 
     preview_id = _uuid.uuid4().hex[:12]
-    out_path = os.path.join(str(ROOT_DIR), ".mp", f".preview-{preview_id}.txt")
+    out_path = _preview_script_path(preview_id)
     try:
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(f"{youtube.subject}\n\n{script}\n")
@@ -633,7 +646,7 @@ def cmd_preview_voice(args):
     preview_id = (getattr(args, "preview_id", "") or "").strip()
     script_file = (getattr(args, "script_file", "") or "").strip()
     if preview_id:
-        script_file = os.path.join(str(ROOT_DIR), ".mp", f".preview-{preview_id}.txt")
+        script_file = _preview_script_path(preview_id)
     if not script_file:
         print("[runner] ERROR: --preview-id or --script-file is required", flush=True)
         sys.exit(2)
@@ -667,7 +680,7 @@ def cmd_preview_voice(args):
         acc,
         retention_mode=retention_mode,
         tts_instance=TTS(),
-        output_dir=os.path.join(str(ROOT_DIR), ".mp"),
+        output_dir=get_temp_cache_path(),
     )
     result = preview.synthesize(
         subject=subject,
@@ -706,14 +719,15 @@ def cmd_upload_last(args):
     #    The fallback never considers videos belonging to another channel (or
     #    sidecar-less videos), so a missing ref pointer can no longer cause a
     #    cross-channel upload.
-    mp_dir = os.path.join(str(ROOT_DIR), ".mp")
     ref_path = _read_channel_ref(args.channel_id)
     if ref_path and os.path.isfile(ref_path):
         youtube.video_path = ref_path
         print(f"[runner] Resolved via channel ref: {ref_path}", flush=True)
     else:
         candidates = []
-        if os.path.isdir(mp_dir):
+        for mp_dir in iter_video_cache_paths():
+            if not os.path.isdir(mp_dir):
+                continue
             for name in os.listdir(mp_dir):
                 if not name.lower().endswith(".mp4"):
                     continue

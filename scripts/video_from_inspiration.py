@@ -32,7 +32,7 @@ import time
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT_DIR, "src"))
 
-from cache import get_accounts
+from cache import get_accounts, get_temp_cache_path
 from classes.Tts import TTS
 from classes.YouTube import YouTube
 from config import get_long_video_llm_model
@@ -55,7 +55,7 @@ def scrape_inspiration(url: str) -> dict:
     if not os.path.isdir(src_profile):
         raise SystemExit(f"firefox_profile not found: {src_profile}")
 
-    out_dir = os.path.join(ROOT_DIR, ".mp")
+    out_dir = get_temp_cache_path()
     os.makedirs(out_dir, exist_ok=True)
     shot_path = os.path.join(out_dir, "inspiration.png")
     text_path = os.path.join(out_dir, "inspiration.txt")
@@ -303,7 +303,7 @@ def main() -> None:
     print("------------------------------------")
     print()
 
-    brief_path = os.path.join(ROOT_DIR, ".mp", "inspiration_brief.txt")
+    brief_path = os.path.join(get_temp_cache_path(), "inspiration_brief.txt")
     open(brief_path, "w", encoding="utf-8").write(brief)
     info(f" => Brief saved to {brief_path}")
 
