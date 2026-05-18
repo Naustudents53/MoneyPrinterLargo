@@ -33,6 +33,7 @@ import {
   type Channel,
   type BatchJobItem,
   type BatchJobResult,
+  type ImageProvider,
   type RetentionMode,
   type ShortRenderProfile,
 } from "@/lib/api";
@@ -54,6 +55,7 @@ interface BatchGenerateDialogProps {
   defaults: {
     kind: "short" | "long";
     imageMode: "ai" | "photos";
+    imageProvider?: ImageProvider | "";
     autoUpload: boolean;
     model?: string;
     sentenceLength?: number;
@@ -163,6 +165,7 @@ export function BatchGenerateDialog({
           kind: defaults.kind,
           custom_topic: r.customTopic.trim() || undefined,
           image_mode: defaults.imageMode,
+          image_provider: defaults.imageProvider || undefined,
           auto_upload: autoUpload,
           model: defaults.model || undefined,
           sentence_length: defaults.sentenceLength,
@@ -343,6 +346,9 @@ function InheritedConfigBar({
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
         <span>Tipo: <span className="text-foreground font-medium">{defaults.kind}</span></span>
         <span>Imágenes: <span className="text-foreground font-medium">{defaults.imageMode}</span></span>
+        {defaults.imageProvider && (
+          <span>Fotos AI: <span className="text-foreground font-medium">{defaults.imageProvider}</span></span>
+        )}
         {defaults.model && (
           <span>Modelo: <span className="text-foreground font-medium">{defaults.model}</span></span>
         )}

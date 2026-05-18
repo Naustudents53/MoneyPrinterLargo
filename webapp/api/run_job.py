@@ -70,6 +70,7 @@ def _classify_model(model_id: str) -> str:
 
     Gemini ids start with 'gemini-' or 'gemma-'; OpenAI ids start with 'gpt-'
     / 'o' / 'chatgpt-'; Ollama tags contain a colon (e.g. 'llama3:8b',
+    Claude ids/aliases start with 'claude-' or are 'sonnet' / 'opus' / 'haiku';
     'gemma4:31b-cloud'). Everything else falls back to Pollinations since its
     catalog uses short alphanumeric ids."""
     m = (model_id or "").strip().lower()
@@ -79,6 +80,8 @@ def _classify_model(model_id: str) -> str:
         return "gemini"
     if m.startswith("gpt-") or m.startswith("chatgpt-") or m.startswith(("o1", "o3", "o4")):
         return "openai"
+    if m.startswith("claude-") or m in {"sonnet", "opus", "haiku"}:
+        return "claude"
     if ":" in m:
         return "ollama"
     return "pollinations"
@@ -133,6 +136,11 @@ def _select_llm_provider(override_provider: str = "", override_model: str = "", 
             select_model(model_override)
             print(f"[runner] Override: OpenAI model {model_override}", flush=True)
             return
+        if inferred == "claude":
+            set_llm_provider("claude")
+            select_model(model_override)
+            print(f"[runner] Override: Claude model {model_override}", flush=True)
+            return
         if inferred == "ollama":
             set_llm_provider("ollama")
             select_model(model_override)
@@ -153,6 +161,9 @@ def _select_llm_provider(override_provider: str = "", override_model: str = "", 
     if provider == "openai":
         print("[runner] Using OpenAI provider", flush=True)
         return
+    if provider == "claude":
+        print("[runner] Using Claude provider", flush=True)
+        return
     if provider == "pollinations":
         print("[runner] Using Pollinations provider", flush=True)
         return
@@ -171,6 +182,30 @@ def _select_llm_provider(override_provider: str = "", override_model: str = "", 
         print(f"[runner] Using Ollama model {m}", flush=True)
     else:
         print("[runner] WARNING: no Ollama model selected", flush=True)
+
+
+def _apply_openai_reasoning_effort(effort: str = "") -> None:
+    effort = (effort or "").strip().lower()
+    if not effort:
+        return
+    allowed = {"none", "minimal", "low", "medium", "high", "xhigh"}
+    if effort not in allowed:
+        print(f"[runner] WARNING: ignoring invalid OpenAI thinking level {effort!r}", flush=True)
+        return
+    os.environ["MP_OPENAI_REASONING_EFFORT"] = effort
+    print(f"[runner] OpenAI thinking level: {effort}", flush=True)
+
+
+def _apply_image_provider(provider: str = "") -> None:
+    provider = (provider or "").strip().lower()
+    if not provider:
+        return
+    allowed = {"auto", "leonardo", "openai", "gemini"}
+    if provider not in allowed:
+        print(f"[runner] WARNING: ignoring invalid image provider {provider!r}", flush=True)
+        return
+    os.environ["MP_IMAGE_PROVIDER"] = provider
+    print(f"[runner] Image provider: {provider}", flush=True)
 
 
 def _apply_short_render_profile(profile: str) -> None:
@@ -305,8 +340,18 @@ def _cleanup_after_upload(video_path: str, is_long: bool, channel_id: str = "") 
         print(f"[runner] WARN: cleanup failed: {e}", flush=True)
 
 
+def _upload_platforms_from_args(args) -> list[str]:
+    from classes.SocialUpload import normalize_upload_platforms
+
+    raw = getattr(args, "upload_platforms", "") or ""
+    if getattr(args, "upload", False):
+        raw = f"youtube,{raw}" if raw else "youtube"
+    return normalize_upload_platforms(raw)
+
+
 def cmd_generate(args):
     from cache import get_accounts
+    from classes.SocialUpload import SocialUploader, format_platforms
     from classes.YouTube import YouTube
     from classes.Tts import TTS
 
@@ -447,11 +492,37 @@ def cmd_generate(args):
     print(f"[runner] Generated: {path}", flush=True)
     _write_channel_ref(args.channel_id, path)
 
-    if args.upload:
-        print("[runner] Starting YouTube upload...", flush=True)
-        ok = youtube.upload_video()
-        print(f"[runner] Upload result: {ok}", flush=True)
-        if not ok:
+    upload_platforms = _upload_platforms_from_args(args)
+    try:
+        from classes.SocialOptimizer import SUPPORTED_SOCIAL_PLATFORMS, ensure_social_plan
+
+        metadata = getattr(youtube, "metadata", {}) or {}
+        plan = ensure_social_plan(
+            video_path=path,
+            title=metadata.get("title", ""),
+            description=metadata.get("description", ""),
+            subject=getattr(youtube, "subject", "") or "",
+            niche=acc.get("niche", ""),
+            language=acc.get("language", "espanol"),
+            platforms=upload_platforms or SUPPORTED_SOCIAL_PLATFORMS,
+            is_long=(args.kind == "long"),
+            thumbnail_path=getattr(youtube, "thumbnail_path", "") or "",
+            account_uuid=args.channel_id,
+        )
+        qg = plan.get("quality_gate") or {}
+        print(
+            f"[runner] Social plan ready: quality={qg.get('status', 'unknown')} "
+            f"score={qg.get('score', 'n/a')}",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"[runner] WARN: could not build social optimization plan: {exc}", flush=True)
+
+    if upload_platforms:
+        print(f"[runner] Starting upload to {format_platforms(upload_platforms)}...", flush=True)
+        results = SocialUploader.from_youtube(youtube).upload(upload_platforms)
+        print(f"[runner] Upload results: {results}", flush=True)
+        if not results or not all(results.values()):
             sys.exit(4)
         _cleanup_after_upload(path, is_long=(args.kind == "long"), channel_id=args.channel_id)
 
@@ -548,8 +619,70 @@ def cmd_preview_script(args):
     print(f"[runner] DONE — {len(script)} chars in script", flush=True)
 
 
+def cmd_preview_voice(args):
+    """Generate only the narration audio from an existing preview script."""
+    from cache import get_accounts
+    from classes.ScriptVoicePreview import ScriptVoicePreview
+    from classes.Tts import TTS
+
+    acc = next((a for a in get_accounts("youtube") if a.get("id") == args.channel_id), None)
+    if not acc:
+        print(f"[runner] ERROR: channel {args.channel_id} not found", flush=True)
+        sys.exit(2)
+
+    preview_id = (getattr(args, "preview_id", "") or "").strip()
+    script_file = (getattr(args, "script_file", "") or "").strip()
+    if preview_id:
+        script_file = os.path.join(str(ROOT_DIR), ".mp", f".preview-{preview_id}.txt")
+    if not script_file:
+        print("[runner] ERROR: --preview-id or --script-file is required", flush=True)
+        sys.exit(2)
+    if not os.path.isfile(script_file):
+        print(f"[runner] ERROR: script file not found: {script_file}", flush=True)
+        sys.exit(2)
+
+    try:
+        with open(script_file, "r", encoding="utf-8") as f:
+            raw = f.read()
+    except Exception as e:
+        print(f"[runner] ERROR: could not read script file: {e}", flush=True)
+        sys.exit(4)
+
+    subject, sep, script = raw.partition("\n\n")
+    if not sep:
+        script = subject
+        subject = ""
+    subject = subject.strip()
+    script = script.strip()
+    if not script:
+        print("[runner] ERROR: script is empty", flush=True)
+        sys.exit(3)
+
+    retention_mode = (getattr(args, "retention_mode", "") or "").strip()
+    print(f"[runner] Voice preview for channel '{acc.get('nickname')}'", flush=True)
+    if retention_mode:
+        print(f"[runner] Retention mode: {retention_mode}", flush=True)
+
+    preview = ScriptVoicePreview.from_channel(
+        acc,
+        retention_mode=retention_mode,
+        tts_instance=TTS(),
+        output_dir=os.path.join(str(ROOT_DIR), ".mp"),
+    )
+    result = preview.synthesize(
+        subject=subject,
+        script=script,
+        kind=getattr(args, "kind", "short"),
+        preview_id=preview_id,
+    )
+    print(f"[runner] AUDIO_PATH={result.audio_path}", flush=True)
+    print(f"[runner] AUDIO_DURATION={result.duration_seconds:.1f}", flush=True)
+    print("[runner] DONE - voice-only preview ready", flush=True)
+
+
 def cmd_upload_last(args):
     from cache import get_accounts
+    from classes.SocialUpload import SocialUploader, format_platforms
     from classes.YouTube import YouTube
 
     acc = next((a for a in get_accounts("youtube") if a.get("id") == args.channel_id), None)
@@ -661,15 +794,26 @@ def cmd_upload_last(args):
             flush=True,
         )
         try:
-            ok = youtube.reupload_video(youtube.video_path, subject=None)
+            ok = youtube.reupload_video(
+                youtube.video_path,
+                subject=None,
+                is_long=is_long,
+                upload=False,
+            )
         except Exception as e:
             print(f"[runner] ERROR: Whisper-based recovery failed: {type(e).__name__}: {e}", flush=True)
             sys.exit(4)
     else:
-        print(f"[runner] Uploading {'LONG' if is_long else 'SHORT'}: {youtube.video_path}", flush=True)
-        ok = youtube.upload_video()
-    print(f"[runner] Upload result: {ok}", flush=True)
-    if not ok:
+        print(f"[runner] Metadata ready for {'LONG' if is_long else 'SHORT'}: {youtube.video_path}", flush=True)
+
+    upload_platforms = _upload_platforms_from_args(args)
+    if not upload_platforms:
+        upload_platforms = ["youtube"]
+
+    print(f"[runner] Uploading to {format_platforms(upload_platforms)}: {youtube.video_path}", flush=True)
+    results = SocialUploader.from_youtube(youtube).upload(upload_platforms)
+    print(f"[runner] Upload results: {results}", flush=True)
+    if not results or not all(results.values()):
         sys.exit(4)
 
     _cleanup_after_upload(youtube.video_path, is_long=is_long, channel_id=args.channel_id)
@@ -778,7 +922,11 @@ def main():
     p_gen.add_argument("--kind", choices=["short", "long"], default="short")
     p_gen.add_argument("--topic", default="")
     p_gen.add_argument("--image-mode", default="ai")
+    p_gen.add_argument("--image-provider", default="",
+                       help="AI image provider for image_mode=ai: auto, leonardo, openai, gemini.")
     p_gen.add_argument("--upload", action="store_true")
+    p_gen.add_argument("--upload-platforms", default="",
+                       help="Comma-separated upload targets: youtube,tiktok,facebook. --upload still means youtube.")
     p_gen.add_argument("--series-id", default="")
     # Target short duration in seconds (60/120/180). 0 = use legacy default.
     p_gen.add_argument("--duration", type=int, default=0)
@@ -786,6 +934,8 @@ def main():
     # explicit (provider, model) pair. Empty = use config defaults.
     p_gen.add_argument("--llm-provider", default="")
     p_gen.add_argument("--llm-model", default="")
+    p_gen.add_argument("--llm-reasoning-effort", default="",
+                       help="OpenAI/Codex thinking level: low, medium, high, xhigh.")
     # Per-job hook profile override (educational / storytelling / ...). Empty = use channel default.
     p_gen.add_argument("--hook-profile", default="")
     # Per-job overrides — let the UI pick a specific model and an estimated
@@ -812,14 +962,27 @@ def main():
     p_pv.add_argument("--channel-id", required=True)
     p_pv.add_argument("--topic", default="")
     p_pv.add_argument("--model", default="")
+    p_pv.add_argument("--llm-provider", default="")
+    p_pv.add_argument("--llm-model", default="")
+    p_pv.add_argument("--llm-reasoning-effort", default="",
+                      help="OpenAI/Codex thinking level: low, medium, high, xhigh.")
     p_pv.add_argument("--sentence-length", type=int, default=0)
     p_pv.add_argument("--duration", type=int, default=0)
     p_pv.add_argument("--hook-style", default="")
     p_pv.add_argument("--retention-mode", choices=["standard", "maxima_retencion"], default="")
 
+    p_voice = sub.add_parser("preview-voice")
+    p_voice.add_argument("--channel-id", required=True)
+    p_voice.add_argument("--kind", choices=["short", "long"], default="short")
+    p_voice.add_argument("--preview-id", default="")
+    p_voice.add_argument("--script-file", default="")
+    p_voice.add_argument("--retention-mode", choices=["standard", "maxima_retencion"], default="")
+
     p_ul = sub.add_parser("upload-last")
     p_ul.add_argument("--channel-id", required=True)
     p_ul.add_argument("--kind", choices=["short", "long"], default="short")
+    p_ul.add_argument("--upload-platforms", default="",
+                      help="Comma-separated upload targets: youtube,tiktok,facebook.")
 
     p_tw = sub.add_parser("tweet")
     p_tw.add_argument("--account-id", required=True)
@@ -840,7 +1003,10 @@ def main():
     args = parser.parse_args()
 
     _setup_paths()
-    if args.cmd != "thumbnail":
+    if args.cmd not in ("thumbnail", "preview-voice"):
+        _apply_openai_reasoning_effort(getattr(args, "llm_reasoning_effort", "") or "")
+        if args.cmd == "generate":
+            _apply_image_provider(getattr(args, "image_provider", "") or "")
         # The explicit (--llm-provider, --llm-model) pair from the Channel UI
         # wins over --model (single-arg, used by batch + preview). Both feed
         # the same _select_llm_provider entry point so the runner stays simple.
@@ -857,6 +1023,8 @@ def main():
         cmd_generate(args)
     elif args.cmd == "preview-script":
         cmd_preview_script(args)
+    elif args.cmd == "preview-voice":
+        cmd_preview_voice(args)
     elif args.cmd == "upload-last":
         cmd_upload_last(args)
     elif args.cmd == "tweet":

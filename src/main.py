@@ -45,6 +45,7 @@ from constants import *
 from classes.Tts import TTS
 from termcolor import colored
 from classes.Twitter import Twitter
+from classes.SocialUpload import SocialUploader
 from classes.YouTube import YouTube, HOOK_PROFILES
 from prettytable import PrettyTable
 from classes.Outreach import Outreach
@@ -164,6 +165,33 @@ def main():
             return name
         warning(f"   Unknown profile '{raw}' — using '{resolved_default}'.")
         return resolved_default
+
+    def _prompt_upload_platforms(default_youtube: bool = True) -> list[str]:
+        info("\n   Selecciona plataformas de subida:")
+        platforms: list[str] = []
+        if confirm("Subir a YouTube?", default=default_youtube):
+            platforms.append("youtube")
+        if confirm("Subir a TikTok?", default=False):
+            platforms.append("tiktok")
+        if confirm("Subir a Facebook?", default=False):
+            platforms.append("facebook")
+        if not platforms:
+            info(" => Subida omitida.")
+        return platforms
+
+    def _upload_to_selected_platforms(youtube: YouTube, platforms: list[str]) -> None:
+        if not platforms:
+            return
+        try:
+            results = SocialUploader.from_youtube(youtube).upload(platforms)
+            if results and all(results.values()):
+                success(" => Uploads completed.")
+            else:
+                warning(f" => Some upload targets did not complete: {results}")
+        except KeyboardInterrupt:
+            warning("\nUpload cancelled by user. The video was preserved for retry.")
+        except Exception as exc:
+            error(f"Upload failed: {type(exc).__name__}: {exc}")
 
     # Get user input
     # user_input = int(question("Select an option: "))
@@ -363,8 +391,11 @@ def main():
                         )
                         if not video_path:
                             warning("Video generation aborted — nothing to upload.")
-                        elif confirm("Do you want to upload this video to YouTube?", default=True):
-                            youtube.upload_video()
+                        else:
+                            _upload_to_selected_platforms(
+                                youtube,
+                                _prompt_upload_platforms(default_youtube=True),
+                            )
                     elif user_input == 2:
                         # Upload Long Video
                         custom_topic = question(
@@ -403,8 +434,11 @@ def main():
                         long_path = youtube.generate_long_video(tts, custom_topic=custom_topic)
                         if not long_path:
                             warning("Long video generation aborted — nothing to upload.")
-                        elif confirm("Do you want to upload this video to YouTube?", default=True):
-                            youtube.upload_video()
+                        else:
+                            _upload_to_selected_platforms(
+                                youtube,
+                                _prompt_upload_platforms(default_youtube=True),
+                            )
                     elif user_input == 3:
                         # Show all Videos
                         videos = youtube.get_videos()
@@ -525,7 +559,13 @@ def main():
 
                                     if proceed:
                                         try:
-                                            youtube.reupload_video(chosen_path, subj_to_pass)
+                                            platforms = _prompt_upload_platforms(default_youtube=True)
+                                            if platforms and youtube.reupload_video(
+                                                chosen_path,
+                                                subj_to_pass,
+                                                upload=False,
+                                            ):
+                                                _upload_to_selected_platforms(youtube, platforms)
                                         except KeyboardInterrupt:
                                             warning(f"\nUpload cancelled by user. Video preserved at: {chosen_path}")
                                         except Exception as _re_err:
@@ -637,8 +677,11 @@ def main():
 
                         if not video_path:
                             warning("Photo video generation aborted - nothing to upload.")
-                        elif confirm("Do you want to upload this video to YouTube?", default=True):
-                            youtube.upload_video()
+                        else:
+                            _upload_to_selected_platforms(
+                                youtube,
+                                _prompt_upload_platforms(default_youtube=True),
+                            )
                     elif user_input == 8:
                         if get_verbose():
                             info(" => Climbing Options Ladder...", False)
@@ -884,6 +927,17 @@ if __name__ == "__main__":
         from config import get_gemini_models
         models = get_gemini_models()
         success(f"Using Gemini LLM (cascade: {' → '.join(models)})")
+    elif llm_provider == "openai":
+        from config import get_codex_cli_model, get_openai_models, get_openai_use_codex_cli
+        if get_openai_use_codex_cli():
+            model = get_codex_cli_model() or get_openai_models()[0]
+            success(f"Using OpenAI via Codex CLI: {model}")
+        else:
+            models = get_openai_models()
+            success(f"Using OpenAI LLM (cascade: {' → '.join(models)})")
+    elif llm_provider == "pollinations":
+        from config import get_pollinations_text_model
+        success(f"Using Pollinations LLM: {get_pollinations_text_model()}")
     else:
         # Use Ollama (local)
         configured_model = get_ollama_model()

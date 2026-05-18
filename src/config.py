@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import shutil
 import srt_equalizer
 
 from termcolor import colored
@@ -444,9 +445,37 @@ def get_imagemagick_path() -> str:
         return json.load(file)["imagemagick_path"]
 
 def get_llm_provider() -> str:
-    """Gets the LLM provider (ollama, pollinations, gemini, or openai)."""
+    """Gets the LLM provider (ollama, pollinations, gemini, openai, or claude)."""
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         return json.load(file).get("llm_provider", "gemini")
+
+
+def _resolve_cli_command(value: str, default_name: str) -> str:
+    """Resolve npm-style CLI shims on Windows while keeping explicit paths."""
+    value = (value or default_name).strip() or default_name
+    candidates = []
+    root, ext = os.path.splitext(value)
+    if not ext:
+        candidates.extend([f"{value}.cmd", f"{value}.exe", value])
+    candidates.append(value)
+
+    appdata = os.environ.get("APPDATA", "")
+    if appdata:
+        npm_dir = os.path.join(appdata, "npm")
+        base = os.path.basename(root or value)
+        candidates.extend([
+            os.path.join(npm_dir, f"{base}.cmd"),
+            os.path.join(npm_dir, f"{base}.exe"),
+            os.path.join(npm_dir, base),
+        ])
+
+    for candidate in candidates:
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+        if os.path.isfile(candidate):
+            return candidate
+    return value
 
 
 def get_openai_base_url() -> str:
@@ -461,6 +490,160 @@ def get_openai_api_key() -> str:
     with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
         configured = json.load(file).get("openai_api_key", "")
         return configured or os.environ.get("OPENAI_API_KEY", "")
+
+
+def get_openai_use_codex_cli() -> bool:
+    """Returns whether the OpenAI provider should delegate text calls to Codex CLI."""
+    return _get_bool_config("openai_use_codex_cli", False)
+
+
+def get_codex_cli_command() -> str:
+    """Gets the Codex CLI executable used when OpenAI is routed through Codex."""
+    value = os.environ.get("MP_CODEX_CLI_COMMAND", "").strip()
+    if not value:
+        value = str(_get_config_value("codex_cli_command", "codex") or "").strip()
+    return _resolve_cli_command(value, "codex")
+
+
+def get_claude_cli_command() -> str:
+    """Gets the Claude CLI executable used by the Claude provider."""
+    value = os.environ.get("MP_CLAUDE_CLI_COMMAND", "").strip()
+    if not value:
+        value = str(_get_config_value("claude_cli_command", "claude") or "").strip()
+    return _resolve_cli_command(value, "claude")
+
+
+def get_claude_cli_model() -> str:
+    """Gets the primary Claude CLI model/alias."""
+    value = os.environ.get("MP_CLAUDE_CLI_MODEL", "").strip()
+    if not value:
+        value = str(_get_config_value("claude_cli_model", "") or "").strip()
+    return value or "sonnet"
+
+
+def get_claude_cli_models() -> list[str]:
+    """Gets the ordered Claude CLI models/aliases to expose and try."""
+    override = os.environ.get("MP_CLAUDE_CLI_MODEL", "").strip()
+    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        models = json.load(file).get("claude_cli_models", [])
+    if override:
+        return [override] + [m for m in (models or []) if m != override]
+    if models:
+        return [m for m in models if m]
+    return [get_claude_cli_model()]
+
+
+def get_claude_cli_timeout_seconds() -> int:
+    """Gets the timeout for a single Claude CLI text-generation call."""
+    value = os.environ.get("MP_CLAUDE_CLI_TIMEOUT_SECONDS", "").strip()
+    if not value:
+        value = _get_config_value("claude_cli_timeout_seconds", 300)
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = 300
+    return max(30, min(3600, seconds))
+
+
+def get_codex_cli_model() -> str:
+    """Gets an optional Codex CLI model override; empty means Codex default."""
+    value = os.environ.get("MP_CODEX_CLI_MODEL", "").strip()
+    if not value:
+        value = str(_get_config_value("codex_cli_model", "") or "").strip()
+    return value
+
+
+def get_codex_cli_sandbox() -> str:
+    """Gets the sandbox mode for non-interactive Codex CLI text calls."""
+    value = os.environ.get("MP_CODEX_CLI_SANDBOX", "").strip()
+    if not value:
+        value = str(_get_config_value("codex_cli_sandbox", "read-only") or "").strip()
+    if value not in {"read-only", "workspace-write", "danger-full-access"}:
+        return "read-only"
+    return value
+
+
+def get_codex_cli_timeout_seconds() -> int:
+    """Gets the timeout for a single Codex CLI text-generation call."""
+    value = os.environ.get("MP_CODEX_CLI_TIMEOUT_SECONDS", "").strip()
+    if not value:
+        value = _get_config_value("codex_cli_timeout_seconds", 300)
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = 300
+    return max(30, min(3600, seconds))
+
+
+def get_codex_cli_generate_images() -> bool:
+    """Returns whether Codex CLI should be tried first for generated visuals."""
+    return _get_bool_config("codex_cli_generate_images", True)
+
+
+def get_codex_cli_image_sandbox() -> str:
+    """Gets the sandbox mode for Codex CLI image-generation calls."""
+    value = os.environ.get("MP_CODEX_CLI_IMAGE_SANDBOX", "").strip()
+    if not value:
+        value = str(_get_config_value("codex_cli_image_sandbox", "workspace-write") or "").strip()
+    if value not in {"read-only", "workspace-write", "danger-full-access"}:
+        return "workspace-write"
+    if value == "read-only":
+        return "workspace-write"
+    return value
+
+
+def get_codex_cli_image_timeout_seconds() -> int:
+    """Gets the timeout for a single Codex CLI visual-generation call."""
+    value = os.environ.get("MP_CODEX_CLI_IMAGE_TIMEOUT_SECONDS", "").strip()
+    if not value:
+        value = _get_config_value("codex_cli_image_timeout_seconds", 900)
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = 900
+    return max(60, min(3600, seconds))
+
+
+def get_image_provider() -> str:
+    """Gets the preferred AI image provider: auto, leonardo, openai, or gemini."""
+    value = os.environ.get("MP_IMAGE_PROVIDER", "").strip().lower()
+    if not value:
+        value = str(_get_config_value("image_provider", "auto") or "").strip().lower()
+    if value not in {"auto", "leonardo", "openai", "gemini"}:
+        return "auto"
+    return value
+
+
+def get_nanobanana2_api_base_url() -> str:
+    """Gets the Gemini/Nano Banana API base URL."""
+    value = str(_get_config_value("nanobanana2_api_base_url", "") or "").strip()
+    return value or os.environ.get("NANOBANANA2_API_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
+
+
+def get_nanobanana2_api_key() -> str:
+    """Gets the Nano Banana image API key, falling back to Gemini credentials."""
+    configured = str(_get_config_value("nanobanana2_api_key", "") or "").strip()
+    return (
+        configured
+        or os.environ.get("NANOBANANA2_API_KEY", "")
+        or get_gemini_api_key()
+        or os.environ.get("GEMINI_API_KEY", "")
+    )
+
+
+def get_nanobanana2_model() -> str:
+    """Gets the Gemini native image model used for Nano Banana images."""
+    value = str(_get_config_value("nanobanana2_model", "") or "").strip()
+    return value or os.environ.get("NANOBANANA2_MODEL", "gemini-2.5-flash-image")
+
+
+def get_nanobanana2_aspect_ratio() -> str:
+    """Gets the requested aspect ratio for Nano Banana images."""
+    value = str(_get_config_value("nanobanana2_aspect_ratio", "") or "").strip()
+    value = os.environ.get("NANOBANANA2_ASPECT_RATIO", value).strip() or "9:16"
+    if value not in {"1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"}:
+        return "9:16"
+    return value
 
 
 def get_openai_model() -> str:
@@ -490,7 +673,10 @@ def get_openai_reasoning_effort() -> str:
     if not value:
         with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
             value = str(json.load(file).get("openai_reasoning_effort", "medium")).strip()
-    return value or "medium"
+    value = (value or "medium").lower()
+    if value not in {"none", "minimal", "low", "medium", "high", "xhigh"}:
+        return "medium"
+    return value
 
 
 def get_pollinations_text_model() -> str:

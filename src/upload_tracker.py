@@ -20,6 +20,8 @@ from typing import Iterable
 
 from config import ROOT_DIR
 
+SUPPORTED_PLATFORMS = ("youtube", "tiktok", "facebook")
+
 
 _MP_DIR = os.path.join(ROOT_DIR, ".mp")
 
@@ -85,6 +87,10 @@ def record_generation(
         "subject": subject or "",
         "uploaded": False,
         "uploaded_url": None,
+        "platform_uploads": {
+            platform: {"status": "pending", "url": None, "updated_at": None, "error": ""}
+            for platform in SUPPORTED_PLATFORMS
+        },
         "created_at": datetime.utcnow().isoformat() + "Z",
         "uploaded_at": None,
     }
@@ -104,6 +110,67 @@ def mark_uploaded(video_path: str, url: str | None = None) -> bool:
     data["uploaded"] = True
     data["uploaded_url"] = url or data.get("uploaded_url")
     data["uploaded_at"] = datetime.utcnow().isoformat() + "Z"
+    platforms = data.setdefault("platform_uploads", {})
+    platforms["youtube"] = {
+        "status": "uploaded",
+        "url": url or data.get("uploaded_url"),
+        "updated_at": data["uploaded_at"],
+        "error": "",
+    }
+    _write(path, data)
+    return True
+
+
+def mark_distribution_complete(video_path: str, url: str | None = None) -> bool:
+    """Mark the generated asset safe to clean after selected platforms finished."""
+    if not video_path:
+        return False
+    path = _manifest_path_for(video_path)
+    data = _read(path)
+    if not data:
+        return False
+    data["uploaded"] = True
+    data["uploaded_url"] = url or data.get("uploaded_url")
+    data["uploaded_at"] = datetime.utcnow().isoformat() + "Z"
+    _write(path, data)
+    return True
+
+
+def mark_platform_uploaded(video_path: str, platform: str, url: str | None = None) -> bool:
+    if platform not in SUPPORTED_PLATFORMS or not video_path:
+        return False
+    path = _manifest_path_for(video_path)
+    data = _read(path)
+    if not data:
+        return False
+    now = datetime.utcnow().isoformat() + "Z"
+    platforms = data.setdefault("platform_uploads", {})
+    platforms[platform] = {
+        "status": "uploaded",
+        "url": url,
+        "updated_at": now,
+        "error": "",
+    }
+    if platform == "youtube":
+        data["uploaded_url"] = url or data.get("uploaded_url")
+    _write(path, data)
+    return True
+
+
+def mark_platform_failed(video_path: str, platform: str, error: str = "") -> bool:
+    if platform not in SUPPORTED_PLATFORMS or not video_path:
+        return False
+    path = _manifest_path_for(video_path)
+    data = _read(path)
+    if not data:
+        return False
+    platforms = data.setdefault("platform_uploads", {})
+    platforms[platform] = {
+        "status": "failed",
+        "url": (platforms.get(platform) or {}).get("url"),
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "error": (error or "")[:300],
+    }
     _write(path, data)
     return True
 

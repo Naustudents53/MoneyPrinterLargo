@@ -12,11 +12,65 @@ from config import *
 
 DEFAULT_SONG_ARCHIVE_URLS = []
 
+_ORDINAL_WORDS_RE = (
+    r"primer[ao]?|segund[ao]|tercer[ao]?|cuart[ao]|quint[ao]|sext[ao]|"
+    r"s[e\u00e9]ptim[ao]|octav[ao]|noven[ao]|d[e\u00e9]cim[ao]|"
+    r"first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth"
+)
+_COUNT_WORDS_RE = (
+    r"uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|"
+    r"one|two|three|four|five|six|seven|eight|nine|ten|\d+"
+)
+_STRUCTURE_NOUNS_RE = (
+    r"revelaci[o\u00f3]n|reveal|secci[o\u00f3]n|section|parte|part|"
+    r"dato|fact|hecho|punto|point|idea"
+)
+_STRUCTURE_MARKER_RE = (
+    r"hook|gancho|contexto|context|desarrollo|development|"
+    r"conclusi[o\u00f3]n|conclusion|cierre|closing|intro|introducci[o\u00f3]n"
+)
+_STRUCTURE_LABEL_PREFIX_RE = re.compile(
+    rf"(^|(?<=[.!?])\s+|\n+)\s*(?:"
+    rf"(?:{_ORDINAL_WORDS_RE})\s+(?:{_STRUCTURE_NOUNS_RE})|"
+    rf"(?:{_STRUCTURE_NOUNS_RE})\s+(?:{_COUNT_WORDS_RE})|"
+    rf"(?:{_STRUCTURE_MARKER_RE})"
+    rf")\s*[:\-\u2013\u2014]\s*",
+    re.IGNORECASE,
+)
+_STRUCTURE_LABEL_ANYWHERE_RE = re.compile(
+    rf"\b(?:{_ORDINAL_WORDS_RE})\s+"
+    rf"(?:revelaci[o\u00f3]n|reveal|secci[o\u00f3]n|section|parte|part)\b|"
+    rf"\b(?:{_STRUCTURE_MARKER_RE})\s*[:\-\u2013\u2014]",
+    re.IGNORECASE,
+)
+
 
 _ROMAN_ORDINALS_ES = {
     1: "primero", 2: "segundo", 3: "tercero", 4: "cuarto", 5: "quinto",
     6: "sexto", 7: "séptimo", 8: "octavo", 9: "noveno", 10: "décimo",
 }
+
+
+def has_narration_structure_labels(text: str) -> bool:
+    """Detect labels that are prompt structure, not spoken narration."""
+    return bool(_STRUCTURE_LABEL_ANYWHERE_RE.search(text or ""))
+
+
+def strip_narration_structure_labels(text: str) -> str:
+    """Remove leaked labels like "Primera revelacion:" before TTS."""
+    if not text:
+        return ""
+    cleaned = _STRUCTURE_LABEL_PREFIX_RE.sub(lambda m: m.group(1), text)
+
+    def _capitalize_start(match: re.Match) -> str:
+        return f"{match.group(1)}{match.group(2).upper()}"
+
+    cleaned = re.sub(
+        r"(^|[.!?]\s+)([a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1])",
+        _capitalize_start,
+        cleaned,
+    )
+    return re.sub(r"[ \t]{2,}", " ", cleaned).strip()
 _ROMAN_CARDINALS_ES = {
     11: "once", 12: "doce", 13: "trece", 14: "catorce", 15: "quince",
     16: "dieciséis", 17: "diecisiete", 18: "dieciocho", 19: "diecinueve",
@@ -276,6 +330,7 @@ def clean_script_for_tts(text: str) -> str:
     ellipsis, parentheses, and Spanish opening marks (¿¡).
     Strips only markdown/control chars the LLM sometimes leaks.
     """
+    text = strip_narration_structure_labels(text)
     # Expand spoken symbols (%, etc.) first so they aren't silently dropped
     # by the whitelist below.
     text = expand_spoken_symbols(text)

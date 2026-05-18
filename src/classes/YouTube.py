@@ -20,6 +20,7 @@ from .Tts import TTS
 from .Retention import CosmicRetentionEngine
 from .MaxRetention import MaxRetentionEngine, is_max_retention, normalize_retention_mode
 from .RetentionLab import RetentionLab
+from .NarrationVoice import NarrationVoice
 from llm_provider import generate_text
 from config import *
 from status import *
@@ -189,7 +190,7 @@ LONG_VIDEO_SECTION_THEMES: list[str] = [
     # S2
     "Pivote misterio â€” siembra el LOOP PRINCIPAL del video. Introduce UNA contradicciÃ³n especÃ­fica, anomalÃ­a o pregunta sin respuesta que el espectador no podrÃ¡ dejar pasar (algo no encaja, alguien hizo algo inexplicable, un detalle que rompe la versiÃ³n oficial). Plantea la pregunta con claridad, promÃ©tele al espectador que la respuesta llega mÃ¡s adelante, y NO la respondas todavÃ­a. Puedes sembrar 1 loop secundario adicional mÃ¡s pequeÃ±o.",
     # S3
-    "Primera revelaciÃ³n parcial CON LIKE-BREAK al inicio. ABRE con 1-2 oraciones cÃ¡lidas y orgÃ¡nicas pidiendo al espectador que dÃ© 'me gusta' si estÃ¡ disfrutando el video â€” debe sonar natural, no a publicidad ni a lista de instrucciones, como un narrador que confÃ­a y agradece. DESPUÃ‰S, cierra un loop SECUNDARIO pequeÃ±o (NUNCA el loop principal sembrado en la secciÃ³n anterior â€” ese debe quedar abierto hasta el clÃ­max) y aprovecha la energÃ­a para abrir un nuevo loop mÃ¡s profundo.",
+    "Respuesta parcial CON LIKE-BREAK al inicio. ABRE con 1-2 oraciones cÃ¡lidas y orgÃ¡nicas pidiendo al espectador que dÃ© 'me gusta' si estÃ¡ disfrutando el video â€” debe sonar natural, no a publicidad ni a lista de instrucciones, como un narrador que confÃ­a y agradece. DESPUÃ‰S, cierra un loop SECUNDARIO pequeÃ±o (NUNCA el loop principal sembrado en la secciÃ³n anterior â€” ese debe quedar abierto hasta el clÃ­max) y aprovecha la energÃ­a para abrir un nuevo loop mÃ¡s profundo.",
     # S4
     "Backstory cinemÃ¡tica: cÃ³mo se llegÃ³ hasta el momento que abriÃ³ el video. Una escena concreta del ORIGEN (fecha exacta, lugar especÃ­fico, personaje real) que explica por quÃ© pasÃ³ lo que pasÃ³. MantÃ©n el tono narrativo y sensorial, NO expositivo de libro de texto. Sigue sin tocar el loop principal.",
     # S5
@@ -329,6 +330,7 @@ class YouTube:
         self.visual_beat_map: list = []
         self.visual_beat_report: dict = {}
         self.visual_preflight: dict = {}
+        self.retention_plan: dict = {}
 
         # Initialize the Firefox profile
         self.options: Options = Options()
@@ -783,6 +785,110 @@ OUTPUT FORMAT (strict):
             )
         return improved
 
+    def _hook_lab_max_attempts(self) -> int:
+        raw = os.environ.get("MP_HOOK_LAB_MAX_ATTEMPTS", "12").strip()
+        try:
+            return max(1, min(int(raw), 30))
+        except ValueError:
+            return 12
+
+    def _select_max_retention_hook(
+        self,
+        candidates: int = 8,
+        educational_anchor: bool = False,
+    ) -> tuple[str, dict]:
+        return RetentionLab.select_best_hook(
+            topic=self.subject,
+            niche=self.niche,
+            language=self.language,
+            generate_response=self.generate_response,
+            history_videos=self.get_videos(),
+            candidates=candidates,
+            max_rounds=self._hook_lab_max_attempts(),
+            educational_anchor=educational_anchor,
+        )
+
+    @staticmethod
+    def _hook_sentence_for_script(hook: str) -> str:
+        clean = RetentionLab._clean_line(hook)
+        if clean and clean[-1] not in ".!?":
+            clean += "."
+        return clean
+
+    def _replace_first_sentence(self, script: str, hook: str) -> str:
+        sentences = MaxRetentionEngine._sentences(script)
+        clean_hook = self._hook_sentence_for_script(hook)
+        if not sentences or not clean_hook:
+            return script
+        sentences[0] = clean_hook
+        return " ".join(sentences)
+
+    def _enforce_final_hook_lab(self, script: str, educational_anchor: bool = False) -> str:
+        sentences = MaxRetentionEngine._sentences(script)
+        if not sentences:
+            return script
+
+        final_hook_report = RetentionLab.score_hook(
+            sentences[0],
+            topic=self.subject,
+            niche=self.niche,
+            language=self.language,
+            require_subject_anchor=educational_anchor,
+        )
+        accepted = final_hook_report.get("score", 0) >= RetentionLab.HOOK_SCORE_THRESHOLD
+
+        if not accepted:
+            if get_verbose():
+                warning(
+                    "Final Hook Lab is still in RIESGO; retrying hook generation "
+                    "before render."
+                )
+            best_hook = ""
+            hook_lab = getattr(self, "retention_hook_lab", {}) or {}
+            if hook_lab.get("accepted"):
+                best_hook = str(hook_lab.get("best_hook") or "")
+            if not best_hook:
+                best_hook, hook_lab = self._select_max_retention_hook(
+                    candidates=8,
+                    educational_anchor=educational_anchor,
+                )
+                self.retention_hook_lab = hook_lab
+            if not hook_lab.get("accepted"):
+                raise RuntimeError(
+                    "Hook Lab could not produce an accepted hook after "
+                    f"{hook_lab.get('rounds', self._hook_lab_max_attempts())} attempts "
+                    f"(best {hook_lab.get('best_score', 0)}/10)."
+                )
+            script = self._replace_first_sentence(script, best_hook)
+            sentences = MaxRetentionEngine._sentences(script)
+            final_hook_report = RetentionLab.score_hook(
+                sentences[0] if sentences else "",
+                topic=self.subject,
+                niche=self.niche,
+                language=self.language,
+                require_subject_anchor=educational_anchor,
+            )
+            accepted = final_hook_report.get("score", 0) >= RetentionLab.HOOK_SCORE_THRESHOLD
+            if not accepted:
+                raise RuntimeError(
+                    "Hook Lab repaired the script, but the final hook still scored "
+                    f"{final_hook_report.get('score', 0)}/10."
+                )
+
+        self.retention_hook_lab.update({
+            "final_hook": final_hook_report.get("hook", ""),
+            "final_score": final_hook_report.get("score", 0),
+            "final_accepted": accepted,
+            "final_issues": final_hook_report.get("issues", []),
+        })
+        if get_verbose():
+            info(
+                " => Final Hook Lab: "
+                f"{final_hook_report.get('score', 0)}/10 "
+                f"{'OK' if accepted else 'RIESGO'}"
+            )
+        return script
+
     def generate_script(self) -> str:
         """
         Generate a script for a video, depending on the subject of the video, the number of paragraphs, and the AI model.
@@ -847,20 +953,27 @@ OUTPUT FORMAT (strict):
             info(f" => Hook profile: {profile_name} | style: {hook_style}")
 
         hook_lab_directive = ""
+        educational_opening_directive = ""
+        if profile_name == "educational":
+            educational_opening_directive = f"""
+
+EDUCATIONAL OPENING ANCHOR - mandatory:
+- Sentence 1 must name the main subject naturally before using vague pronouns or mystery phrasing.
+- If the subject name is not self-explanatory, immediately add what it is: star, planet, black hole, comet, probe, galaxy, mission, person, place, event, or phenomenon.
+- Do NOT force every opening into "La estrella..." or "El planeta..."; vary it naturally. Good patterns: "TON seis dieciocho es un agujero negro...", "SS Leonis Minoris es una estrella vampiro...", "La estrella de Tabby perdió...", "Voyager uno es una sonda...".
+- For short catalog names, write them in a speakable form when needed. Prefer "TON seis dieciocho" over spelling letters one by one, and "Voyager uno" over raw digits.
+- Bad educational opening: "Nadie ve cómo esta estrella..." before naming the star. Better: "SS Leonis Minoris es una estrella vampiro que...".
+"""
         if is_max_retention(getattr(self, "_retention_mode", "")):
             try:
-                best_hook, hook_report = RetentionLab.select_best_hook(
-                    topic=self.subject,
-                    niche=self.niche,
-                    language=self.language,
-                    generate_response=self.generate_response,
-                    history_videos=self.get_videos(),
+                best_hook, hook_report = self._select_max_retention_hook(
                     candidates=8,
+                    educational_anchor=profile_name == "educational",
                 )
             except Exception as e:
                 best_hook, hook_report = "", {"accepted": False, "error": str(e)[:200]}
             self.retention_hook_lab = hook_report
-            if best_hook:
+            if best_hook and hook_report.get("accepted"):
                 hook_lab_directive = f"""
 
 MAXIMA RETENCION HOOK LAB - mandatory:
@@ -868,11 +981,24 @@ MAXIMA RETENCION HOOK LAB - mandatory:
 "{best_hook}"
 - Sentence 2 must immediately explain the visual consequence promised by that hook.
 """
+            elif best_hook and get_verbose():
+                warning(
+                    "Hook Lab best candidate is below threshold; "
+                    "not forcing it into the script."
+                )
             if get_verbose() and hook_report:
+                repaired = " | repaired" if hook_report.get("fallback_used") else ""
                 info(
                     " => Hook Lab: "
                     f"{hook_report.get('best_score', 0)}/10 "
-                    f"{'OK' if hook_report.get('accepted') else 'RIESGO'}"
+                    f"{'OK' if hook_report.get('accepted') else 'RIESGO'} "
+                    f"(rounds {hook_report.get('rounds', 1)}/{hook_report.get('max_rounds', 1)}{repaired})"
+                )
+            if not hook_report.get("accepted"):
+                raise RuntimeError(
+                    "Hook Lab could not produce an accepted hook after "
+                    f"{hook_report.get('rounds', self._hook_lab_max_attempts())} attempts "
+                    f"(best {hook_report.get('best_score', 0)}/10)."
                 )
 
         cosmic_directive = CosmicRetentionEngine.short_generation_directive(
@@ -890,6 +1016,7 @@ MAXIMA RETENCION HOOK LAB - mandatory:
             if is_max_retention(getattr(self, "_retention_mode", ""))
             else ""
         )
+        voice_directive = NarrationVoice.short_generation_directive(self.language)
 
         prompt = f"""Write a narration script for a short video in EXACTLY {sentence_length} sentences.
 {duration_clause}
@@ -897,6 +1024,8 @@ MAXIMA RETENCION HOOK LAB - mandatory:
 TOPIC: {self.subject}
 {cosmic_directive}
 {max_retention_directive}
+{voice_directive}
+{educational_opening_directive}
 {hook_lab_directive}
 
 NARRATIVE STRUCTURE (follow this order):
@@ -911,6 +1040,7 @@ CRITICAL RULES:
 - EXACTLY {sentence_length} sentences. Short and punchy (under 20 words each).
 - NO markdown, NO formatting, NO titles, NO bullet points.
 - NO "welcome", NO "voiceover", NO meta-references.
+- NEVER announce the structure. Do not write labels the narrator would say aloud, such as "primera revelacion", "segunda revelacion", "hook", "contexto", "desarrollo", "conclusion", "parte uno", or "seccion dos".
 - ABSOLUTELY NO stage directions of any kind. Never write "(image of ...)", "(imagen de ...)", "[B-roll: ...]", "(plano cerrado)", "(music)", "(mÃºsica suave)", "(emoji)", "(transition)", "(voice over)" or anything similar. Only text a narrator would speak ALOUD.
 - NUMBERS: spell numbers out as words, not digits. Examples (in {self.language}): "mil cuatrocientos cincuenta y tres" not "1453"; "four thousand five hundred" not "4,500".
 - YEAR vs DURATION â€” keep them strictly separate. A YEAR is a calendar date; a DURATION is elapsed time. They are different things. To cite a calendar year, say "el aÃ±o <aÃ±o>" / "in the year <year>". The phrase "hace <N> aÃ±os" / "<N> years ago" expresses ONLY duration: <N> is the difference between the current year and the year of the event â€” it is NOT the year itself. When in doubt, name the year ("el aÃ±o X") and do NOT use the "hace X aÃ±os" / "X years ago" phrasing.
@@ -921,6 +1051,7 @@ CRITICAL RULES:
 
         # Apply regex to remove *
         completion = re.sub(r"\*", "", completion)
+        completion = strip_narration_structure_labels(completion)
 
         if not completion:
             error("The generated script is empty.")
@@ -940,6 +1071,7 @@ CRITICAL RULES:
             target_words=target_words,
             generate_response=self.generate_response,
         )
+        completion = strip_narration_structure_labels(completion)
 
         if is_max_retention(getattr(self, "_retention_mode", "")):
             completion = MaxRetentionEngine.optimize_short_script(
@@ -951,11 +1083,18 @@ CRITICAL RULES:
                 target_words=target_words,
                 generate_response=self.generate_response,
             )
+            completion = strip_narration_structure_labels(completion)
             completion = self._run_max_retention_preflight(
                 completion,
                 sentence_length=sentence_length,
                 allow_rewrite=True,
             )
+            completion = strip_narration_structure_labels(completion)
+            completion = self._enforce_final_hook_lab(
+                completion,
+                educational_anchor=profile_name == "educational",
+            )
+            completion = strip_narration_structure_labels(completion)
 
         if is_cosmic_video and get_verbose():
             score = CosmicRetentionEngine.score_script(completion)
@@ -967,7 +1106,7 @@ CRITICAL RULES:
                 f"ending {score.ending_strength})"
             )
 
-        self.script = completion
+        self.script = strip_narration_structure_labels(completion)
 
         return completion
 
@@ -1486,6 +1625,70 @@ Example format:
         self.images.append(image_path)
         return image_path
 
+    def _should_use_codex_cli_images(self) -> bool:
+        try:
+            from llm_provider import get_active_provider
+            return (
+                get_image_provider() == "auto"
+                and
+                get_active_provider() == "openai"
+                and get_openai_use_codex_cli()
+                and get_codex_cli_generate_images()
+            )
+        except Exception:
+            return False
+
+    def _ai_image_provider_choice(self) -> str:
+        try:
+            return get_image_provider()
+        except Exception:
+            return "auto"
+
+    def _ai_image_providers(self, width: int = 1080, height: int = 1920) -> list[tuple[str, object, str]]:
+        """Return AI image providers in the order selected for this job."""
+        provider = self._ai_image_provider_choice()
+        if provider == "openai":
+            return [("OpenAI Codex Image", lambda p: self._try_codex_cli_image(p, width, height), "ai")]
+        if provider == "gemini":
+            return [("Gemini Nano Banana", lambda p: self._try_gemini_image(p, width, height), "ai")]
+        if provider == "leonardo":
+            if width > height:
+                return [("Leonardo AI", lambda p: self._try_leonardo_landscape(p), "ai")]
+            return [("Leonardo AI", self._try_leonardo, "ai")]
+
+        providers = []
+        if self._should_use_codex_cli_images():
+            providers.append(("Codex CLI Image", lambda p: self._try_codex_cli_image(p, width, height), "ai"))
+        if width > height:
+            providers.append(("Leonardo AI", lambda p: self._try_leonardo_landscape(p), "ai"))
+        else:
+            providers.append(("Leonardo AI", self._try_leonardo, "ai"))
+        providers.append(("Gemini Nano Banana", lambda p: self._try_gemini_image(p, width, height), "ai"))
+        if width <= height:
+            providers.append(("HuggingFace", self._try_huggingface, "ai"))
+        return providers
+
+    def _try_codex_cli_image(self, prompt: str, width: int = 1080, height: int = 1920) -> bytes:
+        """Ask the locally authenticated Codex CLI to create a visual asset."""
+        from codex_image_provider import generate_image_bytes_with_codex
+        from llm_provider import get_active_model, get_active_provider
+
+        print(colored(f"    [Codex CLI Image] Generating...", "cyan"), flush=True)
+        active_model = get_active_model() if get_active_provider() == "openai" else ""
+        return generate_image_bytes_with_codex(
+            prompt,
+            width=width,
+            height=height,
+            model=active_model if isinstance(active_model, str) else "",
+        )
+
+    def _try_gemini_image(self, prompt: str, width: int = 1080, height: int = 1920) -> bytes:
+        """Generate a visual with Gemini Nano Banana."""
+        from gemini_image_provider import generate_image_bytes_with_gemini
+
+        print(colored(f"    [Gemini Nano Banana] Generating...", "cyan"), flush=True)
+        return generate_image_bytes_with_gemini(prompt, width=width, height=height)
+
     def _try_huggingface(self, prompt: str) -> bytes:
         """Try HuggingFace Inference API. Requires free HF token."""
         from config import get_hf_api_key
@@ -1696,6 +1899,7 @@ Example format:
         subject: str | None = None,
         generate_thumbnail: bool = False,
         is_long: bool | None = None,
+        upload: bool = True,
     ) -> bool:
         """Re-upload an already-rendered .mp4 by reusing the standard
         ``upload_video`` Selenium flow.
@@ -1710,7 +1914,8 @@ Example format:
         If ``generate_thumbnail`` is true, generate a custom thumbnail when
         one is not already restored from the sidecar.
 
-        Returns whatever ``upload_video`` returns.
+        If ``upload`` is false, only recover/persist metadata and return True.
+        Otherwise returns whatever ``upload_video`` returns.
         """
         if not os.path.isfile(video_path):
             error(f"Cannot re-upload: file not found at '{video_path}'.")
@@ -1744,6 +1949,8 @@ Example format:
             self._persist_metadata_sidecar(is_long=effective_is_long)
             info(" => Loaded saved metadata from sidecar.")
             success(f" => Title: {self.metadata['title']}")
+            if not upload:
+                return True
             return self.upload_video()
 
         # 2) Subject provided â†’ ask the LLM for title + description.
@@ -1809,6 +2016,8 @@ Example format:
         # Detect long-vs-short from existing sidecar if any; default short.
         self._persist_metadata_sidecar(is_long=effective_is_long)
 
+        if not upload:
+            return True
         return self.upload_video()
 
     def _persist_metadata_sidecar(self, is_long: bool) -> None:
@@ -1837,6 +2046,7 @@ Example format:
                 "visual_beat_map": getattr(self, "visual_beat_map", []) or [],
                 "visual_beat_report": getattr(self, "visual_beat_report", {}) or {},
                 "visual_preflight": getattr(self, "visual_preflight", {}) or {},
+                "retention_plan": getattr(self, "retention_plan", {}) or {},
             }
             with open(sidecar, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -1845,6 +2055,57 @@ Example format:
         except Exception as e:
             if get_verbose():
                 warning(f"Could not write upload sidecar: {e}")
+
+    def _build_retention_plan(self, video_path: str = "") -> dict:
+        if not is_max_retention(getattr(self, "_retention_mode", "")):
+            self.retention_plan = {}
+            return {}
+        script = getattr(self, "script", "") or ""
+        if not script.strip():
+            self.retention_plan = {}
+            return {}
+        try:
+            history_videos = self.get_videos()
+        except Exception:
+            history_videos = []
+        try:
+            plan = RetentionLab.build_retention_plan(
+                script=script,
+                topic=getattr(self, "subject", "") or "",
+                niche=getattr(self, "niche", "") or "",
+                language=getattr(self, "language", "") or "",
+                retention_mode=getattr(self, "_retention_mode", "") or "",
+                video_path=os.path.abspath(video_path or getattr(self, "video_path", "") or ""),
+                retention_preflight=getattr(self, "retention_preflight", {}) or {},
+                retention_hook_lab=getattr(self, "retention_hook_lab", {}) or {},
+                visual_beat_map=getattr(self, "visual_beat_map", []) or [],
+                visual_beat_report=getattr(self, "visual_beat_report", {}) or {},
+                visual_preflight=getattr(self, "visual_preflight", {}) or {},
+                history_videos=history_videos,
+            )
+            self.retention_plan = plan
+            if get_verbose():
+                info(
+                    " => Retencion Pro: "
+                    f"{plan.get('status', 'unknown')} "
+                    f"score={plan.get('overall_score', 0)}/10"
+                )
+            return plan
+        except Exception as exc:
+            self.retention_plan = {}
+            if get_verbose():
+                warning(f"Could not build Retencion Pro plan: {exc}")
+            return {}
+
+    def _persist_retention_plan(self) -> None:
+        try:
+            plan = getattr(self, "retention_plan", {}) or {}
+            video_path = getattr(self, "video_path", "") or ""
+            if plan and video_path:
+                RetentionLab.persist_retention_plan(video_path, plan)
+        except Exception as exc:
+            if get_verbose():
+                warning(f"Could not persist Retencion Pro plan: {exc}")
 
     # Default visual baseline applied when a channel has NO `image_style`
     # configured. Goal: keep all images uniform (same realism level) and let
@@ -3049,6 +3310,8 @@ RULES:
                         "photos" â†’ Wikimedia / stock photos first, AI as last-resort fallback.
         """
         self._image_mode = image_mode
+        selected_ai_providers = self._ai_image_providers(1080, 1920)
+
         if image_mode == "photos":
             print(colored(f"\n  [Images] Fetching {len(prompts)} real photos...", "blue"))
             providers = [
@@ -3074,19 +3337,18 @@ RULES:
                 ("Pexels", self._try_pexels, "stock"),
                 ("Pixabay", self._try_pixabay, "stock"),
                 # Tier 5: AI fallback when no real photo matches the topic.
-                ("Leonardo AI", self._try_leonardo, "ai"),
-            ]
+            ] + selected_ai_providers
         else:
-            print(colored(f"\n  [Images] Generating {len(prompts)} images...", "blue"))
-            providers = [
-                # Tier 1: High-quality AI generator
-                ("Leonardo AI", self._try_leonardo, "ai"),
-                # Tier 2: HuggingFace fallback
-                ("HuggingFace", self._try_huggingface, "ai"),
-                # Tier 3: Stock photos (reliable, always available)
-                ("Pexels", self._try_pexels, "stock"),
-                ("Pixabay", self._try_pixabay, "stock"),
-            ]
+            provider_label = self._ai_image_provider_choice()
+            label_suffix = "" if provider_label == "auto" else f" via {provider_label}"
+            print(colored(f"\n  [Images] Generating {len(prompts)} images{label_suffix}...", "blue"))
+            providers = selected_ai_providers
+            if provider_label == "auto":
+                providers += [
+                    # Stock photos remain as a reliability fallback in auto mode.
+                    ("Pexels", self._try_pexels, "stock"),
+                    ("Pixabay", self._try_pixabay, "stock"),
+                ]
 
         for i, prompt in enumerate(prompts):
             print(colored(f"\n  Image {i+1}/{len(prompts)}", "blue"))
@@ -3128,7 +3390,8 @@ RULES:
             path (str): The path to the generated image.
         """
         providers = [
-            ("HuggingFace", self._try_huggingface),
+            (name, fn)
+            for name, fn, _kind in self._ai_image_providers(1080, 1920)
         ]
 
         print(colored(f"  [Image] {prompt[:80]}...", "blue"))
@@ -3167,6 +3430,7 @@ RULES:
         # Strip leaked stage directions ("(imagen de ...)") before any other
         # cleaning so TTS never reads them out loud.
         self.script = strip_stage_directions(self.script)
+        self.script = strip_narration_structure_labels(self.script)
         self.script = clean_script_for_tts(self.script)
         tts_text, regnal_subs = expand_regnal_numerals_tracked(self.script)
         # Expand digit numbers to Spanish words. Applied to tts_text only so
@@ -3414,6 +3678,15 @@ RULES:
         line_spacing = 0  # ascent+descent already provides natural spacing
         max_words_per_group = caption_cfg.max_words_per_group if caption_cfg else 5
         max_lines = 2 if max_mode else 3
+        hot_word_set = set()
+        if max_mode:
+            try:
+                hot_word_set = set(RetentionLab.hot_words(getattr(self, "script", "") or "", getattr(self, "subject", "") or ""))
+            except Exception:
+                hot_word_set = set()
+
+        def _caption_key(text: str) -> str:
+            return RetentionLab.normalize(text)
 
         # Measure height of a single line using full font metrics (ascent + descent)
         # plus stroke so descenders (g, y, p) and strokes never get clipped
@@ -3498,7 +3771,8 @@ RULES:
                         draw.text((x, y), t, fill=(255, 215, 0), font=font,
                                   stroke_width=6, stroke_fill="black")
                     else:
-                        draw.text((x, y), t, fill="white", font=font,
+                        fill = (255, 95, 70) if _caption_key(t) in hot_word_set else "white"
+                        draw.text((x, y), t, fill=fill, font=font,
                                   stroke_width=6, stroke_fill="black")
                     x += tw + word_spacing
                     word_counter += 1
@@ -4032,6 +4306,7 @@ RULES:
         self.visual_beat_map = []
         self.visual_beat_report = {}
         self.visual_preflight = {}
+        self.retention_plan = {}
         # Shorts upload fast â€” no need for the long-video patient wait.
         self._is_long_video = False
 
@@ -4086,6 +4361,7 @@ RULES:
             info(f" => Generated Video: {path}")
 
         self.video_path = os.path.abspath(path)
+        self._build_retention_plan(self.video_path)
         self._persist_metadata_sidecar(is_long=False)
 
         try:
@@ -4098,6 +4374,7 @@ RULES:
             )
         except Exception as _e:
             warning(f"Could not record upload manifest: {_e}")
+        self._persist_retention_plan()
 
         return path
 
@@ -4296,6 +4573,7 @@ RULES:
             self.niche,
             lang,
         )
+        voice_block = NarrationVoice.long_generation_directive(lang)
 
         prompt = f"""Eres un narrador experto de documentales y guionista profesional especializado en RETENCIÃ“N: tu trabajo es que el espectador NO se vaya en los primeros 5 minutos y aguante hasta el final.
 Escribe un GUION COMPLETO de narraciÃ³n cautivador de 15 a 20 minutos sobre el siguiente tema.
@@ -4303,6 +4581,7 @@ Escribe un GUION COMPLETO de narraciÃ³n cautivador de 15 a 20 minutos sobre el
 Tema: {self.subject}
 {brief_block}
 {retention_block}
+{voice_block}
 ARQUITECTURA DE RETENCIÃ“N â€” LEE ESTO ANTES DE EMPEZAR:
 - Los primeros 5 minutos (INTRO + SECTION 1 + SECTION 2) son un MOTOR DE GANCHO: cold open cinematogrÃ¡fico â†’ viÃ±eta inmersiva â†’ siembra del MISTERIO PRINCIPAL del video.
 - ESTÃ PROHIBIDO mencionar "me gusta" o "like" en el INTRO, en la SECTION 1 o en la SECTION 2. La invitaciÃ³n al like aparece SOLO al INICIO de la SECTION 3, cuando el espectador ya estÃ¡ enganchado.
@@ -4343,6 +4622,7 @@ REGLAS DE ESTILO:
 - ESCRIBE TODO EN {lang}. NO uses inglÃ©s.
 - NO markdown, NO viÃ±etas, NO listas numeradas.
 - NO URLs, enlaces, citas ni referencias.
+- NO digas etiquetas de estructura en la narraciÃ³n: nunca escribas "primera revelaciÃ³n", "segunda revelaciÃ³n", "hook", "contexto", "desarrollo", "conclusiÃ³n", "parte uno" ni "secciÃ³n dos". Esos nombres son instrucciones privadas, no texto hablado.
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones de cualquier tipo. Solo texto que un narrador dirÃ­a EN VOZ ALTA. NUNCA escribas:
     * "(imagen de ...)", "(imÃ¡genes de ...)", "[plano cerrado de ...]", "(escena ...)", "(secuencia ...)"
     * "(B-roll: ...)", "(B/O ...)", "(voz en off)", "(narrador:)"
@@ -4395,6 +4675,7 @@ REGLAS DE ESTILO:
             self.niche,
             lang,
         )
+        voice_block = NarrationVoice.long_generation_directive(lang)
 
         def _ask_section(prompt: str, min_words: int) -> str:
             """Call the LLM with retries until we hit min_words AND the content is clean."""
@@ -4425,7 +4706,7 @@ REGLAS DE ESTILO:
 
         # ---- INTRO â€” cold open + open loops (NO like-ask here) ----
         intro_prompt = f"""Eres un narrador experto de documentales especializado en RETENCIÃ“N. Escribe SOLO la INTRODUCCIÃ“N de un guion documental sobre: {self.subject}
-{brief_block}{retention_block}
+{brief_block}{retention_block}{voice_block}
 OBJETIVO DE LA INTRO: enganchar al espectador en los primeros 30 segundos para que aguante los 20 minutos. NO menciones "me gusta" ni "like" â€” esa invitaciÃ³n va en otra secciÃ³n posterior, NUNCA aquÃ­.
 
 ESTRUCTURA OBLIGATORIA (5-7 oraciones, 130-180 palabras):
@@ -4440,6 +4721,7 @@ REGLAS DE ESTILO:
 - Lenguaje vÃ­vido y sensorial. Oraciones CORTAS (mÃ¡ximo 20 palabras).
 - ESCRIBE TODO EN {lang}. NO uses inglÃ©s.
 - NO uses markdown, viÃ±etas, listas, URLs, ni meta-texto.
+- NO digas etiquetas de estructura en voz alta: nada de "primera revelaciÃ³n", "segunda revelaciÃ³n", "hook", "contexto", "desarrollo", "conclusiÃ³n", "parte uno" o "secciÃ³n dos".
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(mÃºsica ...)", "(emoji ...)", "(transiciÃ³n)" etc. Solo texto hablado.
 - NÃšMEROS: escribe los nÃºmeros con palabras, no con dÃ­gitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
 - AÃ‘O vs DURACIÃ“N â€” distÃ­nguelos siempre. Un AÃ‘O es una FECHA del calendario; una DURACIÃ“N es el tiempo transcurrido. Para citar un aÃ±o, di "el aÃ±o <aÃ±o>". "Hace <N> aÃ±os" expresa SOLO duraciÃ³n. Ante la duda, nombra el aÃ±o.
@@ -4491,7 +4773,7 @@ REGLAS DE ESTILO:
                 loops_block = ""
 
             section_prompt = f"""Eres un narrador experto de documentales especializado en retenciÃ³n. EstÃ¡s escribiendo la SECCIÃ“N {i} de 10 de un guion sobre: {self.subject}
-{brief_block}{retention_block}{loops_block}
+{brief_block}{retention_block}{voice_block}{loops_block}
 Esto es lo Ãºltimo que ya se narrÃ³ (NO lo repitas, continÃºa el flujo natural):
 \"\"\"
 {tail}
@@ -4504,6 +4786,7 @@ Escribe SOLO la SECCIÃ“N {i}:
 - Aporta material NUEVO, no repitas ideas ya dichas.
 - ESCRIBE TODO EN {lang}. NO uses inglÃ©s.
 - NO uses markdown, viÃ±etas, listas, URLs, ni meta-texto.
+- NO digas etiquetas de estructura en voz alta: nada de "primera revelaciÃ³n", "segunda revelaciÃ³n", "hook", "contexto", "desarrollo", "conclusiÃ³n", "parte uno" o "secciÃ³n dos".
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(mÃºsica ...)", "(emoji ...)", "(transiciÃ³n)" etc. Solo texto hablado.
 - NÃšMEROS: escribe los nÃºmeros con palabras, no con dÃ­gitos ("mil cuatrocientos cincuenta y tres", no "1453"; "cuatro mil quinientos", no "4.500").
 - AÃ‘O vs DURACIÃ“N â€” distÃ­nguelos siempre. Un AÃ‘O es una FECHA del calendario; una DURACIÃ“N es el tiempo transcurrido. Son cosas distintas. Para citar un aÃ±o, di "el aÃ±o <aÃ±o>". La fÃ³rmula "hace <N> aÃ±os" expresa SOLO duraciÃ³n: <N> es la diferencia entre el aÃ±o actual y el aÃ±o del evento, NO es el aÃ±o mismo. Ante la duda, nombra el aÃ±o ("el aÃ±o X") y NO uses la fÃ³rmula "hace X aÃ±os".
@@ -4517,7 +4800,7 @@ Escribe SOLO la SECCIÃ“N {i}:
         prior = "\n\n".join(parts)
         tail = " ".join(prior.split()[-300:])
         closing_prompt = f"""Eres un narrador experto de documentales. EstÃ¡s escribiendo el CIERRE de un guion sobre: {self.subject}
-{brief_block}{retention_block}
+{brief_block}{retention_block}{voice_block}
 Esto es lo Ãºltimo que se narrÃ³:
 \"\"\"
 {tail}
@@ -4529,6 +4812,7 @@ Escribe SOLO el CIERRE:
 - Lenguaje vÃ­vido. Oraciones CORTAS (mÃ¡ximo 20 palabras).
 - ESCRIBE TODO EN {lang}. NO uses inglÃ©s.
 - NO uses markdown, viÃ±etas, listas, URLs, ni meta-texto.
+- NO digas etiquetas de estructura en voz alta: nada de "primera revelaciÃ³n", "segunda revelaciÃ³n", "hook", "contexto", "desarrollo", "conclusiÃ³n", "parte uno" o "secciÃ³n dos".
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(mÃºsica ...)", "(emoji ...)", "(transiciÃ³n)" etc. Solo texto hablado.
 - NÃšMEROS: escribe los nÃºmeros con palabras, no con dÃ­gitos ("mil cuatrocientos cincuenta y tres", no "1453").
 - AÃ‘O vs DURACIÃ“N â€” distÃ­nguelos siempre. Un AÃ‘O es una FECHA del calendario; una DURACIÃ“N es el tiempo transcurrido. Son cosas distintas. Para citar un aÃ±o, di "el aÃ±o <aÃ±o>". La fÃ³rmula "hace <N> aÃ±os" expresa SOLO duraciÃ³n: <N> es la diferencia entre el aÃ±o actual y el aÃ±o del evento, NO es el aÃ±o mismo. Ante la duda, nombra el aÃ±o ("el aÃ±o X") y NO uses la fÃ³rmula "hace X aÃ±os".
@@ -4561,6 +4845,7 @@ REGLAS:
 - Tono cÃ¡lido, cercano, humano â€” como un amigo, no como una mÃ¡quina.
 - Oraciones CORTAS (mÃ¡ximo 20 palabras).
 - NO uses markdown, viÃ±etas, listas, URLs, hashtags ni meta-texto.
+- NO digas etiquetas de estructura en voz alta: nada de "primera revelaciÃ³n", "segunda revelaciÃ³n", "hook", "contexto", "desarrollo", "conclusiÃ³n", "parte uno" o "secciÃ³n dos".
 - ESTRICTAMENTE PROHIBIDO escribir acotaciones: nada de "(imagen ...)", "[plano ...]", "(B-roll ...)", "(mÃºsica ...)", "(emoji ...)", "(transiciÃ³n)" etc. Solo texto hablado.
 - Devuelve SOLO el texto, precedido EXACTAMENTE por la lÃ­nea: [OUTRO]
 """
@@ -4924,16 +5209,18 @@ Return ONLY the JSON. No markdown, no explanation."""
             overlay_words = " ".join(topic_words).upper() if topic_words else "DESCUBRE LA VERDAD"
             warning(f"Thumbnail: using topic-derived overlay text: {overlay_words}")
 
-        # Step 2: render the background image (Leonardo AI).
+        # Step 2: render the background image.
         # Append the channel's image_style suffix so the thumbnail matches the video's look.
         styled_visual_prompt = self._apply_channel_style(visual_prompt)
         if get_verbose() and styled_visual_prompt != visual_prompt:
             info(" => Thumbnail: applied channel art style")
 
         bg_bytes = None
-        for name, fn in (
-            ("Leonardo AI", self._try_leonardo_landscape),
-        ):
+        thumb_providers = [
+            (name, fn)
+            for name, fn, _kind in self._ai_image_providers(1280, 720)
+        ]
+        for name, fn in thumb_providers:
             try:
                 bg_bytes = fn(styled_visual_prompt)
                 if bg_bytes and len(bg_bytes) > 5000:
@@ -5408,10 +5695,11 @@ No markdown. No explanation. Just the JSON array."""
             # Apply per-channel style suffix to AI prompts.
             styled_prompt = self._apply_channel_style(prompt)
 
-            for name, fn in [
-                ("Leonardo AI", lambda p: self._try_leonardo_landscape(p)),
-                ("HuggingFace", self._try_huggingface),
-            ]:
+            providers = [
+                (name, fn)
+                for name, fn, _kind in self._ai_image_providers(1920, 1080)
+            ]
+            for name, fn in providers:
                 try:
                     img_bytes = fn(styled_prompt)
                     if img_bytes and len(img_bytes) > 1000:
@@ -5562,6 +5850,7 @@ No markdown. No explanation. Just the JSON array."""
         text, dropped = cls._filter_garbage_lines(text)
         if dropped > 0:
             warning(f"   [Clean] dropped {dropped} garbage line(s) from LLM output.")
+        text = strip_narration_structure_labels(text)
         return text.strip()
 
     @classmethod
@@ -5577,6 +5866,7 @@ No markdown. No explanation. Just the JSON array."""
         # Strip section markers in any language / case.
         text = re.sub(r'\[(INTRO|INTRODUCCIÃ“N|INTRODUCCION|CLOSING|CIERRE|OUTRO|DESPEDIDA)\]', '', text, flags=re.IGNORECASE)
         text = re.sub(r'\[(SECTION|SECCIÃ“N|SECCION)\s*\d+\s*:?[^\]]*\]', '', text, flags=re.IGNORECASE)
+        text = strip_narration_structure_labels(text)
 
         # Some LLMs write the markers WITHOUT brackets â€” strip those too.
         text = re.sub(r'^\s*(INTRO|INTRODUCCIÃ“N|INTRODUCCION|CLOSING|CIERRE|OUTRO|DESPEDIDA)\s*:?\s*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
@@ -5825,6 +6115,12 @@ No markdown. No explanation. Just the JSON array."""
 
         # Mark this as a long video so upload_video knows to wait longer for the upload to finish.
         self._is_long_video = True
+        self.retention_plan = {}
+        self.retention_preflight = {}
+        self.retention_hook_lab = {}
+        self.visual_beat_map = []
+        self.visual_beat_report = {}
+        self.visual_preflight = {}
 
         # Step 1: Generate Topic (or use the user-provided one)
         info("\n[1/7] Generating topic...")
@@ -6141,6 +6437,12 @@ No markdown. No explanation. Just the JSON array."""
                 except Exception:
                     pass
 
+    def _extract_channel_id_from_url(self, url: str) -> str:
+        match = re.search(r"/channel/([^/?#]+)", url or "")
+        if match:
+            return match.group(1)
+        return ""
+
     def get_channel_id(self) -> str:
         """
         Gets the Channel ID of the YouTube Account.
@@ -6149,12 +6451,34 @@ No markdown. No explanation. Just the JSON array."""
             channel_id (str): The Channel ID.
         """
         driver = self.browser
-        driver.get("https://studio.youtube.com")
+        existing_channel_id = getattr(self, "channel_id", "") or ""
+        try:
+            driver.set_page_load_timeout(75)
+        except Exception:
+            pass
+        try:
+            driver.get("https://studio.youtube.com")
+        except Exception as e:
+            warning(f"Could not fully load YouTube Studio while resolving channel ID: {e}")
+            try:
+                driver.execute_script("window.stop();")
+            except Exception:
+                pass
+        finally:
+            try:
+                driver.set_page_load_timeout(300)
+            except Exception:
+                pass
         time.sleep(2)
-        channel_id = driver.current_url.split("/")[-1]
-        self.channel_id = channel_id
+        channel_id = self._extract_channel_id_from_url(getattr(driver, "current_url", "") or "")
+        if channel_id:
+            self.channel_id = channel_id
+            return channel_id
+        if existing_channel_id:
+            return existing_channel_id
+        warning("Could not resolve YouTube channel ID from Studio URL; upload will continue.")
 
-        return channel_id
+        return ""
 
     def _get_channel_id_safe(self) -> str:
         """
@@ -6184,9 +6508,20 @@ No markdown. No explanation. Just the JSON array."""
                 return getattr(self, "channel_id", "") or ""
             status_handle = new_handles[0]
             driver.switch_to.window(status_handle)
-            driver.get("https://studio.youtube.com")
+            try:
+                driver.set_page_load_timeout(75)
+            except Exception:
+                pass
+            try:
+                driver.get("https://studio.youtube.com")
+            except Exception as e:
+                warning(f"Safe channel_id Studio load timed out: {e}")
+                try:
+                    driver.execute_script("window.stop();")
+                except Exception:
+                    pass
             time.sleep(3)
-            channel_id = driver.current_url.split("/")[-1]
+            channel_id = self._extract_channel_id_from_url(getattr(driver, "current_url", "") or "")
             if channel_id:
                 self.channel_id = channel_id
                 return channel_id
@@ -6195,6 +6530,10 @@ No markdown. No explanation. Just the JSON array."""
             warning(f"Safe channel_id resolve failed: {e}")
             return getattr(self, "channel_id", "") or ""
         finally:
+            try:
+                driver.set_page_load_timeout(300)
+            except Exception:
+                pass
             try:
                 if status_handle and status_handle in driver.window_handles:
                     driver.switch_to.window(status_handle)
@@ -6251,6 +6590,9 @@ No markdown. No explanation. Just the JSON array."""
         info("\t   (polling in a SEPARATE tab so the upload tab is never disturbed)")
 
         deadline = time.time() + max_wait_s
+        if not getattr(self, "channel_id", None):
+            warning("\t=> Cannot poll YouTube Studio listing because channel ID was not resolved.")
+            return False
         if listing_tab == "short":
             listing_url = f"https://studio.youtube.com/channel/{self.channel_id}/videos/short"
         else:
@@ -6751,6 +7093,10 @@ No markdown. No explanation. Just the JSON array."""
                 info("\t=> Navigating to upload page...")
             driver.get("https://www.youtube.com/upload")
             time.sleep(3)
+            if not getattr(self, "channel_id", None):
+                channel_id = self._extract_channel_id_from_url(getattr(driver, "current_url", "") or "")
+                if channel_id:
+                    self.channel_id = channel_id
 
             # Step 3: Upload the video file
             if verbose:
@@ -7054,6 +7400,14 @@ No markdown. No explanation. Just the JSON array."""
                 "first_image_score": (
                     ((getattr(self, "visual_preflight", {}) or {}).get("first_image") or {}).get("score")
                 ),
+                "platform_uploads": {
+                    "youtube": {
+                        "status": "pending",
+                        "url": None,
+                        "updated_at": None,
+                        "error": "",
+                    }
+                },
             }
             try:
                 self.add_video(cache_entry)
@@ -7069,12 +7423,9 @@ No markdown. No explanation. Just the JSON array."""
             # differences are the listing URL and the timeouts.
             if not getattr(self, "channel_id", None):
                 try:
-                    if is_long_video:
-                        # NEVER navigate the upload tab during a long-video upload.
-                        # Resolve channel_id on a side tab instead.
-                        self._get_channel_id_safe()
-                    else:
-                        self.get_channel_id()
+                    # NEVER navigate the upload tab during an in-flight upload.
+                    # Resolve channel_id on a side tab instead.
+                    self._get_channel_id_safe()
                 except Exception as e:
                     warning(f"Could not resolve channel_id before upload wait: {e}")
 
@@ -7128,41 +7479,44 @@ No markdown. No explanation. Just the JSON array."""
             else:
                 # Shorts: original behavior (navigate the same tab â€” Firefox is
                 # about to be closed anyway when the short upload is confirmed).
-                try:
-                    driver.get(
-                        f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
-                    )
-                    time.sleep(3)
+                if not getattr(self, "channel_id", None):
+                    warning("Could not get video URL: channel ID was not resolved.")
+                else:
+                    try:
+                        driver.get(
+                            f"https://studio.youtube.com/channel/{self.channel_id}/videos/{listing_tab}"
+                        )
+                        time.sleep(3)
 
-                    target_title = (self.metadata.get("title") or "").strip()
-                    videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
+                        target_title = (self.metadata.get("title") or "").strip()
+                        videos = driver.find_elements(By.TAG_NAME, "ytcp-video-row")
 
-                    chosen_href = None
-                    for row in videos[:15]:
-                        try:
-                            row_text = row.text.strip()
-                        except Exception:
-                            row_text = ""
-                        if target_title and target_title[:50] in row_text:
+                        chosen_href = None
+                        for row in videos[:15]:
                             try:
-                                chosen_href = row.find_element(By.TAG_NAME, "a").get_attribute("href")
-                                break
+                                row_text = row.text.strip()
                             except Exception:
-                                continue
+                                row_text = ""
+                            if target_title and target_title[:50] in row_text:
+                                try:
+                                    chosen_href = row.find_element(By.TAG_NAME, "a").get_attribute("href")
+                                    break
+                                except Exception:
+                                    continue
 
-                    if not chosen_href and videos:
-                        try:
-                            chosen_href = videos[0].find_element(By.TAG_NAME, "a").get_attribute("href")
-                        except Exception:
-                            chosen_href = None
+                        if not chosen_href and videos:
+                            try:
+                                chosen_href = videos[0].find_element(By.TAG_NAME, "a").get_attribute("href")
+                            except Exception:
+                                chosen_href = None
 
-                    if chosen_href:
-                        if verbose:
-                            info(f"\t=> Found URL: {chosen_href}")
-                        video_id = chosen_href.split("/")[-2]
-                        url = build_url(video_id)
-                except Exception as e:
-                    warning(f"Could not get video URL: {e}")
+                        if chosen_href:
+                            if verbose:
+                                info(f"\t=> Found URL: {chosen_href}")
+                            video_id = chosen_href.split("/")[-2]
+                            url = build_url(video_id)
+                    except Exception as e:
+                        warning(f"Could not get video URL: {e}")
 
             if url:
                 self.uploaded_video_url = url
@@ -7215,14 +7569,17 @@ No markdown. No explanation. Just the JSON array."""
                     warning("   then close Firefox manually.")
                     warning("=" * 60)
 
-            try:
-                from upload_tracker import mark_uploaded, cleanup_uploaded
-                if mark_uploaded(self.video_path, getattr(self, "uploaded_video_url", None)):
-                    removed = cleanup_uploaded()
-                    if removed and get_verbose():
-                        info(f" => Cleaned up {removed} uploaded asset(s) from .mp/")
-            except Exception as _e:
-                warning(f"Post-upload cleanup skipped: {_e}")
+            if getattr(self, "_defer_upload_cleanup", False):
+                info(" => Post-upload cleanup deferred until the remaining selected platforms finish.")
+            else:
+                try:
+                    from upload_tracker import mark_uploaded, cleanup_uploaded
+                    if mark_uploaded(self.video_path, getattr(self, "uploaded_video_url", None)):
+                        removed = cleanup_uploaded()
+                        if removed and get_verbose():
+                            info(f" => Cleaned up {removed} uploaded asset(s) from .mp/")
+                except Exception as _e:
+                    warning(f"Post-upload cleanup skipped: {_e}")
 
             return True
 
@@ -7250,6 +7607,13 @@ No markdown. No explanation. Just the JSON array."""
                 for video in account.get("videos", []):
                     if video.get("date") == date_marker and video.get("url") in ("uploading...", "", None):
                         video["url"] = new_url
+                        statuses = video.setdefault("platform_uploads", {})
+                        statuses["youtube"] = {
+                            "status": "uploaded",
+                            "url": new_url,
+                            "updated_at": datetime.utcnow().isoformat() + "Z",
+                            "error": "",
+                        }
                         break
             with open(cache, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)

@@ -5,9 +5,18 @@ import requests
 from contextlib import contextmanager
 
 from config import (
+    ROOT_DIR,
+    get_claude_cli_command,
+    get_claude_cli_model,
+    get_claude_cli_models,
+    get_claude_cli_timeout_seconds,
     get_ollama_base_url,
     get_llm_provider,
     get_pollinations_text_model,
+    get_codex_cli_command,
+    get_codex_cli_model,
+    get_codex_cli_sandbox,
+    get_codex_cli_timeout_seconds,
     get_gemini_api_key,
     get_gemini_model,
     get_gemini_models,
@@ -16,6 +25,7 @@ from config import (
     get_openai_base_url,
     get_openai_models,
     get_openai_reasoning_effort,
+    get_openai_use_codex_cli,
 )
 
 # ---------------------------------------------------------------------------
@@ -98,6 +108,7 @@ _last_used_provider: str | None = None
 _disabled_gemini_models: set = set()
 _disabled_ollama_models: set = set()
 _disabled_openai_models: set = set()
+_disabled_claude_models: set = set()
 # When the user explicitly chose a provider+model from the UI, the long-video
 # pipeline must respect that choice and skip its hardcoded force_provider call.
 _user_override: bool = False
@@ -262,6 +273,8 @@ def list_models() -> list[str]:
         return _list_pollinations_models()
     if provider == "openai":
         return get_openai_models()
+    if provider == "claude":
+        return get_claude_cli_models()
     response = _ollama_client().list()
     return sorted(m.model for m in response.models)
 
@@ -452,6 +465,8 @@ def generate_text(prompt: str, model_name: str = None, temperature: float = 0.7)
                     temperature=temperature,
                 )),
             ]
+        elif provider == "claude":
+            providers = [("claude", lambda: _generate_text_claude_cli(prompt, model_name or _selected_model))]
         elif provider == "openai":
             providers = [("openai", lambda: _generate_text_openai(prompt, model_name or _selected_model, temperature=temperature))]
         elif provider == "pollinations":
@@ -463,6 +478,13 @@ def generate_text(prompt: str, model_name: str = None, temperature: float = 0.7)
     elif provider == "openai":
         providers = [
             ("openai", lambda: _generate_text_openai(prompt, model_name or _selected_model, temperature=temperature)),
+            ("gemini", lambda: _generate_text_gemini(prompt, temperature=temperature)),
+            ("ollama", lambda: _generate_text_ollama(prompt, None)),
+            ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
+        ]
+    elif provider == "claude":
+        providers = [
+            ("claude", lambda: _generate_text_claude_cli(prompt, model_name or _selected_model)),
             ("gemini", lambda: _generate_text_gemini(prompt, temperature=temperature)),
             ("ollama", lambda: _generate_text_ollama(prompt, None)),
             ("pollinations", lambda: _generate_text_pollinations(prompt, None)),
@@ -511,8 +533,10 @@ def generate_text(prompt: str, model_name: str = None, temperature: float = 0.7)
             permanent = (
                 "no gemini api key" in msg
                 or "no openai api key" in msg
+                or "claude cli was not found" in msg
                 or "all gemini models" in msg
                 or "all openai models" in msg
+                or "all claude models" in msg
                 or "all ollama fallback models" in msg
             )
             if permanent:
@@ -579,8 +603,187 @@ def _openai_error_message(response: requests.Response) -> str:
         return response.text[:500]
 
 
+def _build_codex_cli_prompt(prompt: str) -> str:
+    return (
+        "You are being used as a non-interactive text-generation backend for "
+        "MoneyPrinter Largo. Do not inspect files, run commands, edit files, "
+        "or explain what you are doing. Return only the final text requested "
+        "by the user.\n\n"
+        f"Output contract:\n{_SYSTEM_PROMPT}\n\n"
+        f"User request:\n{prompt}"
+    )
+
+
+def _generate_text_codex_cli(prompt: str, model: str = None) -> str:
+    """Generate text through the locally authenticated Codex CLI account."""
+    import subprocess
+    import tempfile
+
+    cli = get_codex_cli_command()
+    selected_model = (model or get_codex_cli_model() or "").strip()
+    sandbox = get_codex_cli_sandbox()
+    timeout = get_codex_cli_timeout_seconds()
+    effort = get_openai_reasoning_effort().lower()
+
+    fd, output_path = tempfile.mkstemp(prefix="mp_codex_", suffix=".txt")
+    _os.close(fd)
+
+    args = [
+        cli,
+        "-c",
+        f'model_reasoning_effort="{effort}"',
+        "--ask-for-approval",
+        "never",
+        "exec",
+        "--cd",
+        str(ROOT_DIR),
+        "--sandbox",
+        sandbox,
+        "--color",
+        "never",
+        "--ephemeral",
+        "--output-last-message",
+        output_path,
+    ]
+    if selected_model:
+        args += ["--model", selected_model]
+    args.append("-")
+
+    try:
+        result = subprocess.run(
+            args,
+            input=_build_codex_cli_prompt(prompt),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+
+        text = ""
+        try:
+            with open(output_path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read().strip()
+        except FileNotFoundError:
+            pass
+
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(f"codex exec exited {result.returncode}: {detail[-1000:]}")
+
+        if not text:
+            text = (result.stdout or "").strip()
+        if not text:
+            raise RuntimeError("codex exec returned empty text")
+
+        model_label = selected_model or "codex-default"
+        print(f"  [Codex CLI] Using model: {model_label} (thinking={effort})")
+        return text
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "Codex CLI was not found on PATH. Install/login with `codex login` "
+            "or set MP_CODEX_CLI_COMMAND."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"codex exec timed out after {timeout}s") from exc
+    finally:
+        try:
+            _os.remove(output_path)
+        except OSError:
+            pass
+
+
+def _build_claude_cli_prompt(prompt: str) -> str:
+    return (
+        "You are being used as a non-interactive text-generation backend for "
+        "MoneyPrinter Largo. Do not inspect files, run commands, edit files, "
+        "or explain what you are doing. Return only the final text requested "
+        "by the user.\n\n"
+        f"Output contract:\n{_SYSTEM_PROMPT}\n\n"
+        f"User request:\n{prompt}"
+    )
+
+
+def _generate_text_claude_cli(prompt: str, model: str = None) -> str:
+    """Generate text through the locally authenticated Claude CLI account."""
+    import subprocess
+
+    explicit = (model or "").strip()
+    chain = []
+    if explicit:
+        chain.append(explicit)
+    for item in get_claude_cli_models():
+        if item and item not in chain:
+            chain.append(item)
+    if not chain:
+        chain = [get_claude_cli_model()]
+    candidates = [m for m in chain if m not in _disabled_claude_models]
+    if not candidates:
+        raise RuntimeError("All Claude models have been disabled this session")
+
+    cli = get_claude_cli_command()
+    timeout = get_claude_cli_timeout_seconds()
+    last_error = None
+    for candidate in candidates:
+        args = [
+            cli,
+            "--print",
+            "--output-format",
+            "text",
+            "--no-session-persistence",
+            "--permission-mode",
+            "dontAsk",
+            "--tools",
+            "",
+            "--system-prompt",
+            _SYSTEM_PROMPT,
+        ]
+        if candidate:
+            args += ["--model", candidate]
+
+        try:
+            result = subprocess.run(
+                args,
+                input=_build_claude_cli_prompt(prompt),
+                cwd=str(ROOT_DIR),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+            )
+            text = (result.stdout or "").strip()
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "").strip()
+                raise RuntimeError(f"claude --print exited {result.returncode}: {detail[-1000:]}")
+            if not text:
+                raise RuntimeError("claude --print returned empty text")
+            print(f"  [Claude CLI] Using model: {candidate or 'claude-default'}")
+            _log_cost("claude", candidate or "claude-default", 0, 0, 0.0)
+            return text
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "Claude CLI was not found on PATH. Install/login with `claude auth` "
+                "or set MP_CLAUDE_CLI_COMMAND."
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            last_error = RuntimeError(f"claude --print timed out after {timeout}s")
+            continue
+        except Exception as exc:
+            print(f"  [Claude CLI] Model '{candidate}' failed: {exc}")
+            msg = str(exc).lower()
+            if any(marker in msg for marker in ("model", "not found", "unknown", "permission", "auth")):
+                _disabled_claude_models.add(candidate)
+            last_error = exc
+
+    raise RuntimeError(f"All Claude models failed. Last error: {last_error}")
+
+
 def _generate_text_openai(prompt: str, model: str = None, temperature: float = 0.7) -> str:
     """Generate text using the OpenAI Responses API, cascading through models."""
+    if get_openai_use_codex_cli():
+        return _generate_text_codex_cli(prompt, model=model)
+
     api_key = get_openai_api_key()
     if not api_key:
         raise RuntimeError("No OpenAI API key configured")

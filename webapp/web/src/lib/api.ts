@@ -41,6 +41,15 @@ export const SHORT_RENDER_PROFILE_OPTIONS = ["quality", "fast", "turbo"] as cons
 export type ShortRenderProfile = (typeof SHORT_RENDER_PROFILE_OPTIONS)[number];
 export const RETENTION_MODE_OPTIONS = ["standard", "maxima_retencion"] as const;
 export type RetentionMode = (typeof RETENTION_MODE_OPTIONS)[number];
+export const UPLOAD_PLATFORM_OPTIONS = ["youtube", "tiktok", "facebook"] as const;
+export type UploadPlatform = (typeof UPLOAD_PLATFORM_OPTIONS)[number];
+
+export interface PlatformUploadState {
+  status: "pending" | "uploaded" | "failed" | string;
+  url?: string | null;
+  updated_at?: string | null;
+  error?: string;
+}
 
 export interface Channel {
   id: string;
@@ -89,6 +98,7 @@ export interface ChannelVideo {
   comment_count?: number;
   dislike_count?: number;
   stats_synced_at?: string;
+  platform_uploads?: Partial<Record<UploadPlatform, PlatformUploadState>>;
 }
 
 export interface RetentionLabVideo {
@@ -224,6 +234,37 @@ export interface Mp4FileEntry {
   uploaded?: boolean;
   uploaded_url?: string | null;
   subject?: string | null;
+  platform_uploads?: Partial<Record<UploadPlatform, PlatformUploadState>>;
+  social_summary?: {
+    quality_gate?: {
+      status?: string;
+      score?: number;
+      width?: number;
+      height?: number;
+      duration_seconds?: number;
+      checks?: { name: string; status: string; message: string }[];
+    };
+    safe_zone?: { status?: string };
+    trend_terms?: string[];
+    caption_scores?: Partial<Record<UploadPlatform, number>>;
+  };
+  retention_summary?: {
+    version?: number;
+    generated_at?: string;
+    status?: string;
+    score?: number;
+    hook?: string;
+    hook_score?: number;
+    intro_status?: string;
+    loop_status?: string;
+    hot_words?: string[];
+    micro_hooks_count?: number;
+    visual_status?: string;
+    analytics?: {
+      winning_terms?: string[];
+      burned_terms?: string[];
+    };
+  };
 }
 
 export interface ThumbnailEntry {
@@ -258,7 +299,7 @@ export interface Voice {
 export interface LLMModel {
   id: string;
   label: string;
-  provider: "gemini" | "ollama" | "openai" | "pollinations";
+  provider: "gemini" | "ollama" | "openai" | "claude" | "pollinations";
   description: string;
 }
 
@@ -267,6 +308,10 @@ export interface LLMModelList {
   default: string;
   active_provider: string;
 }
+
+export type OpenAIReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type LLMProvider = "ollama" | "gemini" | "openai" | "claude" | "pollinations";
+export type ImageProvider = "auto" | "leonardo" | "openai" | "gemini";
 
 export interface HookStyle {
   id: string;       // "<profile>::<name>" — round-trips via MP_HOOK_STYLE_OVERRIDE
@@ -280,6 +325,7 @@ export interface BatchJobItem {
   kind: "short" | "long";
   custom_topic?: string;
   image_mode?: "ai" | "photos";
+  image_provider?: ImageProvider | "";
   auto_upload?: boolean;
   series_id?: string;
   model?: string;
@@ -328,7 +374,7 @@ export interface PhotoPromptRequest {
   style?: string;
   aspect_ratio?: string;
   language?: string;
-  llm_provider?: "ollama" | "gemini" | "openai" | "pollinations" | "";
+  llm_provider?: LLMProvider | "";
   llm_model?: string;
   retention_mode?: RetentionMode;
 }
@@ -474,10 +520,17 @@ export const api = {
   listHookStyles: () => request<{ styles: HookStyle[] }>("/api/llm/hook-styles"),
 
   // Topic suggestions — returns N ideas tailored to the channel's niche.
-  suggestTopics: (channelId: string, params: { n?: number; model?: string } = {}) => {
+  suggestTopics: (channelId: string, params: {
+    n?: number;
+    model?: string;
+    llm_provider?: LLMProvider | "";
+    llm_reasoning_effort?: OpenAIReasoningEffort | "";
+  } = {}) => {
     const qs = new URLSearchParams();
     if (params.n) qs.set("n", String(params.n));
     if (params.model) qs.set("model", params.model);
+    if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
+    if (params.llm_reasoning_effort) qs.set("llm_reasoning_effort", params.llm_reasoning_effort);
     return request<{ topics: string[] }>(
       `/api/channels/${channelId}/suggest-topics?${qs.toString()}`,
     );
@@ -490,6 +543,19 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+  scriptVoicePreviewUrl: (id: string, params: {
+    channel_id: string;
+    kind?: "short" | "long";
+    retention_mode?: RetentionMode;
+  }) => {
+    const qs = new URLSearchParams();
+    qs.set("channel_id", params.channel_id);
+    if (params.kind) qs.set("kind", params.kind);
+    if (params.retention_mode && params.retention_mode !== "standard") {
+      qs.set("retention_mode", params.retention_mode);
+    }
+    return `${BASE}/api/preview/${id}/voice?${qs.toString()}`;
+  },
 
   uploadPhotos: async (files: File[]) => {
     const body = new FormData();
@@ -556,10 +622,11 @@ export const api = {
   // New code should use `listLLMModels()` and group by `provider` directly.
   listLlmModels: async () => {
     const data = await request<LLMModelList>("/api/llm/models");
-    const buckets: { ollama: string[]; gemini: string[]; openai: string[]; pollinations: string[] } = {
+    const buckets: { ollama: string[]; gemini: string[]; openai: string[]; claude: string[]; pollinations: string[] } = {
       ollama: [],
       gemini: [],
       openai: [],
+      claude: [],
       pollinations: [],
     };
     for (const m of data.models || []) {
@@ -573,12 +640,15 @@ export const api = {
     kind: "short" | "long";
     custom_topic?: string;
     image_mode?: "ai" | "photos";
+    image_provider?: ImageProvider | "";
     auto_upload?: boolean;
+    upload_platforms?: UploadPlatform[];
     series_id?: string;
     duration_seconds?: ShortDurationSeconds;
     render_profile?: ShortRenderProfile;
-    llm_provider?: "ollama" | "gemini" | "openai" | "pollinations" | "";
+    llm_provider?: LLMProvider | "";
     llm_model?: string;
+    llm_reasoning_effort?: OpenAIReasoningEffort | "";
     hook_profile?: HookProfile | "";
     model?: string;
     sentence_length?: number;
@@ -591,7 +661,11 @@ export const api = {
     qs.set("kind", params.kind);
     if (params.custom_topic) qs.set("custom_topic", params.custom_topic);
     if (params.image_mode) qs.set("image_mode", params.image_mode);
+    if (params.image_provider) qs.set("image_provider", params.image_provider);
     if (params.auto_upload) qs.set("auto_upload", "true");
+    if (params.upload_platforms?.length) {
+      qs.set("upload_platforms", params.upload_platforms.join(","));
+    }
     if (params.series_id) qs.set("series_id", params.series_id);
     if (params.kind === "short" && params.duration_seconds) {
       qs.set("duration_seconds", String(params.duration_seconds));
@@ -601,6 +675,7 @@ export const api = {
     }
     if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
     if (params.llm_model) qs.set("llm_model", params.llm_model);
+    if (params.llm_reasoning_effort) qs.set("llm_reasoning_effort", params.llm_reasoning_effort);
     if (params.hook_profile) qs.set("hook_profile", params.hook_profile);
     if (params.model) qs.set("model", params.model);
     if (params.sentence_length && params.sentence_length > 0) {
@@ -617,6 +692,8 @@ export const api = {
   previewScriptUrl(id: string, params: {
     custom_topic?: string;
     model?: string;
+    llm_provider?: LLMProvider | "";
+    llm_reasoning_effort?: OpenAIReasoningEffort | "";
     sentence_length?: number;
     duration_seconds?: ShortDurationSeconds;
     hook_style?: string;
@@ -626,6 +703,8 @@ export const api = {
     qs.set("kind", "short");
     if (params.custom_topic) qs.set("custom_topic", params.custom_topic);
     if (params.model) qs.set("model", params.model);
+    if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
+    if (params.llm_reasoning_effort) qs.set("llm_reasoning_effort", params.llm_reasoning_effort);
     if (params.sentence_length && params.sentence_length > 0) {
       qs.set("sentence_length", String(params.sentence_length));
     }
@@ -636,8 +715,16 @@ export const api = {
     }
     return `${BASE}/api/channels/${id}/preview-script?${qs.toString()}`;
   },
-  uploadLastUrl: (id: string, kind: "short" | "long" = "short") =>
-    `${BASE}/api/channels/${id}/upload-last?kind=${kind}`,
+  uploadLastUrl: (
+    id: string,
+    kind: "short" | "long" = "short",
+    uploadPlatforms: UploadPlatform[] = ["youtube"],
+  ) => {
+    const qs = new URLSearchParams();
+    qs.set("kind", kind);
+    if (uploadPlatforms.length) qs.set("upload_platforms", uploadPlatforms.join(","));
+    return `${BASE}/api/channels/${id}/upload-last?${qs.toString()}`;
+  },
   syncYouTubeUrl: (params: {
     channel_id?: string;
     prune?: boolean;

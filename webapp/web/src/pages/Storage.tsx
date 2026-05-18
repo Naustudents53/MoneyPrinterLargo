@@ -10,6 +10,14 @@ import {
   ExternalLink,
   CheckCheck,
   Archive,
+  XCircle,
+  Youtube,
+  Music2,
+  Facebook,
+  ShieldCheck,
+  Flame,
+  RotateCcw,
+  Zap,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
@@ -26,7 +34,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { api, type Mp4FileEntry } from "@/lib/api";
+import { api, type Mp4FileEntry, type UploadPlatform } from "@/lib/api";
 import { toast } from "sonner";
 import { formatDate, relativeTime } from "@/lib/utils";
 
@@ -170,6 +178,47 @@ export function Storage() {
                         {f.subject ? `${f.subject} · ` : ""}
                         {relativeTime(f.mtime)} · {formatDate(f.mtime)}
                       </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <PlatformStatusStrip file={f} />
+                        {typeof f.social_summary?.quality_gate?.score === "number" && (
+                          <Badge variant="outline" className="gap-1 text-[10px]">
+                            <ShieldCheck className="h-3 w-3" />
+                            Q{f.social_summary.quality_gate.score}
+                          </Badge>
+                        )}
+                        {(f.social_summary?.trend_terms || []).slice(0, 3).map((term) => (
+                          <Badge key={term} variant="outline" className="text-[10px] text-muted-foreground">
+                            {term}
+                          </Badge>
+                        ))}
+                        {typeof f.retention_summary?.score === "number" && (
+                          <Badge
+                            variant="outline"
+                            className="gap-1 border-warning/40 bg-warning/10 text-[10px] text-warning"
+                            title={f.retention_summary.hook || ""}
+                          >
+                            <Flame className="h-3 w-3" />
+                            R{Math.round(f.retention_summary.score)}
+                          </Badge>
+                        )}
+                        {!!f.retention_summary?.micro_hooks_count && (
+                          <Badge variant="outline" className="gap-1 text-[10px] text-muted-foreground">
+                            <Zap className="h-3 w-3" />
+                            {f.retention_summary.micro_hooks_count}
+                          </Badge>
+                        )}
+                        {f.retention_summary?.loop_status && (
+                          <Badge variant="outline" className="gap-1 text-[10px] text-muted-foreground">
+                            <RotateCcw className="h-3 w-3" />
+                            {f.retention_summary.loop_status === "pass" ? "loop" : "loop?"}
+                          </Badge>
+                        )}
+                        {(f.retention_summary?.hot_words || []).slice(0, 3).map((term) => (
+                          <Badge key={`ret-${f.name}-${term}`} variant="outline" className="text-[10px] text-warning">
+                            {term}
+                          </Badge>
+                        ))}
+                      </div>
                     </div>
                     {f.uploaded ? (
                       <Badge variant="outline" className="gap-1 text-success border-success/40 bg-success/10">
@@ -274,7 +323,7 @@ export function Storage() {
                       </Section>
                     )}
                     {uploaded.length > 0 && (
-                      <Section label="Subidos a YouTube" count={uploaded.length} tone="emerald">
+                      <Section label="Completados" count={uploaded.length} tone="emerald">
                         {uploaded.map(renderRow)}
                       </Section>
                     )}
@@ -326,6 +375,47 @@ export function Storage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </>
+  );
+}
+
+function PlatformStatusStrip({ file }: { file: Mp4FileEntry }) {
+  const states = file.platform_uploads || {};
+  const platforms: { id: UploadPlatform; label: string; icon: React.ElementType }[] = [
+    { id: "youtube", label: "YT", icon: Youtube },
+    { id: "tiktok", label: "TT", icon: Music2 },
+    { id: "facebook", label: "FB", icon: Facebook },
+  ];
+
+  return (
+    <>
+      {platforms.map(({ id, label, icon: Icon }) => {
+        const state = states[id];
+        const status = state?.status || (id === "youtube" && file.uploaded ? "uploaded" : "pending");
+        const tone =
+          status === "uploaded"
+            ? "text-success border-success/35 bg-success/10"
+            : status === "failed"
+            ? "text-destructive border-destructive/35 bg-destructive/10"
+            : "text-muted-foreground border-border/40 bg-muted/20";
+        return (
+          <Badge
+            key={id}
+            variant="outline"
+            className={`gap-1 text-[10px] px-1.5 py-0.5 ${tone}`}
+            title={state?.error || `${label}: ${status}`}
+          >
+            {status === "failed" ? (
+              <XCircle className="h-3 w-3" />
+            ) : status === "uploaded" ? (
+              <CheckCircle2 className="h-3 w-3" />
+            ) : (
+              <Icon className="h-3 w-3" />
+            )}
+            {label}
+          </Badge>
+        );
+      })}
     </>
   );
 }
