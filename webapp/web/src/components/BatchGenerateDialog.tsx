@@ -34,6 +34,9 @@ import {
   type BatchJobItem,
   type BatchJobResult,
   type ImageProvider,
+  type LLMProvider,
+  type LLMReasoningEffort,
+  type LLMRunMode,
   type RetentionMode,
   type ShortRenderProfile,
 } from "@/lib/api";
@@ -57,6 +60,9 @@ interface BatchGenerateDialogProps {
     imageMode: "ai" | "photos";
     imageProvider?: ImageProvider | "";
     autoUpload: boolean;
+    llmProvider?: LLMProvider | "";
+    llmReasoningEffort?: LLMReasoningEffort | "";
+    llmMode?: LLMRunMode | "";
     model?: string;
     sentenceLength?: number;
     hookStyle?: string;
@@ -167,6 +173,9 @@ export function BatchGenerateDialog({
           image_mode: defaults.imageMode,
           image_provider: defaults.imageProvider || undefined,
           auto_upload: autoUpload,
+          llm_provider: defaults.llmProvider || undefined,
+          llm_reasoning_effort: defaults.llmReasoningEffort || undefined,
+          llm_mode: defaults.llmMode || undefined,
           model: defaults.model || undefined,
           sentence_length: defaults.sentenceLength,
           hook_style: defaults.hookStyle || undefined,
@@ -351,6 +360,15 @@ function InheritedConfigBar({
         )}
         {defaults.model && (
           <span>Modelo: <span className="text-foreground font-medium">{defaults.model}</span></span>
+        )}
+        {defaults.llmProvider && (
+          <span>LLM: <span className="text-foreground font-medium">{defaults.llmProvider}</span></span>
+        )}
+        {defaults.llmReasoningEffort && (
+          <span>Thinking: <span className="text-foreground font-medium">{defaults.llmReasoningEffort}</span></span>
+        )}
+        {defaults.llmMode && (
+          <span>Modo LLM: <span className="text-foreground font-medium">{defaults.llmMode}</span></span>
         )}
         {defaults.sentenceLength ? (
           <span>Frases: <span className="text-foreground font-medium">{defaults.sentenceLength}</span></span>

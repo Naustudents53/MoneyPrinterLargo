@@ -203,16 +203,43 @@ def _select_llm_provider(override_provider: str = "", override_model: str = "", 
         print("[runner] WARNING: no Ollama model selected", flush=True)
 
 
-def _apply_openai_reasoning_effort(effort: str = "") -> None:
+def _apply_llm_reasoning_effort(provider: str = "", effort: str = "") -> None:
+    provider = (provider or "").strip().lower()
     effort = (effort or "").strip().lower()
     if not effort:
         return
-    allowed = {"none", "minimal", "low", "medium", "high", "xhigh"}
-    if effort not in allowed:
-        print(f"[runner] WARNING: ignoring invalid OpenAI thinking level {effort!r}", flush=True)
+    if provider == "claude":
+        allowed = {"low", "medium", "high", "xhigh", "max"}
+        if effort not in allowed:
+            print(f"[runner] WARNING: ignoring invalid Claude thinking level {effort!r}", flush=True)
+            return
+        os.environ["MP_CLAUDE_CLI_EFFORT"] = effort
+        print(f"[runner] Claude thinking level: {effort}", flush=True)
         return
-    os.environ["MP_OPENAI_REASONING_EFFORT"] = effort
-    print(f"[runner] OpenAI thinking level: {effort}", flush=True)
+    if provider == "openai":
+        allowed = {"none", "minimal", "low", "medium", "high", "xhigh"}
+        if effort not in allowed:
+            print(f"[runner] WARNING: ignoring invalid OpenAI thinking level {effort!r}", flush=True)
+            return
+        os.environ["MP_OPENAI_REASONING_EFFORT"] = effort
+        print(f"[runner] OpenAI thinking level: {effort}", flush=True)
+        return
+    print(f"[runner] WARNING: ignoring thinking level for provider {provider or 'auto'}", flush=True)
+
+
+def _apply_llm_mode(provider: str = "", mode: str = "") -> None:
+    provider = (provider or "").strip().lower()
+    mode = (mode or "").strip().lower()
+    if not mode:
+        return
+    if provider != "claude":
+        print(f"[runner] Ignoring LLM mode for provider {provider or 'auto'}", flush=True)
+        return
+    if mode not in {"standard", "fast"}:
+        print(f"[runner] WARNING: ignoring invalid Claude mode {mode!r}", flush=True)
+        return
+    os.environ["MP_CLAUDE_CLI_MODE"] = mode
+    print(f"[runner] Claude mode: {mode}", flush=True)
 
 
 def _apply_image_provider(provider: str = "") -> None:
@@ -949,7 +976,9 @@ def main():
     p_gen.add_argument("--llm-provider", default="")
     p_gen.add_argument("--llm-model", default="")
     p_gen.add_argument("--llm-reasoning-effort", default="",
-                       help="OpenAI/Codex thinking level: low, medium, high, xhigh.")
+                       help="OpenAI/Codex or Claude thinking level.")
+    p_gen.add_argument("--llm-mode", choices=["standard", "fast"], default="",
+                       help="Claude CLI execution mode. Ignored for OpenAI/Codex.")
     # Per-job hook profile override (educational / storytelling / ...). Empty = use channel default.
     p_gen.add_argument("--hook-profile", default="")
     # Per-job overrides — let the UI pick a specific model and an estimated
@@ -979,7 +1008,9 @@ def main():
     p_pv.add_argument("--llm-provider", default="")
     p_pv.add_argument("--llm-model", default="")
     p_pv.add_argument("--llm-reasoning-effort", default="",
-                      help="OpenAI/Codex thinking level: low, medium, high, xhigh.")
+                      help="OpenAI/Codex or Claude thinking level.")
+    p_pv.add_argument("--llm-mode", choices=["standard", "fast"], default="",
+                      help="Claude CLI execution mode. Ignored for OpenAI/Codex.")
     p_pv.add_argument("--sentence-length", type=int, default=0)
     p_pv.add_argument("--duration", type=int, default=0)
     p_pv.add_argument("--hook-style", default="")
@@ -1018,15 +1049,24 @@ def main():
 
     _setup_paths()
     if args.cmd not in ("thumbnail", "preview-voice"):
-        _apply_openai_reasoning_effort(getattr(args, "llm_reasoning_effort", "") or "")
-        if args.cmd == "generate":
-            _apply_image_provider(getattr(args, "image_provider", "") or "")
         # The explicit (--llm-provider, --llm-model) pair from the Channel UI
         # wins over --model (single-arg, used by batch + preview). Both feed
         # the same _select_llm_provider entry point so the runner stays simple.
         ov_provider = getattr(args, "llm_provider", "") or ""
         ov_model = getattr(args, "llm_model", "") or ""
         legacy_override = getattr(args, "model", "") if args.cmd in ("generate", "preview-script") else ""
+        selected_provider = (
+            ov_provider.strip().lower()
+            or _classify_model(ov_model or legacy_override)
+            or ""
+        )
+        _apply_llm_reasoning_effort(
+            selected_provider,
+            getattr(args, "llm_reasoning_effort", "") or "",
+        )
+        _apply_llm_mode(selected_provider, getattr(args, "llm_mode", "") or "")
+        if args.cmd == "generate":
+            _apply_image_provider(getattr(args, "image_provider", "") or "")
         _select_llm_provider(
             override_provider=ov_provider,
             override_model=ov_model,

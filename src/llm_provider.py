@@ -7,8 +7,10 @@ from contextlib import contextmanager
 from config import (
     ROOT_DIR,
     get_claude_cli_command,
+    get_claude_cli_mode,
     get_claude_cli_model,
     get_claude_cli_models,
+    get_claude_cli_reasoning_effort,
     get_claude_cli_timeout_seconds,
     get_ollama_base_url,
     get_llm_provider,
@@ -723,6 +725,8 @@ def _generate_text_claude_cli(prompt: str, model: str = None) -> str:
 
     cli = get_claude_cli_command()
     timeout = get_claude_cli_timeout_seconds()
+    effort = get_claude_cli_reasoning_effort()
+    mode = get_claude_cli_mode()
     last_error = None
     for candidate in candidates:
         args = [
@@ -733,11 +737,15 @@ def _generate_text_claude_cli(prompt: str, model: str = None) -> str:
             "--no-session-persistence",
             "--permission-mode",
             "dontAsk",
+            "--effort",
+            effort,
             "--tools",
             "",
             "--system-prompt",
             _SYSTEM_PROMPT,
         ]
+        if mode == "fast":
+            args += ["--disable-slash-commands"]
         if candidate:
             args += ["--model", candidate]
 
@@ -758,7 +766,10 @@ def _generate_text_claude_cli(prompt: str, model: str = None) -> str:
                 raise RuntimeError(f"claude --print exited {result.returncode}: {detail[-1000:]}")
             if not text:
                 raise RuntimeError("claude --print returned empty text")
-            print(f"  [Claude CLI] Using model: {candidate or 'claude-default'}")
+            print(
+                f"  [Claude CLI] Using model: {candidate or 'claude-default'} "
+                f"(thinking={effort}, mode={mode})"
+            )
             _log_cost("claude", candidate or "claude-default", 0, 0, 0.0)
             return text
         except FileNotFoundError as exc:

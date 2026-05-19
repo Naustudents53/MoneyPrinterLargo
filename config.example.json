@@ -32,6 +32,8 @@
     "opus",
     "haiku"
   ],
+  "claude_cli_reasoning_effort": "medium",
+  "claude_cli_mode": "standard",
   "claude_cli_timeout_seconds": 300,
   "ollama_base_url": "http://127.0.0.1:11434",
   "ollama_model": "gemma4:31b-cloud",

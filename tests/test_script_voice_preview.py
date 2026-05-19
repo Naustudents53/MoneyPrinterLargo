@@ -79,6 +79,25 @@ def test_short_voice_preview_uses_same_retention_voice_settings(tmp_path):
     assert sidecar["word_count"] == result.word_count
 
 
+def test_short_voice_preview_falls_back_to_spanish_narrator(tmp_path, monkeypatch):
+    monkeypatch.setattr("classes.ScriptVoicePreview.get_tts_voice", lambda: "Jasper")
+    fake_tts = FakeTTS()
+    preview = ScriptVoicePreview(
+        config=ScriptVoicePreviewConfig(language="espanol"),
+        tts_instance=fake_tts,
+        output_dir=tmp_path,
+    )
+
+    result = preview.synthesize(
+        subject="Short test",
+        script="Este planeta tiene vientos imposibles.",
+        preview_id="shortspanish",
+    )
+
+    assert result.voice_id == LONG_VIDEO_NARRATOR
+    assert fake_tts.short_calls[0]["voice_id"] == LONG_VIDEO_NARRATOR
+
+
 def test_long_voice_preview_falls_back_to_spanish_narrator(tmp_path):
     fake_tts = FakeTTS()
     preview = ScriptVoicePreview(

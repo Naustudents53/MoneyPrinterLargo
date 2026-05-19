@@ -17,7 +17,7 @@ from typing import Any, Callable
 from utils import has_narration_structure_labels, strip_narration_structure_labels
 
 from .NarrationVoice import NarrationVoice
-from .MaxRetention import MaxRetentionEngine
+from .MaxRetention import MaxRetentionEngine, normalize_retention_mode
 
 
 class RetentionLab:
@@ -307,7 +307,7 @@ Rules:
             "- In educational mode, prefer hooks that begin by naming the real subject or common name, then explain what it is if needed.\n"
             "- Avoid opening with vague mystery words before the subject, such as \"Nadie\", \"Nunca\", \"Pero\", \"Esta estrella\", \"Eso\", or \"Algo\".\n"
             if educational_anchor
-            else "- Prefer a hook that starts with \"Nadie\", \"Nunca\", \"Pero\", or ends with a question mark.\n"
+            else "- Prefer hooks built from the named subject, a concrete contradiction, or a specific question. Do not use \"Nadie\" as a shortcut unless the sentence also names the subject and states a real consequence.\n"
         )
         return f"""
 
@@ -315,9 +315,28 @@ HOOK LAB PASS CHECK:
 - Target score: {cls.HOOK_SCORE_THRESHOLD}/10 or higher.
 - Include at least one exact topic word from: {topic_hint}.
 - Include at least two concrete visual/tension words such as: luz, sombra, nube, cometa, planeta, orbita, rompe, borra, devora, oculta, imposible, nunca, nadie, revela.
+- Avoid fake survival stakes such as "nadie sobreviviria", "no sobrevivirias", or "un segundo dentro" unless the topic is literally about human exposure.
+- Avoid generic demonstratives like "esta nebulosa", "este planeta", or "este objeto" when the topic has a name. Name the subject instead.
+- Avoid empty totalizing phrases like "devora todo", "destruye todo", "borra toda luz", or "congela el universo" unless that exact claim is scientifically delivered.
 {preference.rstrip()}
 - Avoid vague phrases that could fit any video.
 """
+
+    @classmethod
+    def _cheap_hook_issues(cls, hook: str) -> list[str]:
+        normalized = cls.normalize(hook)
+        issues: list[str] = []
+        if not normalized:
+            return issues
+        if re.search(r"\bnadie(?:\s+\w+){0,2}\s+sobreviv", normalized) or re.search(r"\bno\s+sobreviv", normalized):
+            issues.append("fake survival stakes")
+        if re.search(r"\b(?:un|una)\s+(?:segundo|instante)\s+dentro\b", normalized):
+            issues.append("generic inside-the-danger framing")
+        if re.search(r"\b(?:esta|este|esa|ese)\s+(?:nebulosa|galaxia|estrella|planeta|objeto|mundo|lugar)\b", normalized):
+            issues.append("generic demonstrative instead of named subject")
+        if re.search(r"\b(?:devora|traga|destruye|borra|congela)\s+(?:todo|toda\s+la\s+luz|el\s+universo)\b", normalized):
+            issues.append("empty totalizing doom phrase")
+        return issues
 
     @classmethod
     def _topic_lead(cls, topic: str) -> str:
@@ -441,6 +460,7 @@ EDUCATIONAL ANCHOR MODE:
             ]
 
         normalized_topic = cls.normalize(topic)
+        lead = cls._topic_lead(topic)
         anchor = ""
         for candidate in sorted(MaxRetentionEngine.VISUAL_ANCHORS, key=len, reverse=True):
             if candidate in normalized_topic:
@@ -456,16 +476,20 @@ EDUCATIONAL ANCHOR MODE:
                     anchor = token
                     break
         anchor = anchor or cls._keywords(topic, limit=1)[0] if cls._keywords(topic, limit=1) else "esto"
+        subject = lead
+        lead_norm = cls.normalize(lead)
+        if len(lead.split()) > 4 or lead_norm.startswith(("sistema", "observatorio")):
+            subject = anchor.title() if anchor else lead
         if "en" in cls.normalize(language) and "espan" not in cls.normalize(language):
             return [
-                f"No one sees {anchor} break until it reveals an impossible shadow.",
-                f"But {anchor} reveals the hidden cloud that breaks the sky?",
-                f"Never watch {anchor} hide the light before it breaks.",
+                f"But {subject} breaks the light and reveals an impossible shadow.",
+                f"{subject} hides an impossible shadow inside the first image.",
+                f"Why does {subject} turn light into a warning?",
             ]
         return [
-            f"Nadie ve {anchor} romperse hasta que revela una sombra imposible.",
-            f"Pero {anchor} revela una nube que rompe el cielo?",
-            f"Nunca {anchor} oculta una sombra imposible sin romper la luz.",
+            f"Pero {subject} rompe la luz y revela una sombra imposible.",
+            f"{subject} esconde una sombra imposible en el primer segundo.",
+            f"Por que {subject} convierte la luz en advertencia?",
         ]
 
     @classmethod
@@ -516,12 +540,21 @@ EDUCATIONAL ANCHOR MODE:
             score += 1.2
         elif topic_tokens:
             issues.append("hook does not clearly name the topic")
-        if clean.endswith("?") or any(term in normalized for term in ("pero", "nadie", "nunca", "por eso")):
+        if clean.endswith("?") or any(term in normalized for term in ("pero", "nunca", "por eso")):
             score += 1.0
         anchor_metrics = cls._subject_anchor_metrics(clean, topic)
+        if anchor_metrics["anchored_early"]:
+            score += 0.8
+        if anchor_metrics["vague_opening"]:
+            score -= 0.4
+            issues.append("hook opens with vague suspense before the subject")
+        cheap_issues = cls._cheap_hook_issues(clean)
+        if cheap_issues:
+            score -= 2.8
+            issues.extend(cheap_issues)
         if require_subject_anchor:
             if anchor_metrics["anchored_early"]:
-                score += 2.2
+                score += 1.4
             else:
                 score -= 2.0
                 issues.append("educational hook does not anchor the subject early")
@@ -697,6 +730,10 @@ Rules:
                 issues.append("Opening uses a banned generic opener.")
             else:
                 strengths.append("Opening avoids generic intro language.")
+            cheap_issues = cls._cheap_hook_issues(first_sentence)
+            if cheap_issues:
+                issues.extend(f"Opening uses {issue}." for issue in cheap_issues)
+                score -= 2.4
 
         reveal_hits = sum(1 for term in MaxRetentionEngine.REVELATION_TERMS if term in normalized_text)
         visual_hits = sum(1 for term in MaxRetentionEngine.VISUAL_TERMS if term in normalized_text)
@@ -718,6 +755,19 @@ Rules:
         if topic_tokens and not any(tok in normalized_text for tok in topic_tokens[:4]):
             issues.append("Script drifts away from the selected topic.")
             score -= 0.8
+        if topic_tokens and sentences:
+            intro_text = cls.normalize(" ".join(sentences[:2]))
+            if not any(tok in intro_text for tok in topic_tokens[:4]):
+                issues.append("Intro names the selected subject too late.")
+                score -= 1.0
+
+        if normalize_retention_mode(retention_mode) == "maxima_retencion" and len(sentences) >= 2:
+            verbal_loop = cls._verbal_loop(sentences)
+            if verbal_loop.get("matches"):
+                strengths.append("Final word loops into the opening word.")
+            else:
+                issues.append("Ending does not finish with the first spoken word for a seamless loop.")
+                score -= 2.2
 
         score = round(max(0.0, min(10.0, score)), 1)
         label = "ready" if score >= cls.SCORE_THRESHOLD and not issues[:1] else "risky"
@@ -785,9 +835,11 @@ Rules:
 - Keep EXACTLY {sentence_length} sentences.
 {target_clause}- Sentence one must be 8 to 12 words, visual, direct, and unsettling.
 - No generic openers like "Sabias que", "En este video", "Hoy vamos", "Descubre", or welcome language.
+- Sentence 1 or sentence 2 must name the selected subject naturally.
 - Add a small reveal, contrast, or consequence every two sentences.
 - Use concrete visible images, not abstract textbook labels.
-- Keep the final sentence short and loopable.
+- Keep the final sentence short, payoff-driven, and connected to the opening image.
+- Verbal loop: the final sentence must end with the exact first spoken word of sentence 1.
 {NarrationVoice.rewrite_guardrail(language)}
 - Never announce the structure. Do not write labels like "primera revelacion", "segunda revelacion", "hook", "contexto", "desarrollo", "conclusion", "parte uno", or "seccion dos".
 - Return ONLY the narration. No markdown, title, bullets, or stage directions.
@@ -1017,6 +1069,9 @@ Current narration:
             issues.append("generic opener detected")
         else:
             strengths.append("no generic intro")
+        cheap_issues = cls._cheap_hook_issues(first)
+        if cheap_issues:
+            issues.extend(cheap_issues)
         if first and not (7 <= len(words) <= 13):
             issues.append("opening is outside the 7-13 word swipe window")
         elif first:
@@ -1152,16 +1207,39 @@ Current narration:
         last_words = len(cls._words(last))
         loop_terms = ("por eso", "ahora", "vuelve", "otra vez", "primer", "mismo")
         has_loop_term = any(term in normalized_last for term in loop_terms)
-        status = "pass" if (overlap or has_loop_term) and last_words <= 15 else "warn"
-        if last_words > 22:
+        verbal_loop = cls._verbal_loop(sentences)
+        if verbal_loop.get("matches") and last_words <= 18:
+            status = "pass"
+        elif last_words > 22:
             status = "fail"
+        else:
+            status = "warn"
         return {
             "status": status,
             "last_sentence": last,
             "word_count": last_words,
             "topic_overlap": overlap,
             "loop_term": has_loop_term,
-            "rewrite_hint": "" if status == "pass" else "make the last sentence shorter and echo the first threat",
+            "first_word": verbal_loop.get("first_word", ""),
+            "last_word": verbal_loop.get("last_word", ""),
+            "word_loop": bool(verbal_loop.get("matches")),
+            "rewrite_hint": "" if status == "pass" else "end with the first spoken word and keep the payoff short",
+        }
+
+    @classmethod
+    def _verbal_loop(cls, sentences: list[str]) -> dict[str, Any]:
+        if not sentences:
+            return {"first_word": "", "last_word": "", "matches": False}
+        first_words = cls._words(sentences[0])
+        last_words = cls._words(sentences[-1])
+        if not first_words or not last_words:
+            return {"first_word": "", "last_word": "", "matches": False}
+        first_word = first_words[0]
+        last_word = last_words[-1]
+        return {
+            "first_word": first_word,
+            "last_word": last_word,
+            "matches": cls.normalize(first_word) == cls.normalize(last_word),
         }
 
     @classmethod

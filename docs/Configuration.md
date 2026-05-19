@@ -26,6 +26,8 @@ All your configurations will be in a file in the root directory, called `config.
 - `claude_cli_command`: `string` - Claude CLI executable name/path used when selecting `claude` as LLM provider (default: `claude`).
 - `claude_cli_model`: `string` - Default Claude CLI model/alias (default: `sonnet`).
 - `claude_cli_models`: `array` - Claude CLI models/aliases shown in the Generate selector.
+- `claude_cli_reasoning_effort`: `string` - Default Claude CLI thinking level passed to `claude --effort`. Supported values: `low`, `medium`, `high`, `xhigh`, `max`.
+- `claude_cli_mode`: `string` - Claude CLI execution mode: `standard` or `fast`. Fast disables slash commands for the non-interactive call; it does not affect Codex/GPT.
 - `claude_cli_timeout_seconds`: `number` - Timeout for each `claude --print` text-generation call.
 - `nanobanana2_model`: `string` - Nano Banana model name (default: `gemini-2.5-flash-image`).
 - `nanobanana2_aspect_ratio`: `string` - Aspect ratio for generated images (default: `9:16`).
@@ -89,6 +91,8 @@ All your configurations will be in a file in the root directory, called `config.
   "claude_cli_command": "claude",
   "claude_cli_model": "sonnet",
   "claude_cli_models": ["sonnet", "opus", "haiku"],
+  "claude_cli_reasoning_effort": "medium",
+  "claude_cli_mode": "standard",
   "claude_cli_timeout_seconds": 300,
   "nanobanana2_model": "gemini-2.5-flash-image",
   "nanobanana2_aspect_ratio": "9:16",

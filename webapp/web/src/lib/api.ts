@@ -310,6 +310,9 @@ export interface LLMModelList {
 }
 
 export type OpenAIReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type ClaudeReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+export type LLMReasoningEffort = OpenAIReasoningEffort | ClaudeReasoningEffort;
+export type LLMRunMode = "standard" | "fast";
 export type LLMProvider = "ollama" | "gemini" | "openai" | "claude" | "pollinations";
 export type ImageProvider = "auto" | "leonardo" | "openai" | "gemini";
 
@@ -328,6 +331,9 @@ export interface BatchJobItem {
   image_provider?: ImageProvider | "";
   auto_upload?: boolean;
   series_id?: string;
+  llm_provider?: LLMProvider | "";
+  llm_reasoning_effort?: LLMReasoningEffort | "";
+  llm_mode?: LLMRunMode | "";
   model?: string;
   sentence_length?: number;
   hook_style?: string;
@@ -524,13 +530,15 @@ export const api = {
     n?: number;
     model?: string;
     llm_provider?: LLMProvider | "";
-    llm_reasoning_effort?: OpenAIReasoningEffort | "";
+    llm_reasoning_effort?: LLMReasoningEffort | "";
+    llm_mode?: LLMRunMode | "";
   } = {}) => {
     const qs = new URLSearchParams();
     if (params.n) qs.set("n", String(params.n));
     if (params.model) qs.set("model", params.model);
     if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
     if (params.llm_reasoning_effort) qs.set("llm_reasoning_effort", params.llm_reasoning_effort);
+    if (params.llm_mode) qs.set("llm_mode", params.llm_mode);
     return request<{ topics: string[] }>(
       `/api/channels/${channelId}/suggest-topics?${qs.toString()}`,
     );
@@ -648,7 +656,8 @@ export const api = {
     render_profile?: ShortRenderProfile;
     llm_provider?: LLMProvider | "";
     llm_model?: string;
-    llm_reasoning_effort?: OpenAIReasoningEffort | "";
+    llm_reasoning_effort?: LLMReasoningEffort | "";
+    llm_mode?: LLMRunMode | "";
     hook_profile?: HookProfile | "";
     model?: string;
     sentence_length?: number;
@@ -676,6 +685,7 @@ export const api = {
     if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
     if (params.llm_model) qs.set("llm_model", params.llm_model);
     if (params.llm_reasoning_effort) qs.set("llm_reasoning_effort", params.llm_reasoning_effort);
+    if (params.llm_mode) qs.set("llm_mode", params.llm_mode);
     if (params.hook_profile) qs.set("hook_profile", params.hook_profile);
     if (params.model) qs.set("model", params.model);
     if (params.sentence_length && params.sentence_length > 0) {
@@ -693,7 +703,8 @@ export const api = {
     custom_topic?: string;
     model?: string;
     llm_provider?: LLMProvider | "";
-    llm_reasoning_effort?: OpenAIReasoningEffort | "";
+    llm_reasoning_effort?: LLMReasoningEffort | "";
+    llm_mode?: LLMRunMode | "";
     sentence_length?: number;
     duration_seconds?: ShortDurationSeconds;
     hook_style?: string;
@@ -705,6 +716,7 @@ export const api = {
     if (params.model) qs.set("model", params.model);
     if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
     if (params.llm_reasoning_effort) qs.set("llm_reasoning_effort", params.llm_reasoning_effort);
+    if (params.llm_mode) qs.set("llm_mode", params.llm_mode);
     if (params.sentence_length && params.sentence_length > 0) {
       qs.set("sentence_length", String(params.sentence_length));
     }

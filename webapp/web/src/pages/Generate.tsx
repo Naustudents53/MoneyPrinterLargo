@@ -30,10 +30,13 @@ import {
   HOOK_PROFILE_OPTIONS,
   SHORT_RENDER_PROFILE_OPTIONS,
   type Channel,
+  type ClaudeReasoningEffort,
   type HookProfile,
   type ImageProvider,
+  type LLMRunMode,
   type LLMProvider,
   type LLMModel,
+  type LLMReasoningEffort,
   type OpenAIReasoningEffort,
   type SeriesEntry,
   type ShortDurationSeconds,
@@ -70,6 +73,19 @@ const OPENAI_REASONING_OPTIONS: Array<{ value: OpenAIReasoningEffort; label: str
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
   { value: "xhigh", label: "XHigh" },
+];
+
+const CLAUDE_REASONING_OPTIONS: Array<{ value: ClaudeReasoningEffort; label: string }> = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "XHigh" },
+  { value: "max", label: "Max" },
+];
+
+const CLAUDE_MODE_OPTIONS: Array<{ value: LLMRunMode; label: string }> = [
+  { value: "standard", label: "Estándar" },
+  { value: "fast", label: "Fast" },
 ];
 
 const IMAGE_PROVIDER_OPTIONS: Array<{ value: ImageProvider; label: string }> = [
@@ -113,6 +129,8 @@ export function Generate() {
   const [llmProvider, setLlmProvider] = useState<"" | LLMProvider>("");
   const [llmModel, setLlmModel] = useState<string>("");
   const [openaiReasoningEffort, setOpenaiReasoningEffort] = useState<OpenAIReasoningEffort>("xhigh");
+  const [claudeReasoningEffort, setClaudeReasoningEffort] = useState<ClaudeReasoningEffort>("medium");
+  const [claudeMode, setClaudeMode] = useState<LLMRunMode>("standard");
   const [imageProvider, setImageProvider] = useState<ImageProvider>("auto");
   // Rich model catalog from /api/llm/models — keeps `label` + `description` so
   // the dropdown can show human-readable names instead of raw ids like
@@ -135,6 +153,14 @@ export function Generate() {
 
   const [progressOpen, setProgressOpen] = useState(false);
   const [sseUrl, setSseUrl] = useState<string | null>(null);
+
+  const selectedReasoningEffort: LLMReasoningEffort | undefined =
+    llmProvider === "openai"
+      ? openaiReasoningEffort
+      : llmProvider === "claude"
+      ? claudeReasoningEffort
+      : undefined;
+  const selectedLlmMode: LLMRunMode | undefined = llmProvider === "claude" ? claudeMode : undefined;
 
   // Script preview flow — opens its own dialog with editable text. After
   // approval, kicks the full /generate flow with `script_file=<previewId>`
@@ -269,7 +295,8 @@ export function Generate() {
       render_profile: kind === "short" ? shortRenderProfile : undefined,
       llm_provider: llmProvider || undefined,
       llm_model: llmProvider && llmModel ? llmModel : undefined,
-      llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
+      llm_reasoning_effort: selectedReasoningEffort,
+      llm_mode: selectedLlmMode,
       hook_profile: hookProfile || undefined,
       photo_upload_id: photoUploadId || undefined,
       retention_mode: kind === "short" ? retentionMode : undefined,
@@ -290,7 +317,8 @@ export function Generate() {
         n: 6,
         model: llmProvider && llmModel ? llmModel : undefined,
         llm_provider: llmProvider || undefined,
-        llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
+        llm_reasoning_effort: selectedReasoningEffort,
+        llm_mode: selectedLlmMode,
       });
       setTopicIdeas(topics || []);
       if (!topics?.length) toast.info("El LLM no devolvió ideas — prueba otro modelo");
@@ -326,7 +354,8 @@ export function Generate() {
       custom_topic: topic.trim(),
       model: llmProvider && llmModel ? llmModel : undefined,
       llm_provider: llmProvider || undefined,
-      llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
+      llm_reasoning_effort: selectedReasoningEffort,
+      llm_mode: selectedLlmMode,
       duration_seconds: shortDuration,
       retention_mode: retentionMode,
     });
@@ -361,7 +390,8 @@ export function Generate() {
       render_profile: shortRenderProfile,
       llm_provider: llmProvider || undefined,
       llm_model: llmProvider && llmModel ? llmModel : undefined,
-      llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
+      llm_reasoning_effort: selectedReasoningEffort,
+      llm_mode: selectedLlmMode,
       script_file: data.previewId,
       photo_upload_id: photoUploadId || undefined,
       retention_mode: retentionMode,
@@ -888,6 +918,25 @@ export function Generate() {
                     />
                   </Field>
                 )}
+                {llmProvider === "claude" && (
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <Field label="Thinking" hint={claudeReasoningEffort}>
+                      <SelectMini
+                        value={claudeReasoningEffort}
+                        onChange={(v) => setClaudeReasoningEffort(v as ClaudeReasoningEffort)}
+                        options={CLAUDE_REASONING_OPTIONS}
+                        icon={<Sparkles className="h-3 w-3" strokeWidth={1.5} />}
+                      />
+                    </Field>
+                    <Field label="Modo" hint={claudeMode}>
+                      <SelectMini
+                        value={claudeMode}
+                        onChange={(v) => setClaudeMode(v as LLMRunMode)}
+                        options={CLAUDE_MODE_OPTIONS}
+                      />
+                    </Field>
+                  </div>
+                )}
 
                 <Field label="Subida" hint={uploadTargetLabel}>
                   <div className="grid grid-cols-3 gap-1.5">
@@ -1018,6 +1067,9 @@ export function Generate() {
           imageMode: imageMode === "photos" ? "photos" : "ai",
           imageProvider: showImageProviderSelector ? imageProvider : undefined,
           autoUpload: uploadPlatforms.includes("youtube"),
+          llmProvider: llmProvider || undefined,
+          llmReasoningEffort: selectedReasoningEffort,
+          llmMode: selectedLlmMode,
           model: llmProvider && llmModel ? llmModel : undefined,
           renderProfile: kind === "short" ? shortRenderProfile : undefined,
           retentionMode: kind === "short" ? retentionMode : undefined,

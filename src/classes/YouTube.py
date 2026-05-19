@@ -16,7 +16,7 @@ if not hasattr(_PIL_Image, "ANTIALIAS"):
 
 from utils import *
 from cache import *
-from .Tts import TTS
+from .Tts import LONG_VIDEO_NARRATOR, TTS
 from .Retention import CosmicRetentionEngine
 from .MaxRetention import MaxRetentionEngine, is_max_retention, normalize_retention_mode
 from .RetentionLab import RetentionLab
@@ -54,6 +54,11 @@ _PHOTO_STOPWORDS = {
 
 _UNICODE_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 _UNICODE_TOKEN_RE = re.compile(r"[\w'-]+", re.UNICODE)
+
+
+def _is_spanish_language(language: str) -> bool:
+    lang = (language or "").strip().lower()
+    return lang.startswith("esp") or lang in {"es", "spanish", "espanol"}
 
 
 def _unicode_words(text: str) -> list[str]:
@@ -889,6 +894,76 @@ OUTPUT FORMAT (strict):
             )
         return script
 
+    def _enforce_short_verbal_loop(self, script: str) -> str:
+        """Make the final spoken word match the first spoken word for Short replay loops."""
+        if not is_max_retention(getattr(self, "_retention_mode", "")):
+            return script
+        clean_script = strip_narration_structure_labels((script or "").strip())
+        sentences = RetentionLab._sentences(clean_script)
+        if len(sentences) < 2:
+            return script
+        loop = RetentionLab._verbal_loop(sentences)
+        first_word = loop.get("first_word", "")
+        if not first_word or loop.get("matches"):
+            return clean_script
+
+        expected_sentences = len(sentences)
+        prompt = f"""Rewrite ONLY the final sentence of this YouTube Short narration.
+
+Topic: {self.subject}
+Language: {self.language}
+
+Current narration:
+\"\"\"
+{clean_script}
+\"\"\"
+
+Rules:
+- Keep EXACTLY {expected_sentences} sentences.
+- Keep sentence 1 EXACTLY unchanged:
+\"{sentences[0]}\"
+- Do not change the meaning, topic, or hook.
+- Do not add a call to action, title, markdown, bullet, or stage direction.
+- Rewrite the final sentence as a payoff that echoes the opening image.
+- The final sentence must end with this exact first spoken word from sentence 1: "{first_word}"
+- Return ONLY the full corrected narration."""
+
+        for _ in range(2):
+            try:
+                candidate = strip_narration_structure_labels(
+                    re.sub(r"\*", "", self.generate_response(prompt) or "").strip()
+                )
+            except Exception:
+                candidate = ""
+            candidate_sentences = RetentionLab._sentences(candidate)
+            if len(candidate_sentences) != expected_sentences:
+                continue
+            if RetentionLab.normalize(candidate_sentences[0]) != RetentionLab.normalize(sentences[0]):
+                continue
+            if RetentionLab._verbal_loop(candidate_sentences).get("matches"):
+                if get_verbose():
+                    info(f" => Verbal loop: final word now returns to '{first_word}'")
+                self.retention_preflight.setdefault("verbal_loop", {})
+                self.retention_preflight["verbal_loop"].update({
+                    "first_word": first_word,
+                    "repaired": True,
+                    "fallback": False,
+                })
+                return candidate
+
+        final = re.sub(r"[.!?]+$", "", sentences[-1]).strip()
+        connector = "todo vuelve a empezar" if _is_spanish_language(self.language) else "everything starts again"
+        sentences[-1] = f"{final}; {connector}: {first_word}."
+        if get_verbose():
+            warning(f"Verbal loop fallback forced final word '{first_word}'.")
+        self.retention_preflight.setdefault("verbal_loop", {})
+        self.retention_preflight["verbal_loop"].update({
+            "first_word": first_word,
+            "repaired": True,
+            "fallback": True,
+        })
+        return " ".join(sentences)
+
     def generate_script(self) -> str:
         """
         Generate a script for a video, depending on the subject of the video, the number of paragraphs, and the AI model.
@@ -1017,6 +1092,15 @@ MAXIMA RETENCION HOOK LAB - mandatory:
             else ""
         )
         voice_directive = NarrationVoice.short_generation_directive(self.language)
+        intro_outro_directive = f"""
+
+INTRO / OUTRO RULES - mandatory:
+- The intro must both hook and orient. By sentence 2, name the main subject naturally and say what kind of thing it is if the name alone is unclear.
+- Do not keep saying "este planeta", "esta estrella", "este objeto", or "esto" before the subject has been named.
+- Do not use fake survival-bait openings like "nadie sobreviviria", "no sobrevivirias", or "un segundo dentro" unless the script is literally about human exposure. For cosmic topics, make the hook come from the scientific anomaly or named object.
+- The outro must pay off the opening image or contradiction. It should feel like a final turn in the same story, not a summary or call to action.
+- For MAXIMA RETENCION, make the final sentence end with the exact first spoken word of sentence 1, so the Short loops into itself when replay starts.
+"""
 
         prompt = f"""Write a narration script for a short video in EXACTLY {sentence_length} sentences.
 {duration_clause}
@@ -1025,6 +1109,7 @@ TOPIC: {self.subject}
 {cosmic_directive}
 {max_retention_directive}
 {voice_directive}
+{intro_outro_directive}
 {educational_opening_directive}
 {hook_lab_directive}
 
@@ -1095,6 +1180,8 @@ CRITICAL RULES:
                 educational_anchor=profile_name == "educational",
             )
             completion = strip_narration_structure_labels(completion)
+            completion = self._enforce_short_verbal_loop(completion)
+            completion = strip_narration_structure_labels(completion)
 
         if is_cosmic_video and get_verbose():
             score = CosmicRetentionEngine.score_script(completion)
@@ -1132,10 +1219,11 @@ ACTUAL SCRIPT (the title must match what THIS script delivers):
 
 ABSOLUTE RULES:
 - The title must accurately describe what the script says. Do NOT promise content that is not in the script.
-- FORBIDDEN BASIC/CLICH\u00c9 WORDS (do NOT use ANY of these, in any form, accented or not, singular or plural): "secreto", "secretos", "misterio", "misterios", "sab\u00edas que", "sabias que", "no vas a creer", "te volar\u00e1 la cabeza", "incre\u00edble", "impactante", "te sorprender\u00e1", "nadie sabe", "nadie te cont\u00f3", "lo que no te dicen", "esto te dejar\u00e1", "loco", "alucinante", "flipante", "shocking", "you won't believe", "mind-blowing", "secret", "mystery", "did you know". These are overused, obvious, and lazy clickbait \u2014 NEVER use them.
+- FORBIDDEN BASIC/CLICH\u00c9 WORDS (do NOT use ANY of these, in any form, accented or not, singular or plural): "secreto", "secretos", "misterio", "misterios", "sab\u00edas que", "sabias que", "no vas a creer", "te volar\u00e1 la cabeza", "incre\u00edble", "impactante", "te sorprender\u00e1", "nadie sabe", "nadie te cont\u00f3", "nadie sobrevivir\u00e1", "nadie sobrevivir\u00eda", "lo que no te dicen", "esto te dejar\u00e1", "loco", "alucinante", "flipante", "shocking", "you won't believe", "mind-blowing", "secret", "mystery", "did you know". These are overused, obvious, and lazy clickbait \u2014 NEVER use them.
+- FORBIDDEN VAGUE DOOM FRAMING: do not write titles built around "esta nebulosa", "este planeta", "este objeto", "devora todo", "destruye todo", "borra toda luz", or generic survival stakes. Use the named object and the specific fact instead.
 - FORBIDDEN: "X curiosidades", "X secretos", "X razones", "X cosas", "X datos", "X hechos", "Top X", "X que..." or ANY list-form promise (in {self.language} or English) UNLESS the script actually presents that exact number of distinct enumerated items. If the script tells ONE continuous story, the title MUST NOT promise a list.
 - INSTEAD, write SPECIFIC, CONCRETE titles that name the actual subject, action, place, person, date, or fact from the script. The hook should come from the specificity of the content itself \u2014 a surprising name, a striking number, an unexpected place, a precise event \u2014 NOT from generic hype words.
-- Good title patterns: a concrete claim ("Voyager 1 cruz\u00f3 la heliopausa y nadie estaba listo"), a specific question about the subject ("\u00bfPor qu\u00e9 la luz no escapa de un agujero negro?"), a precise paradox or contrast, a striking astronomical fact, a named cosmic object/mission/scientist + specific phenomenon.
+- Good title patterns: a concrete claim ("Voyager 1 cruz\u00f3 la heliopausa"), a specific question about the subject ("\u00bfPor qu\u00e9 la luz no escapa de un agujero negro?"), a precise paradox or contrast, a striking astronomical fact, a named cosmic object/mission/scientist + specific phenomenon.
 - The title can be intriguing, but it must be HONEST and SPECIFIC \u2014 every promise must be delivered by the script, and the intrigue must come from real content, not empty hype words.
 - Optionally include 1-2 relevant hashtags at the end (only if they fit naturally).
 - Under 80 characters.
@@ -1179,7 +1267,7 @@ ABSOLUTE RULES:
                 title_prompt
                 + "\n\nPREVIOUS ATTEMPT WAS REJECTED for using forbidden basic/clich\u00e9 words "
                 + "(such as 'secreto', 'misterio', 'sab\u00edas que', 'incre\u00edble', 'no vas a creer', "
-                + "'nadie sabe', 'impactante', 'alucinante', 'shocking', 'mystery', 'secret', etc). "
+                + "'nadie sabe', 'nadie sobrevivir\u00eda', 'impactante', 'alucinante', 'shocking', 'mystery', 'secret', etc). "
                 + "These are LAZY hooks. Write a SPECIFIC, CONCRETE title that names the actual "
                 + "subject, action, place, person, date, or fact from the script. The hook must "
                 + "come from real content, not generic hype. Try again."
@@ -2037,6 +2125,7 @@ Example format:
                 "metadata": getattr(self, "metadata", {}) or {},
                 "is_long": bool(is_long),
                 "thumbnail_path": getattr(self, "thumbnail_path", "") or "",
+                "tts_voice_id": getattr(self, "tts_voice_id", "") or "",
                 # Stamp the owning channel so upload-last can never cross
                 # channels even if the per-channel ref pointer is missing.
                 "channel_id": getattr(self, "_account_uuid", "") or "",
@@ -2511,10 +2600,14 @@ RULES:
             "sabias que", "no vas a creer", "te volara la cabeza",
             "increible", "impactante", "te sorprendera",
             "nadie sabe", "nadie te conto", "lo que no te dicen",
+            "nadie sobrevivira", "nadie sobreviviria",
+            "no sobreviviras", "no sobrevivirias",
             "esto te dejara", "alucinante", "flipante",
             "shocking", "you won't believe", "you wont believe",
             "mind-blowing", "mind blowing", "secret", "mystery",
             "did you know",
+            "devora todo", "destruye todo", "borra toda luz",
+            "esta nebulosa", "este planeta", "este objeto",
         )
         for phrase in cliche_phrases:
             if re.search(rf"\b{re.escape(phrase)}\b", norm):
@@ -3440,6 +3533,17 @@ RULES:
 
         # Per-channel short voice override (falls back to TTS instance default if empty).
         short_vid = self._resolve_voice(self._short_voice)
+        default_short_vid = self._resolve_voice(get_tts_voice())
+        effective_short_vid = short_vid or default_short_vid
+        if _is_spanish_language(self._language) and effective_short_vid and not effective_short_vid.lower().startswith("es-"):
+            warning(
+                f"Voice '{effective_short_vid}' is not Spanish but channel language is "
+                f"'{self._language}'. Falling back to {LONG_VIDEO_NARRATOR}."
+            )
+            short_vid = LONG_VIDEO_NARRATOR
+            effective_short_vid = short_vid
+        if get_verbose() and effective_short_vid:
+            info(f" => Using short-video voice: {effective_short_vid}")
         # Optional dramatic modulation for narrator-style channels. MAXIMA
         # RETENCION keeps the voice moving faster and lowers the pitch only
         # slightly when drama is enabled.
@@ -3463,6 +3567,7 @@ RULES:
         self.word_timestamps = word_timestamps
 
         self.tts_path = path
+        self.tts_voice_id = effective_short_vid or short_vid
 
         if get_verbose():
             ts_info = f" ({len(word_timestamps)} words timed)" if word_timestamps else ""
@@ -6200,7 +6305,6 @@ No markdown. No explanation. Just the JSON array."""
             info(f" => TTS script preview (first 200 chars): {tts_script[:200]}")
 
         # Per-channel long-video voice (or fall back to the default deep narrator).
-        from .Tts import LONG_VIDEO_NARRATOR
         long_vid = self._resolve_voice(self._long_voice) or LONG_VIDEO_NARRATOR
         # Locale guard: Edge-TTS returns NoAudioReceived if you ship Spanish
         # text to an English voice (e.g. "Bruno" -> en-US-DavisNeural). When
@@ -6213,6 +6317,7 @@ No markdown. No explanation. Just the JSON array."""
         info(f" => Using long-video voice: {long_vid}")
         tts_instance.synthesize_long(tts_script, path, voice_id=long_vid)
         self.tts_path = path
+        self.tts_voice_id = long_vid
 
         if os.path.exists(path) and os.path.getsize(path) > 1000:
             audio_dur = AudioFileClip(path).duration

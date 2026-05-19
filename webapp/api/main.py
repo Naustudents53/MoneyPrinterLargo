@@ -748,6 +748,8 @@ _CONFIG_FIELD_DEFS = [
     {"key": "codex_cli_image_timeout_seconds", "label": "Codex CLI image timeout seconds", "type": "int", "group": "LLM"},
     {"key": "claude_cli_command", "label": "Claude CLI command", "type": "str", "group": "LLM"},
     {"key": "claude_cli_model", "label": "Claude CLI default model", "type": "str", "group": "LLM"},
+    {"key": "claude_cli_reasoning_effort", "label": "Claude CLI thinking level", "type": "str", "group": "LLM"},
+    {"key": "claude_cli_mode", "label": "Claude CLI mode (standard / fast)", "type": "str", "group": "LLM"},
     {"key": "claude_cli_timeout_seconds", "label": "Claude CLI timeout seconds", "type": "int", "group": "LLM"},
     {"key": "ollama_base_url", "label": "Ollama base URL", "type": "str", "group": "LLM"},
     {"key": "ollama_model", "label": "Ollama model", "type": "str", "group": "LLM"},
@@ -776,18 +778,34 @@ _CONFIG_FIELD_DEFS = [
 
 
 _OPENAI_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
+_CLAUDE_REASONING_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 
 
-def _normalize_openai_reasoning_effort(value: str) -> str:
+def _normalize_llm_reasoning_effort(value: str, provider: str = "") -> str:
     effort = (value or "").strip().lower()
     if not effort:
         return ""
-    if effort not in _OPENAI_REASONING_EFFORTS:
+    provider = (provider or "").strip().lower()
+    allowed = _CLAUDE_REASONING_EFFORTS if provider == "claude" else _OPENAI_REASONING_EFFORTS
+    if effort not in allowed:
+        allowed_text = "low, medium, high, xhigh, or max" if provider == "claude" else "none, minimal, low, medium, high, or xhigh"
         raise HTTPException(
             400,
-            "llm_reasoning_effort must be one of none, minimal, low, medium, high, or xhigh",
+            f"llm_reasoning_effort must be one of {allowed_text}",
         )
     return effort
+
+
+def _normalize_llm_mode(value: str, provider: str = "") -> str:
+    mode = (value or "").strip().lower()
+    if not mode:
+        return ""
+    provider = (provider or "").strip().lower()
+    if provider != "claude":
+        return ""
+    if mode not in {"standard", "fast"}:
+        raise HTTPException(400, "llm_mode must be 'standard' or 'fast'")
+    return mode
 
 
 # Curated list of LLM models the user can pick as override for a single
@@ -1393,6 +1411,7 @@ def suggest_topics(
     model: str = "",
     llm_provider: str = "",
     llm_reasoning_effort: str = "",
+    llm_mode: str = "",
 ):
     """Ask the LLM for `n` topic ideas tailored to the channel's niche and
     language. Returns synchronously (one LLM call, not a streaming job) so
@@ -1439,21 +1458,29 @@ def suggest_topics(
         f"{avoid_block}"
     )
 
-    effort = _normalize_openai_reasoning_effort(llm_reasoning_effort)
     if llm_provider and llm_provider not in ("ollama", "gemini", "openai", "claude", "pollinations"):
         raise HTTPException(400, "llm_provider must be 'ollama', 'gemini', 'openai', 'claude', or 'pollinations'")
+    provider = llm_provider or _infer_llm_provider_from_model(model)
+    effort = _normalize_llm_reasoning_effort(llm_reasoning_effort, provider)
+    mode = _normalize_llm_mode(llm_mode, provider)
 
     # Apply per-job model override (same env-var trick used by the runner)
     saved_override = os.environ.get("MP_GEMINI_MODEL_OVERRIDE", "")
     saved_reasoning = os.environ.get("MP_OPENAI_REASONING_EFFORT", "")
+    saved_claude_effort = os.environ.get("MP_CLAUDE_CLI_EFFORT", "")
+    saved_claude_mode = os.environ.get("MP_CLAUDE_CLI_MODE", "")
     if effort:
-        os.environ["MP_OPENAI_REASONING_EFFORT"] = effort
+        if provider == "claude":
+            os.environ["MP_CLAUDE_CLI_EFFORT"] = effort
+        else:
+            os.environ["MP_OPENAI_REASONING_EFFORT"] = effort
+    if mode:
+        os.environ["MP_CLAUDE_CLI_MODE"] = mode
     if model and (model.startswith("gemini-") or model.startswith("gemma-")):
         from llm_provider import normalize_gemini_model_id
         os.environ["MP_GEMINI_MODEL_OVERRIDE"] = normalize_gemini_model_id(model) or model
     try:
         from llm_provider import generate_text  # lazy import — keeps API startup fast
-        provider = llm_provider or _infer_llm_provider_from_model(model)
         if provider:
             from llm_provider import force_provider
             with force_provider(provider, model or None):
@@ -1471,6 +1498,14 @@ def suggest_topics(
             os.environ["MP_OPENAI_REASONING_EFFORT"] = saved_reasoning
         else:
             os.environ.pop("MP_OPENAI_REASONING_EFFORT", None)
+        if saved_claude_effort:
+            os.environ["MP_CLAUDE_CLI_EFFORT"] = saved_claude_effort
+        else:
+            os.environ.pop("MP_CLAUDE_CLI_EFFORT", None)
+        if saved_claude_mode:
+            os.environ["MP_CLAUDE_CLI_MODE"] = saved_claude_mode
+        else:
+            os.environ.pop("MP_CLAUDE_CLI_MODE", None)
 
     # Clean up: drop empty lines, strip bullets/numbering, dedupe.
     import re as _re
@@ -1558,6 +1593,7 @@ async def preview_script(
     retention_mode: str = "",
     llm_provider: str = "",
     llm_reasoning_effort: str = "",
+    llm_mode: str = "",
 ):
     """Run only the subject + script generation steps and stream progress as
     SSE. The runner writes the result to a .mp/.preview-<uuid>.txt file; the
@@ -1579,9 +1615,11 @@ async def preview_script(
     retention_mode_norm = normalize_retention_mode(retention_mode)
     if retention_mode and not is_known_retention_mode(retention_mode):
         raise HTTPException(400, "retention_mode must be 'standard' or 'maxima_retencion'")
-    effort = _normalize_openai_reasoning_effort(llm_reasoning_effort)
     if llm_provider and llm_provider not in ("ollama", "gemini", "openai", "claude", "pollinations"):
         raise HTTPException(400, "llm_provider must be 'ollama', 'gemini', 'openai', 'claude', or 'pollinations'")
+    provider = llm_provider or _infer_llm_provider_from_model(model)
+    effort = _normalize_llm_reasoning_effort(llm_reasoning_effort, provider)
+    mode = _normalize_llm_mode(llm_mode, provider)
 
     args = ["preview-script", "--channel-id", channel_id]
     if custom_topic:
@@ -1592,6 +1630,8 @@ async def preview_script(
         args += ["--llm-provider", llm_provider]
     if effort:
         args += ["--llm-reasoning-effort", effort]
+    if mode:
+        args += ["--llm-mode", mode]
     if sentence_length and sentence_length > 0:
         args += ["--sentence-length", str(sentence_length)]
     if duration_seconds:
@@ -1800,6 +1840,7 @@ async def generate_video(
     llm_provider: str = "",
     llm_model: str = "",
     llm_reasoning_effort: str = "",
+    llm_mode: str = "",
     hook_profile: str = "",
     model: str = "",
     sentence_length: int = 0,
@@ -1829,7 +1870,9 @@ async def generate_video(
     image_provider_norm = (image_provider or "auto").strip().lower()
     if image_provider_norm not in ("auto", "leonardo", "openai", "gemini"):
         raise HTTPException(400, "image_provider must be 'auto', 'leonardo', 'openai', or 'gemini'")
-    effort = _normalize_openai_reasoning_effort(llm_reasoning_effort)
+    provider = llm_provider or _infer_llm_provider_from_model(llm_model or model)
+    effort = _normalize_llm_reasoning_effort(llm_reasoning_effort, provider)
+    mode = _normalize_llm_mode(llm_mode, provider)
 
     # Validate hook_profile against the canonical list in YouTube.py so a typo
     # from the UI fails fast instead of silently falling back to "educational"
@@ -1880,6 +1923,8 @@ async def generate_video(
         args += ["--llm-model", llm_model]
     if effort:
         args += ["--llm-reasoning-effort", effort]
+    if mode:
+        args += ["--llm-mode", mode]
     if hook_profile_norm:
         args += ["--hook-profile", hook_profile_norm]
     if model:
@@ -1916,6 +1961,9 @@ class BatchJobItem(BaseModel):
     image_provider: str = "auto"
     auto_upload: bool = False
     series_id: str = ""
+    llm_provider: str = ""
+    llm_reasoning_effort: str = ""
+    llm_mode: str = ""
     model: str = ""
     sentence_length: int = 0
     hook_style: str = ""
@@ -1965,6 +2013,24 @@ def generate_batch(payload: BatchGeneratePayload):
                 "error": f"invalid render_profile {item.render_profile!r}",
             })
             continue
+        if item.llm_provider and item.llm_provider not in ("ollama", "gemini", "openai", "claude", "pollinations"):
+            out.append({
+                "channel_id": item.channel_id,
+                "ok": False,
+                "error": f"invalid llm_provider {item.llm_provider!r}",
+            })
+            continue
+        provider = item.llm_provider or _infer_llm_provider_from_model(item.model)
+        try:
+            effort = _normalize_llm_reasoning_effort(item.llm_reasoning_effort, provider)
+            mode = _normalize_llm_mode(item.llm_mode, provider)
+        except HTTPException as exc:
+            out.append({
+                "channel_id": item.channel_id,
+                "ok": False,
+                "error": str(exc.detail),
+            })
+            continue
         from classes.MaxRetention import MAX_RETENTION_MODE, is_known_retention_mode, normalize_retention_mode
         retention_mode_norm = normalize_retention_mode(item.retention_mode)
         if item.retention_mode and not is_known_retention_mode(item.retention_mode):
@@ -1992,7 +2058,16 @@ def generate_batch(payload: BatchGeneratePayload):
         if item.series_id:
             args += ["--series-id", item.series_id]
         if item.model:
-            args += ["--model", item.model]
+            if item.llm_provider:
+                args += ["--llm-model", item.model]
+            else:
+                args += ["--model", item.model]
+        if item.llm_provider:
+            args += ["--llm-provider", item.llm_provider]
+        if effort:
+            args += ["--llm-reasoning-effort", effort]
+        if mode:
+            args += ["--llm-mode", mode]
         if item.sentence_length and item.sentence_length > 0:
             args += ["--sentence-length", str(item.sentence_length)]
         if item.hook_style:

@@ -533,6 +533,27 @@ def get_claude_cli_models() -> list[str]:
     return [get_claude_cli_model()]
 
 
+def get_claude_cli_reasoning_effort() -> str:
+    """Gets the Claude CLI effort/thinking level."""
+    value = os.environ.get("MP_CLAUDE_CLI_EFFORT", "").strip()
+    if not value:
+        value = str(_get_config_value("claude_cli_reasoning_effort", "medium") or "").strip()
+    value = (value or "medium").lower()
+    if value not in {"low", "medium", "high", "xhigh", "max"}:
+        return "medium"
+    return value
+
+
+def get_claude_cli_mode() -> str:
+    """Gets the Claude CLI execution mode: standard or fast."""
+    value = os.environ.get("MP_CLAUDE_CLI_MODE", "").strip().lower()
+    if not value:
+        value = str(_get_config_value("claude_cli_mode", "standard") or "").strip().lower()
+    if value not in {"standard", "fast"}:
+        return "standard"
+    return value
+
+
 def get_claude_cli_timeout_seconds() -> int:
     """Gets the timeout for a single Claude CLI text-generation call."""
     value = os.environ.get("MP_CLAUDE_CLI_TIMEOUT_SECONDS", "").strip()

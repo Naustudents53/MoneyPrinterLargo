@@ -167,13 +167,17 @@ MAXIMA RETENCION TOPIC RULES - mandatory:
 MAXIMA RETENCION MODE - mandatory:
 - Sentence one is the swipe-stopper. It must be 8 to 12 words, direct, visual, and unsettling. No context first.
 - Never open with "Sabias que", "En este video", "Hoy vamos", "Descubre", "Acompaname", or any welcome.
+- Never use fake survival-bait like "nadie sobreviviria", "no sobrevivirias", or "un segundo dentro" unless the topic is literally about human exposure.
+- If the topic has a specific name, use that name early instead of vague phrasing like "esta nebulosa", "este planeta", or "este objeto".
 - The first three seconds must make one concrete promise about the topic: danger, contradiction, impossible scale, hidden force, or strange consequence.
+- Intro clarity: sentence 1 or sentence 2 must name the main subject naturally. Do not hide behind "este planeta", "esta estrella", "este objeto", or vague mystery before the viewer knows what the video is about.
 - Every 2 sentences must add a new reason to keep watching: a twist, a scale jump, a consequence, or a more precise image.
 - Structure the Short like this: sentence 1 shock, sentences 2-3 simple setup, sentences 4-{midpoint} escalation, sentences {midpoint + 1}-{max(midpoint + 2, sentence_length - 2)} explanation, final sentences payoff and echo.
 - Prefer strong verbs over labels: se acerca, rompe, dobla, arrastra, borra, ilumina, oculta, dispara, devora.
 - These structure words are private instructions only. Never say labels like "primera revelacion", "segunda revelacion", "hook", "contexto", "desarrollo", "conclusion", "parte uno", or "seccion dos" in the narration.
 - Cut filler. No generic hype, no calls to action, no classroom tone, no slow introductions.
-- The final sentence should be short enough to loop cleanly back into the first sentence.
+- Outro payoff: the final sentence must resolve or reframe the opening promise, not introduce a new fact or call to action.
+- Verbal loop: copy the first spoken word of sentence 1 and make the final sentence end with that exact word, so replay starts as one continuous loop.
 - Write every word in {language}.
 {NarrationVoice.short_generation_directive(language)}
 """
@@ -208,11 +212,14 @@ Rules:
 - Keep EXACTLY {sentence_length} sentences.
 {target_clause}- Sentence one: 8 to 12 words, concrete, visual, unsettling, and tied to the topic.
 - No "Sabias que", "En este video", "Hoy vamos", "Descubre", "Acompaname", welcome, or meta commentary.
+- No fake survival-bait: avoid "nadie sobreviviria", "no sobrevivirias", "un segundo dentro", and generic "esta/este objeto" openings.
 - Keep one continuous story, but add a new twist or consequence every 2 sentences.
 - Never announce the structure. Do not write labels like "primera revelacion", "segunda revelacion", "hook", "contexto", "desarrollo", "conclusion", "parte uno", or "seccion dos".
 - Use simple spoken language, short sentences, strong verbs, and concrete cosmic images.
 - Reduce textbook explanation. Increase cause -> consequence -> twist.
-- End with a memorable line that loops naturally back to the first sentence.
+- Sentence 1 or sentence 2 must name the main subject naturally so the viewer quickly knows what the Short is about.
+- End with a memorable payoff line that resolves or reframes the opening promise.
+- Verbal loop: the final sentence must end with the exact first spoken word of sentence 1.
 {NarrationVoice.rewrite_guardrail(language)}
 - No markdown, no title, no bullets, no stage directions.
 - Return ONLY the rewritten narration."""

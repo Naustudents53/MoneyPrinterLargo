@@ -144,6 +144,39 @@ def test_educational_hook_lab_prefers_named_subject_opening():
     assert hook.startswith("TON seis dieciocho")
 
 
+def test_hook_lab_rejects_fake_survival_bait():
+    report = RetentionLab.score_hook(
+        "Nadie sobreviviria un segundo dentro de esta nebulosa que borra toda luz.",
+        topic="La Nebulosa Boomerang: el unico lugar conocido del universo mas frio",
+        niche="espacio",
+        language="espanol",
+    )
+
+    assert report["score"] < RetentionLab.HOOK_SCORE_THRESHOLD
+    assert "fake survival stakes" in report["issues"]
+    assert "generic demonstrative instead of named subject" in report["issues"]
+
+
+def test_hook_lab_prefers_named_anomaly_over_survival_bait():
+    def fake_generate(_prompt):
+        return (
+            "Nadie sobreviviria un segundo dentro de esta nebulosa que borra toda luz.\n"
+            "Pero la Nebulosa Boomerang rompe la luz antes de mostrar su sombra."
+        )
+
+    hook, report = RetentionLab.select_best_hook(
+        topic="La Nebulosa Boomerang: el unico lugar conocido del universo mas frio",
+        niche="espacio",
+        language="espanol",
+        generate_response=fake_generate,
+        candidates=4,
+        max_rounds=1,
+    )
+
+    assert report["accepted"]
+    assert hook.startswith("Pero la Nebulosa Boomerang")
+
+
 def test_narration_structure_labels_are_stripped_before_tts():
     raw = (
         "Primera revelacion: jupiter se oscurece en silencio. "
@@ -168,6 +201,42 @@ def test_retention_score_flags_spoken_structure_labels():
     )
 
     assert any("structural labels" in issue for issue in report["issues"])
+
+
+def test_max_retention_requires_final_word_to_loop_to_first_word():
+    no_loop = RetentionLab.score_short_script(
+        "Nunca mires ese planeta azul demasiado cerca. HD 189733b dispara vidrio de lado. Su belleza termina en silencio.",
+        topic="HD 189733b planeta azul",
+        niche="espacio",
+        language="espanol",
+        retention_mode="maxima_retencion",
+    )
+    with_loop = RetentionLab.score_short_script(
+        "Nunca mires ese planeta azul demasiado cerca. HD 189733b dispara vidrio de lado. Todo vuelve a empezar: Nunca.",
+        topic="HD 189733b planeta azul",
+        niche="espacio",
+        language="espanol",
+        retention_mode="maxima_retencion",
+    )
+
+    assert any("seamless loop" in issue for issue in no_loop["issues"])
+    assert not any("seamless loop" in issue for issue in with_loop["issues"])
+    assert with_loop["score"] > no_loop["score"]
+
+
+def test_preflight_flags_survival_bait_opening():
+    report = RetentionLab.score_short_script(
+        "Nadie sobreviviria un instante dentro de esta nube que congela el universo. "
+        "La Nebulosa Boomerang esta a un grado del cero absoluto. "
+        "Por eso su sombra apaga la luz antes de volver: Nadie.",
+        topic="La Nebulosa Boomerang",
+        niche="espacio",
+        language="espanol",
+        retention_mode="maxima_retencion",
+    )
+
+    assert report["label"] in {"risky", "weak"}
+    assert any("fake survival stakes" in issue for issue in report["issues"])
 
 
 def test_retention_plan_covers_retention_pro_outputs():
@@ -223,6 +292,18 @@ def test_retention_plan_covers_retention_pro_outputs():
     assert plan["micro_hooks"]
     assert "traga" in plan["hot_words"]
     assert plan["hook_ab_tests"]
+
+    loop = RetentionLab._loop_ending(
+        [
+            "Nunca mires ese planeta azul demasiado cerca.",
+            "HD 189733b dispara vidrio de lado.",
+            "Todo vuelve a empezar: Nunca.",
+        ],
+        "HD 189733b planeta azul",
+    )
+    assert loop["word_loop"] is True
+    assert loop["first_word"] == "Nunca"
+    assert loop["last_word"] == "Nunca"
 
     compact = RetentionLab.compact_retention_plan(plan)
     assert compact["score"] == plan["overall_score"]

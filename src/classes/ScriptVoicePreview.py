@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from cache import get_temp_cache_path
+from config import get_tts_voice
 from utils import (
     clean_script_for_tts,
     expand_regnal_numerals,
@@ -147,6 +148,10 @@ class ScriptVoicePreview:
         tts_text = expand_spanish_numbers(tts_text)
 
         voice_id = _resolve_voice(self.config.short_voice)
+        effective_voice_id = voice_id or _resolve_voice(get_tts_voice())
+        if _is_spanish_language(self.config.language) and effective_voice_id and not effective_voice_id.lower().startswith("es-"):
+            voice_id = LONG_VIDEO_NARRATOR
+            effective_voice_id = voice_id
         if is_max_retention(self.config.retention_mode):
             rate = MaxRetentionEngine.VOICE_RATE
             pitch = MaxRetentionEngine.VOICE_DRAMA_PITCH if self.config.voice_drama else ""
@@ -170,7 +175,7 @@ class ScriptVoicePreview:
         return {
             "subject": subject,
             "tts_text": tts_text,
-            "voice_id": voice_id,
+            "voice_id": effective_voice_id,
             "word_timestamps": word_timestamps,
         }
 
