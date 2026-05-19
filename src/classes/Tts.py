@@ -1,5 +1,8 @@
 import os
 import asyncio
+import re
+import tempfile
+import wave
 
 from config import get_tts_voice, get_tts_provider
 from cache import get_temp_cache_path
@@ -79,6 +82,51 @@ EDGE_TTS_VOICES = {
 LONG_VIDEO_NARRATOR = "es-ES-AlvaroNeural"
 
 
+def build_retention_prosody_segments(text: str, base_rate: str = "", base_pitch: str = "") -> list[dict]:
+    """Build sentence-level prosody for MAXIMA RETENCION voice delivery."""
+    sentences = _split_spoken_sentences(text)
+    if len(sentences) < 4:
+        return []
+
+    cliffhanger_index = len(sentences) - 2
+    payoff_index = len(sentences) - 1
+    segments = []
+    for idx, sentence in enumerate(sentences):
+        segment = {
+            "text": sentence,
+            "rate": base_rate,
+            "pitch": base_pitch,
+            "post_break_ms": 0,
+            "role": "normal",
+        }
+        if idx == cliffhanger_index:
+            segment.update({
+                "rate": "-15%",
+                "pitch": base_pitch or "-4Hz",
+                "post_break_ms": 400,
+                "role": "cliffhanger",
+            })
+        elif idx == payoff_index:
+            segment.update({
+                "rate": "-8%",
+                "pitch": base_pitch or "-4Hz",
+                "role": "payoff",
+            })
+        segments.append(segment)
+    return segments
+
+
+def _split_spoken_sentences(text: str) -> list[str]:
+    clean = re.sub(r"\s+", " ", text or "").strip()
+    if not clean:
+        return []
+    return [
+        match.group(0).strip()
+        for match in re.finditer(r"[^.!?]+(?:[.!?]+|$)", clean)
+        if match.group(0).strip()
+    ]
+
+
 class TTS:
     def __init__(self) -> None:
         self._provider = get_tts_provider()
@@ -153,7 +201,15 @@ class TTS:
 
         return output_file
 
-    def synthesize_with_timestamps(self, text, output_file=os.path.join(get_temp_cache_path(), "audio.wav"), voice_id=None, rate: str = "", pitch: str = ""):
+    def synthesize_with_timestamps(
+        self,
+        text,
+        output_file=os.path.join(get_temp_cache_path(), "audio.wav"),
+        voice_id=None,
+        rate: str = "",
+        pitch: str = "",
+        prosody_segments: list[dict] | None = None,
+    ):
         """Synthesize audio AND return word-level timestamps.
 
         Args:
@@ -165,10 +221,101 @@ class TTS:
             {"start": float_seconds, "end": float_seconds, "word": str} or None.
         """
         if self._provider == "edge_tts":
+            if prosody_segments and output_file.endswith(".wav"):
+                return self._synthesize_edge_tts_segments_with_timestamps(
+                    prosody_segments,
+                    output_file,
+                    voice_id=voice_id,
+                    fallback_text=text,
+                    fallback_rate=rate,
+                    fallback_pitch=pitch,
+                )
             return self._synthesize_edge_tts_with_timestamps(text, output_file, voice_id=voice_id, rate=rate, pitch=pitch)
         # KittenTTS has no word timing — synthesize normally, return None
         self._synthesize_kitten(text, output_file, voice_id=voice_id)
         return output_file, None
+
+    def _synthesize_edge_tts_segments_with_timestamps(
+        self,
+        segments: list[dict],
+        output_file,
+        voice_id=None,
+        fallback_text: str = "",
+        fallback_rate: str = "",
+        fallback_pitch: str = "",
+    ):
+        import subprocess
+
+        ffmpeg_path = self._find_ffmpeg()
+        clean_segments = [
+            {
+                "text": str(seg.get("text") or "").strip(),
+                "rate": str(seg.get("rate") or fallback_rate or "+0%"),
+                "pitch": str(seg.get("pitch") or fallback_pitch or "+0Hz"),
+                "post_break_ms": max(0, int(seg.get("post_break_ms") or 0)),
+            }
+            for seg in segments
+            if str(seg.get("text") or "").strip()
+        ]
+        if not clean_segments or not ffmpeg_path:
+            return self._synthesize_edge_tts_with_timestamps(
+                fallback_text,
+                output_file,
+                voice_id=voice_id,
+                rate=fallback_rate,
+                pitch=fallback_pitch,
+            )
+
+        voice_id = voice_id or EDGE_TTS_VOICES.get(self._voice, self._voice)
+        word_timestamps = []
+        with tempfile.TemporaryDirectory(prefix="mp_tts_segments_") as tmpdir:
+            wav_paths = []
+            offset = 0.0
+            for idx, segment in enumerate(clean_segments):
+                mp3_path = os.path.join(tmpdir, f"seg_{idx}.mp3")
+                wav_path = os.path.join(tmpdir, f"seg_{idx}.wav")
+                segment_timestamps = self._stream_edge_tts_to_mp3(
+                    segment["text"],
+                    mp3_path,
+                    voice_id=voice_id,
+                    rate=segment["rate"],
+                    pitch=segment["pitch"],
+                )
+                subprocess.run(
+                    [
+                        ffmpeg_path,
+                        "-i",
+                        mp3_path,
+                        "-ar",
+                        "24000",
+                        "-ac",
+                        "1",
+                        "-c:a",
+                        "pcm_s16le",
+                        "-y",
+                        wav_path,
+                    ],
+                    capture_output=True,
+                    timeout=60,
+                    check=True,
+                )
+                wav_paths.append(wav_path)
+                for item in segment_timestamps:
+                    word_timestamps.append({
+                        "start": item["start"] + offset,
+                        "end": item["end"] + offset,
+                        "word": item["word"],
+                    })
+                offset += _wav_duration_seconds(wav_path)
+                offset += segment["post_break_ms"] / 1000.0
+
+            _concat_wavs_with_breaks(
+                wav_paths,
+                [seg["post_break_ms"] for seg in clean_segments],
+                output_file,
+            )
+
+        return output_file, word_timestamps
 
     def _synthesize_edge_tts_with_timestamps(self, text, output_file, voice_id=None, rate: str = "", pitch: str = ""):
         """Edge-TTS synthesis capturing word-level boundary events."""
@@ -225,6 +372,38 @@ class TTS:
 
         return output_file, word_timestamps
 
+    @staticmethod
+    def _stream_edge_tts_to_mp3(text: str, mp3_path: str, voice_id: str, rate: str = "", pitch: str = "") -> list[dict]:
+        import edge_tts
+
+        word_timestamps = []
+
+        async def _generate():
+            kwargs = {"boundary": "WordBoundary"}
+            if rate:
+                kwargs["rate"] = rate
+            if pitch:
+                kwargs["pitch"] = pitch
+            communicate = edge_tts.Communicate(text, voice_id, **kwargs)
+            audio_chunks = []
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_chunks.append(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    offset_s = chunk["offset"] / 10_000_000
+                    duration_s = chunk["duration"] / 10_000_000
+                    word_timestamps.append({
+                        "start": offset_s,
+                        "end": offset_s + duration_s,
+                        "word": chunk["text"],
+                    })
+            with open(mp3_path, "wb") as f:
+                for c in audio_chunks:
+                    f.write(c)
+
+        asyncio.run(_generate())
+        return word_timestamps
+
     def _synthesize_edge_tts(self, text, output_file, voice_id=None):
         """Edge-TTS synthesis (without word timestamps)."""
         path, _ = self._synthesize_edge_tts_with_timestamps(text, output_file, voice_id=voice_id)
@@ -251,3 +430,28 @@ class TTS:
                 if "ffmpeg.exe" in files:
                     return os.path.join(root, "ffmpeg.exe")
         return None
+
+
+def _wav_duration_seconds(path: str) -> float:
+    with wave.open(path, "rb") as wav:
+        return wav.getnframes() / float(wav.getframerate() or 1)
+
+
+def _concat_wavs_with_breaks(wav_paths: list[str], post_breaks_ms: list[int], output_file: str) -> None:
+    if not wav_paths:
+        return
+    with wave.open(wav_paths[0], "rb") as first:
+        params = first.getparams()
+        sample_width = first.getsampwidth()
+        channels = first.getnchannels()
+        frame_rate = first.getframerate()
+
+    with wave.open(output_file, "wb") as out:
+        out.setparams(params)
+        for idx, wav_path in enumerate(wav_paths):
+            with wave.open(wav_path, "rb") as src:
+                out.writeframes(src.readframes(src.getnframes()))
+            break_ms = post_breaks_ms[idx] if idx < len(post_breaks_ms) else 0
+            if break_ms > 0:
+                frames = int(frame_rate * (break_ms / 1000.0))
+                out.writeframes(b"\x00" * frames * channels * sample_width)

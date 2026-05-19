@@ -16,7 +16,7 @@ if not hasattr(_PIL_Image, "ANTIALIAS"):
 
 from utils import *
 from cache import *
-from .Tts import LONG_VIDEO_NARRATOR, TTS
+from .Tts import LONG_VIDEO_NARRATOR, TTS, build_retention_prosody_segments
 from .Retention import CosmicRetentionEngine
 from .MaxRetention import MaxRetentionEngine, is_max_retention, normalize_retention_mode
 from .RetentionLab import RetentionLab
@@ -3553,8 +3553,18 @@ RULES:
         else:
             rate = "-5%" if self._voice_drama else ""
             pitch = "-8Hz" if self._voice_drama else ""
+        prosody_segments = (
+            build_retention_prosody_segments(tts_text, base_rate=rate, base_pitch=pitch)
+            if is_max_retention(getattr(self, "_retention_mode", ""))
+            else None
+        )
         path, word_timestamps = tts_instance.synthesize_with_timestamps(
-            tts_text, path, voice_id=short_vid or None, rate=rate, pitch=pitch,
+            tts_text,
+            path,
+            voice_id=short_vid or None,
+            rate=rate,
+            pitch=pitch,
+            prosody_segments=prosody_segments,
         )
 
         # Put the Roman numerals back in the word-level timestamps so the
