@@ -7,7 +7,7 @@ Pipeline:
   2. Scrape the rendered text (title, description, hook, outline, suggested titles).
   3. Ask DeepSeek V4 Pro Cloud to fold all that into a single Spanish `custom_topic`
      brief (dense, narrative, sub-themes spelled out — the long-video pipeline
-     uses this to plan the 15-20 min script).
+     uses this to plan the 15-16 min script).
   4. Instantiate the YouTube class for the configured account and run
      `generate_long_video(tts, custom_topic=brief)`.
   5. Optionally upload (off by default — pass --upload to publish).
@@ -205,7 +205,7 @@ def parse_inspiration(text: str) -> dict:
 
 # ---------- Step 3: convert the parsed inspiration to a Spanish brief ----------
 
-BRIEF_PROMPT = """Eres un editor de contenido. Recibes una idea de video sugerida por YouTube Studio (en inglés) y debes convertirla en un BRIEF en español que sirva como `custom_topic` para un guion documental de 15-20 minutos.
+BRIEF_PROMPT = """Eres un editor de contenido. Recibes una idea de video sugerida por YouTube Studio (en inglés) y debes convertirla en un BRIEF en español que sirva como `custom_topic` para un guion documental de 15-16 minutos.
 
 REGLAS:
 - Idioma de salida: ESPAÑOL NEUTRAL.

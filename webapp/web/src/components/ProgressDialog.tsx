@@ -27,6 +27,19 @@ import { api, type UploadPlatform } from "@/lib/api";
 
 type Status = "idle" | "running" | "done" | "error";
 
+type RenderProgress = {
+  active: boolean;
+  done: boolean;
+  percent: number;
+  frame: string;
+  fps: string;
+  time: string;
+  durationLabel: string;
+  speed: string;
+  size: string;
+  bitrate: string;
+};
+
 interface ProgressDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -48,6 +61,348 @@ interface ProgressDialogProps {
 }
 
 const SEPARATOR_RE = /^─{2,}\s*(.+?)\s*─{2,}$/;
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+function normalizeLogLine(line: string) {
+  return line
+    .replace(ANSI_RE, "")
+    .replace(/Â·/g, "-")
+    .replace(/â†’/g, "->")
+    .replace(/âœ“/g, "ok")
+    .replace(/â€”|â€“/g, "-")
+    .replace(/\s+$/g, "");
+}
+
+function compactPath(path: string) {
+  return path.trim().replace(/^["']|["']$/g, "").replace(/^.*[\\/]/, "");
+}
+
+function providerLabel(provider: string) {
+  const key = provider.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    gemini: "Gemini",
+    openai: "OpenAI",
+    claude: "Claude",
+    ollama: "Ollama",
+    pollinations: "Pollinations",
+  };
+  return labels[key] ?? provider;
+}
+
+function yesNo(value: string) {
+  return /^(true|yes|1)$/i.test(value) ? "si" : "no";
+}
+
+function describeTopic(topic: string) {
+  const clean = topic.trim();
+  if (!clean || /^\(auto/.test(clean)) return "tema automatico";
+  return `tema: ${clean}`;
+}
+
+function formatInputType(type: string, fileName: string) {
+  const ext = fileName.split(".").pop()?.toLowerCase();
+  if (type === "image2") return "imagen";
+  if (type === "wav") return "voz WAV";
+  if (type === "mp3") return "musica MP3";
+  if (ext === "mp4") return "video MP4";
+  return type;
+}
+
+function cleanFfmpegPrefix(line: string) {
+  return line.replace(/^\[[^\]]+\]\s*/, "").trim();
+}
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, value));
+}
+
+function parseClockSeconds(value: string) {
+  const match = /^(\d+):(\d{2}):(\d{2}(?:\.\d+)?)$/.exec(value.trim());
+  if (!match) return null;
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+}
+
+function formatClock(seconds: number | null | undefined) {
+  if (!seconds || seconds <= 0) return "--:--";
+  const total = Math.max(0, Math.round(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+    : `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function extractFfmpegFrameFields(line: string) {
+  const fields: Record<string, string> = {};
+  for (const match of line.matchAll(/\b(frame|fps|q|size|Lsize|time|bitrate|speed|elapsed)=\s*([^\s]+)/g)) {
+    fields[match[1]] = match[2];
+  }
+  return fields.frame ? fields : null;
+}
+
+function parseFfmpegFrameProgress(line: string, durationSeconds: number | null): RenderProgress | null {
+  const fields = extractFfmpegFrameFields(line);
+  if (!fields) return null;
+  const final = Boolean(fields.Lsize) || /\sLsize=/.test(line);
+  const currentSeconds = fields.time ? parseClockSeconds(fields.time) : null;
+  const percent = durationSeconds && currentSeconds !== null
+    ? clampPercent((currentSeconds / durationSeconds) * 100)
+    : final
+    ? 100
+    : 0;
+  const size = fields.Lsize || fields.size || "?";
+  return {
+    active: true,
+    done: final || percent >= 99.9,
+    percent,
+    frame: fields.frame,
+    fps: fields.fps || "-",
+    time: fields.time || "00:00:00.00",
+    durationLabel: formatClock(durationSeconds),
+    speed: fields.speed || "-",
+    size,
+    bitrate: fields.bitrate && fields.bitrate !== "N/A" ? fields.bitrate : "-",
+  };
+}
+
+function ffmpegInputType(line: string) {
+  return /^Input #\d+,\s*([^,]+),\s*from '/.exec(line)?.[1] ?? "";
+}
+
+function detectedDurationSeconds(line: string) {
+  const match = /^\s*Duration:\s*([^,]+),/.exec(line);
+  return match ? parseClockSeconds(match[1]) : null;
+}
+
+function isFfmpegDetailLine(line: string) {
+  return (
+    /^Input #\d+,\s*[^,]+,\s*from '/.test(line) ||
+    /^Output #\d+,\s*[^,]+,\s*to '/.test(line) ||
+    /^\s*Duration:\s*[^,]+,/.test(line) ||
+    /^\s*Stream #\d+:\d+/.test(line) ||
+    /^Stream mapping:/.test(line) ||
+    /^\s*(?:Metadata|Side data):\s*$/.test(line) ||
+    /^\s*(?:encoder|CPB properties)\s*:/.test(line) ||
+    /^\[aist#/.test(line) ||
+    /^\[out#/.test(line) ||
+    /^\[aac /.test(line)
+  );
+}
+
+function formatTechnicalProgressLine(line: string): string | null {
+  let match = /^Input #(\d+),\s*([^,]+),\s*from '(.+)':$/.exec(line);
+  if (match) {
+    const fileName = compactPath(match[3]);
+    return `Entrada ${match[1]}: ${formatInputType(match[2], fileName)} - ${fileName}`;
+  }
+
+  match = /^Output #(\d+),\s*([^,]+),\s*to '(.+)':$/.exec(line);
+  if (match) return `Salida ${match[1]}: ${match[2].toUpperCase()} - ${compactPath(match[3])}`;
+
+  match = /^\s*Duration:\s*([^,]+),\s*start:\s*([^,]+),\s*bitrate:\s*(.+)$/.exec(line);
+  if (match) return `Duracion detectada: ${match[1]} | inicio ${match[2]} | bitrate ${match[3]}`;
+
+  match = /^\s*Stream #(\d+):(\d+).*Video:\s*([^,]+).*?(\d+x\d+).*?(?:(\d+(?:\.\d+)?) fps)/.exec(line);
+  if (match) {
+    const codec = match[3].replace(/\s*\(.+?\)/g, "").trim();
+    return `Video #${match[1]}:${match[2]}: ${match[4]}, ${match[5]} fps, codec ${codec}`;
+  }
+
+  match = /^\s*Stream #(\d+):(\d+).*Audio:\s*([^,]+).*?,\s*(\d+ Hz),\s*([^,]+)(?:,\s*([^,]+\/s))?/.exec(line);
+  if (match) {
+    const bitrate = match[6] ? `, ${match[6].trim()}` : "";
+    return `Audio #${match[1]}:${match[2]}: ${match[3].trim()}, ${match[4]}, ${match[5].trim()}${bitrate}`;
+  }
+
+  if (/^Stream mapping:/.test(line)) return "Mapeo de streams:";
+
+  match = /^\s*Stream #(\d+):(\d+).+?->\s*(.+)$/.exec(line);
+  if (match) return `Mapa: entrada #${match[1]}:${match[2]} -> ${match[3]}`;
+
+  match = /^\s*(.+?)\s+->\s+Stream #(\d+):(\d+)\s+\(([^)]+)\)$/.exec(line);
+  if (match) return `Mapa: ${match[1]} -> salida #${match[2]}:${match[3]} (${match[4]})`;
+
+  match = /^\s*Metadata:\s*$/.exec(line);
+  if (match) return "Metadata:";
+
+  match = /^\s*encoder\s*:\s*(.+)$/.exec(line);
+  if (match) return `Encoder: ${match[1]}`;
+
+  match = /^\s*Side data:\s*$/.exec(line);
+  if (match) return "Datos extra del stream:";
+
+  match = /^\s*CPB properties:\s*(.+)$/.exec(line);
+  if (match) return `Buffer/bitrate video: ${match[1]}`;
+
+  if (extractFfmpegFrameFields(line)) return null;
+
+  if (/^\[Parsed_ass_/.test(line)) {
+    const body = cleanFfmpegPrefix(line);
+    match = /^Loading font file '(.+)'$/.exec(body);
+    if (match) return `Fuente de subtitulos: ${compactPath(match[1])}`;
+    match = /^Error opening memory font '(.+)'$/.exec(body);
+    if (match) return `Aviso subtitulos: no se pudo abrir la fuente ${match[1]}`;
+    match = /^Using font provider (.+)$/.exec(body);
+    if (match) return `Subtitulos: proveedor de fuentes ${match[1]}`;
+    match = /^Added subtitle file: '(.+)' \((\d+) styles?, (\d+) events?\)$/.exec(body);
+    if (match) return `Subtitulos cargados: ${match[3]} eventos, ${match[2]} estilos`;
+    match = /^fontselect: .* -> ([^,]+),/.exec(body);
+    if (match) return `Fuente elegida: ${match[1].trim()}`;
+    return `Subtitulos: ${body}`;
+  }
+
+  if (/^\[swscaler/.test(line)) {
+    return `Aviso FFmpeg: formato de pixel heredado; se ajusta durante el render`;
+  }
+
+  if (/^\[aist#/.test(line)) {
+    return `Audio entrada: ${cleanFfmpegPrefix(line)}`;
+  }
+
+  if (/^\[mp4 /.test(line) && /Starting second pass/i.test(line)) {
+    return "MP4: finalizando archivo para reproduccion rapida";
+  }
+
+  if (/^\[out#/.test(line)) {
+    return `Resumen FFmpeg: ${cleanFfmpegPrefix(line)}`;
+  }
+
+  if (/^\[aac /.test(line)) {
+    return `Audio AAC: ${cleanFfmpegPrefix(line)}`;
+  }
+
+  return null;
+}
+
+function formatProgressLine(rawLine: string): string | null {
+  const line = normalizeLogLine(rawLine).trim();
+  if (!line) return "";
+  if (extractFfmpegFrameFields(line)) return null;
+  if (isFfmpegDetailLine(line)) return null;
+
+  const technicalLine = formatTechnicalProgressLine(line);
+  if (technicalLine) return technicalLine;
+
+  let match = /^\[runner\]\s+User override: provider=([^,\s]+), model=(.+)$/.exec(line);
+  if (match) return `IA: ${providerLabel(match[1])} (${match[2].trim()})`;
+
+  match = /^\[runner\]\s+User override: provider=([^\s]+)\s+\(no model\)$/.exec(line);
+  if (match) return `IA: ${providerLabel(match[1])}`;
+
+  match = /^\[runner\]\s+Using\s+(.+?)\s+provider$/i.exec(line);
+  if (match) return `IA: ${providerLabel(match[1])}`;
+
+  match = /^\[runner\]\s+Override: short_render_profile=(.+)$/.exec(line);
+  if (match) return `Calidad de render: ${match[1]}`;
+
+  match = /^\[runner\]\s+Override: script_sentence_length=(\d+)$/.exec(line);
+  if (match) return `Longitud de frases: ${match[1]} palabras aprox.`;
+
+  match = /^\[runner\]\s+Override: hook_style=(.+)$/.exec(line);
+  if (match) return `Estilo de gancho: ${match[1]}`;
+
+  match = /^\[runner\]\s+Retention mode:\s*(.+)$/.exec(line);
+  if (match) return `Modo de retencion: ${match[1]}`;
+
+  match = /^\[runner\]\s+Initializing channel '(.+)'$/.exec(line);
+  if (match) return `Canal: ${match[1]}`;
+
+  match = /^\[runner\]\s+Hook profile override:\s*(.+)$/.exec(line);
+  if (match) return `Perfil de gancho: ${match[1]}`;
+
+  match = /^\[runner\]\s+Generating (SHORT|LONG video) from (\d+) uploaded photo\(s\)\. Topic:\s*(.+)$/.exec(line);
+  if (match) {
+    const kind = match[1] === "SHORT" ? "Short" : "video largo";
+    return `Generando ${kind} con ${match[2]} fotos - ${describeTopic(match[3])}`;
+  }
+
+  match = /^\[runner\]\s+Generating (SHORT|LONG video)\. Topic:\s*(.+?)(?:,\s*image_mode=(.+))?$/.exec(line);
+  if (match) {
+    const kind = match[1] === "SHORT" ? "Short" : "video largo";
+    const imageMode = match[3] ? `, imagenes: ${match[3]}` : "";
+    return `Generando ${kind} - ${describeTopic(match[2])}${imageMode}`;
+  }
+
+  match = /^\[runner\]\s+Generated:\s+(.+)$/.exec(line);
+  if (match) return `Archivo generado: ${compactPath(match[1])}`;
+
+  match = /^\[runner\]\s+Social plan ready: quality=([^\s]+)\s+score=([^\s]+)$/.exec(line);
+  if (match) return `Plan social listo: calidad=${match[1]}, score=${match[2]}`;
+
+  match = /^\[runner\]\s+Starting upload to (.+)\.\.\.$/.exec(line);
+  if (match) return `Subiendo a ${match[1]}...`;
+
+  match = /^\[runner\]\s+Upload results:\s*(.+)$/.exec(line);
+  if (match) return `Resultado de subida: ${match[1]}`;
+
+  if (line === "[runner] DONE") return "Proceso terminado";
+
+  match = /^\[runner\]\s+ERROR:\s*(.+)$/.exec(line);
+  if (match) return `Error: ${match[1]}`;
+
+  match = /^\[runner\]\s+WARN(?:ING)?:\s*(.+)$/.exec(line);
+  if (match) return `Aviso: ${match[1]}`;
+
+  match = /^✅\s+Prepared (\d+) uploaded photos\.$/.exec(line);
+  if (match) return `Fotos listas: ${match[1]}`;
+
+  match = /Photo analysis:\s*(.+)$/.exec(line);
+  if (match) return `Analisis de fotos: ${match[1]}`;
+
+  match = /Wrote TTS to .+?\((\d+) words timed\)/.exec(line);
+  if (match) return `Voz generada: ${match[1]} palabras con tiempos`;
+
+  match = /Short render profile:\s*([^|]+)\|\s*fps=(\d+)\s*\|\s*ken_burns=([^|]+)\|\s*karaoke=([^|]+)\|\s*crossfade=([\d.]+)s/i.exec(line);
+  if (match) {
+    return [
+      `Render Short: ${match[1].trim()}`,
+      `${match[2]} fps`,
+      `movimiento=${yesNo(match[3].trim())}`,
+      `subtitulos=${yesNo(match[4].trim())}`,
+      `transicion=${match[5]}s`,
+    ].join(", ");
+  }
+
+  match = /Chose song:\s*([^\s]+)(?:\s+\(.+\))?/.exec(line);
+  if (match) return `Musica: ${match[1]}`;
+
+  match = /FFmpeg quality render:\s*fps=(\d+), codec=([^,]+), preset=([^,]+), threads=(\d+), karaoke=(.+)$/i.exec(line);
+  if (match) {
+    return `Motor de render: ${match[2]}, ${match[1]} fps, ${match[4]} hilos, subtitulos=${yesNo(match[5])}`;
+  }
+
+  match = /Wrote Video to "(.+)"$/.exec(line);
+  if (match) return `Video listo: ${compactPath(match[1])}`;
+
+  match = /Wrote upload sidecar:\s*(.+)$/.exec(line);
+  if (match) return `Metadatos de subida guardados: ${compactPath(match[1])}`;
+
+  match = /Uploaded-photos Short generated:\s*(.+)$/.exec(line);
+  if (match) return `Short generado: ${compactPath(match[1])}`;
+
+  match = /Uploaded-photos long video generated:\s*(.+)$/.exec(line);
+  if (match) return `Video largo generado: ${compactPath(match[1])}`;
+
+  match = /^\s*\[(Gemini|OpenAI|Ollama|Claude CLI|Codex CLI)\]\s+(.+?)\s+-\s+([\d.]+)s\s+-\s+(.+?)\s+-\s+(\d+)\s+chars$/i.exec(line);
+  if (match) return `${match[1]}: respuesta lista en ${match[3]}s (${match[4]})`;
+
+  match = /^\s*\[ok\]\s+Switched to LLM provider:\s*(.+)$/.exec(line);
+  if (match) return `Proveedor LLM activo: ${providerLabel(match[1])}`;
+
+  if (/Copying Firefox profile to temp dir/i.test(line)) return "Preparando perfil de Firefox";
+  if (/^\[\+\]\s+Combining images/i.test(line)) return "Montando fotos, voz y musica...";
+  if (/^\[\+\]\s+Rendering quality Short with ffmpeg/i.test(line)) return "Renderizando video final en calidad alta...";
+  if (/^\[\+\]\s+Building karaoke subtitles/i.test(line)) return "Preparando subtitulos...";
+  if (/^\[\+\]\s+Karaoke subtitles ready/i.test(line)) return "Subtitulos listos";
+  if (/^\[\+\]\s+Mixing audio/i.test(line)) return "Mezclando voz y musica...";
+
+  return line
+    .replace(/^\[runner\]\s+/, "")
+    .replace(/^(?:ℹ️|✅|⚠️|❌)\s*=>\s*/, "")
+    .replace(/^=>\s*/, "")
+    .replace(/^\[\+\]\s*/, "");
+}
 
 /**
  * Streaming progress dialog. Connects to the SSE endpoint and shows logs in
@@ -79,8 +434,11 @@ export function ProgressDialog({
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
   const [phase, setPhase] = useState<"generate" | "upload">("generate");
   const [stickToBottom, setStickToBottom] = useState(true);
+  const [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const logBoxRef = useRef<HTMLDivElement | null>(null);
+  const lastFfmpegInputTypeRef = useRef("");
+  const renderDurationRef = useRef<number | null>(null);
   // Hold onDone in a ref so changes to its identity (parent re-renders with a
   // non-memoized callback) don't retrigger the SSE effect and spawn a duplicate
   // job on the backend.
@@ -110,6 +468,9 @@ export function ProgressDialog({
     setStatus("running");
     setJobId(null);
     setStickToBottom(true);
+    setRenderProgress(null);
+    lastFfmpegInputTypeRef.current = "";
+    renderDurationRef.current = null;
     if (phase === "generate") {
       setGeneratedFile(null);
       previewAutoOpenedRef.current = false;
@@ -129,22 +490,49 @@ export function ProgressDialog({
       } catch {
         /* ignore */
       }
-      append("──── job iniciado ────");
+      append("──── proceso iniciado ────");
     });
     es.addEventListener("log", (ev) => {
       try {
         const data = JSON.parse((ev as MessageEvent).data);
         if (typeof data.elapsed === "number") setElapsed(data.elapsed);
-        const line: string = data.line ?? "";
-        const m = /\[runner\]\s+Generated:\s+(.+)$/.exec(line);
+        const rawLine: string = data.line ?? "";
+        const normalizedLine = normalizeLogLine(rawLine).trim();
+        const inputType = ffmpegInputType(normalizedLine);
+        if (inputType) lastFfmpegInputTypeRef.current = inputType;
+        const durationSeconds = detectedDurationSeconds(normalizedLine);
+        if (
+          durationSeconds &&
+          durationSeconds > 1 &&
+          lastFfmpegInputTypeRef.current === "wav"
+        ) {
+          renderDurationRef.current = durationSeconds;
+        }
+        const frameProgress = parseFfmpegFrameProgress(normalizedLine, renderDurationRef.current);
+        if (frameProgress) {
+          setRenderProgress(frameProgress);
+          return;
+        }
+        const m = /\[runner\]\s+Generated:\s+(.+)$/.exec(rawLine);
         if (m) {
           const full = m[1].trim();
           const name = full.replace(/^.*[\\/]/, "");
           setGeneratedFile(name);
         }
-        append(line);
+        const line = formatProgressLine(rawLine);
+        if (line !== null) append(line);
       } catch {
-        append((ev as MessageEvent).data);
+        const rawLine = (ev as MessageEvent).data;
+        const frameProgress = parseFfmpegFrameProgress(
+          normalizeLogLine(rawLine).trim(),
+          renderDurationRef.current,
+        );
+        if (frameProgress) {
+          setRenderProgress(frameProgress);
+          return;
+        }
+        const line = formatProgressLine(rawLine);
+        if (line !== null) append(line);
       }
     });
     es.addEventListener("done", (ev) => {
@@ -155,6 +543,7 @@ export function ProgressDialog({
         /* ignore */
       }
       append("──── completado ✅ ────");
+      setRenderProgress((prev) => prev ? { ...prev, done: true, percent: 100 } : prev);
       setStatus("done");
       es.close();
       onDoneRef.current?.();
@@ -190,6 +579,9 @@ export function ProgressDialog({
       setActiveUrl(null);
       setGeneratedFile(null);
       setJobId(null);
+      setRenderProgress(null);
+      lastFfmpegInputTypeRef.current = "";
+      renderDurationRef.current = null;
       previewAutoOpenedRef.current = false;
       uploadOnPreviewCloseRef.current = false;
     }
@@ -343,10 +735,10 @@ export function ProgressDialog({
             <div className="flex items-center justify-between px-3 py-1.5 rounded-t-lg border border-b-0 hairline-strong bg-[hsl(var(--ink)/0.95)] text-emerald-200/70">
               <div className="flex items-center gap-2 text-[11px] font-mono uppercase">
                 <Terminal className="h-3 w-3" />
-                <span>logs</span>
+                <span>progreso</span>
                 {logs.length > 0 && (
                   <span className="text-emerald-200/40 normal-case tracking-normal">
-                    · {logs.length} líneas
+                    · {logs.length} eventos
                   </span>
                 )}
               </div>
@@ -368,10 +760,16 @@ export function ProgressDialog({
               </div>
             </div>
 
+            {renderProgress && (
+              <RenderProgressBar progress={renderProgress} />
+            )}
+
             <div
               ref={logBoxRef}
               onScroll={handleLogScroll}
-              className="font-mono text-[12px] leading-relaxed bg-[hsl(var(--ink))] text-emerald-200 rounded-b-lg border hairline-strong p-4 h-[420px] overflow-auto scrollbar-thin"
+              className={`font-mono text-[12px] leading-relaxed bg-[hsl(var(--ink))] text-emerald-200 rounded-b-lg border hairline-strong p-4 overflow-auto scrollbar-thin ${
+                renderProgress ? "h-[348px]" : "h-[420px]"
+              }`}
             >
               {logs.length === 0 ? (
                 <div className="text-emerald-200/40 italic flex items-center gap-2">
@@ -503,6 +901,46 @@ export function ProgressDialog({
   );
 }
 
+function RenderProgressBar({ progress }: { progress: RenderProgress }) {
+  const percent = clampPercent(progress.percent);
+  const percentLabel = `${Math.round(percent)}%`;
+  return (
+    <div className="border-x hairline-strong bg-[hsl(var(--ink))] px-4 pb-3 pt-2 text-emerald-200">
+      <div className="flex items-center justify-between gap-3 text-[11px] font-mono">
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${
+              progress.done ? "bg-success" : "bg-primary animate-pulse"
+            }`}
+          />
+          <span className="uppercase tracking-wide text-emerald-200/75">
+            {progress.done ? "render listo" : "renderizando"}
+          </span>
+          <span className="text-emerald-200/45 truncate">
+            {progress.time} / {progress.durationLabel}
+          </span>
+        </div>
+        <span className="tabular-nums text-emerald-100">{percentLabel}</span>
+      </div>
+
+      <div className="mt-2 h-2 overflow-hidden rounded-sm bg-emerald-950/70 ring-1 ring-emerald-300/10">
+        <div
+          className="h-full rounded-sm bg-gradient-to-r from-lime-300 via-emerald-300 to-sky-300 transition-[width] duration-300 ease-out"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+
+      <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] font-mono text-emerald-200/60 sm:grid-cols-5">
+        <span className="tabular-nums">frames {progress.frame}</span>
+        <span className="tabular-nums">fps {progress.fps}</span>
+        <span className="tabular-nums">speed {progress.speed}</span>
+        <span className="tabular-nums">size {progress.size}</span>
+        <span className="tabular-nums">bitrate {progress.bitrate}</span>
+      </div>
+    </div>
+  );
+}
+
 function StatusIcon({ status }: { status: Status }) {
   if (status === "running") return <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />;
   if (status === "done") return <CheckCircle2 className="h-4 w-4 text-success shrink-0" />;
@@ -581,8 +1019,20 @@ function formatElapsed(s: number) {
 function lineClass(line: string) {
   const l = line.toLowerCase();
   if (l.includes("error") || l.includes("traceback") || l.includes("❌")) return "text-rose-300";
-  if (l.includes("warning") || l.includes("⚠")) return "text-amber-300";
-  if (l.includes("success") || l.includes("✅") || l.includes("uploaded")) return "text-emerald-300";
+  if (l.includes("warning") || l.includes("aviso") || l.includes("⚠")) return "text-amber-300";
+  if (
+    l.includes("success") ||
+    l.includes("✅") ||
+    l.includes("uploaded") ||
+    l.includes("listo") ||
+    l.includes("generado") ||
+    l.includes("terminado")
+  ) return "text-emerald-300";
+  if (l.startsWith("ia:") || l.startsWith("canal:") || l.startsWith("perfil de gancho:")) return "text-sky-300";
+  if (l.startsWith("render") || l.startsWith("motor de render")) return "text-lima";
+  if (l.startsWith("entrada") || l.startsWith("salida") || l.startsWith("video #") || l.startsWith("audio #")) return "text-sky-300/90";
+  if (l.startsWith("mapa") || l.startsWith("metadata") || l.startsWith("encoder")) return "text-emerald-200/70";
+  if (l.startsWith("subtitulos") || l.startsWith("fuente")) return "text-violet-300";
   if (/^\s*wrote:/i.test(line)) return "text-emerald-300";
   if (/^\s*\+\s/.test(line)) return "text-lima";
   if (/→\s*reclassif|→\s*pruned|→\s*added/.test(line)) return "text-violeta";

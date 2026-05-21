@@ -186,18 +186,18 @@ export function Generate() {
     else if (!list.some((m) => m.id === llmModel)) setLlmModel(list[0].id);
   }, [llmProvider, llmModels, llmModel]);
 
-  const showImageProviderSelector = llmProvider === "openai" || llmProvider === "claude";
+  const showImageProviderSelector =
+    imageMode === "ai" && (llmProvider === "openai" || llmProvider === "claude");
 
   useEffect(() => {
     if (showImageProviderSelector) {
-      if (imageMode !== "ai") setImageMode("ai");
       if (imageProvider === "auto") {
         setImageProvider(llmProvider === "openai" ? "openai" : "leonardo");
       }
       return;
     }
     if (imageProvider !== "auto") setImageProvider("auto");
-  }, [showImageProviderSelector, llmProvider, imageMode, imageProvider]);
+  }, [showImageProviderSelector, llmProvider, imageProvider]);
 
   const selectedChannel = useMemo(
     () => channels.find((c) => c.id === channelId),
@@ -661,11 +661,8 @@ export function Generate() {
                 <Field label="Fuente de imágenes">
                   <Segmented
                     value={imageMode}
-                    onChange={(v) => {
-                      if (!showImageProviderSelector) setImageMode(v as VisualSource);
-                    }}
+                    onChange={(v) => setImageMode(v as VisualSource)}
                     accentVar="var(--accent)"
-                    disabled={showImageProviderSelector}
                     options={[
                       { value: "ai", label: "AI · Nano Banana" },
                       { value: "photos", label: "Stock fotos" },
@@ -685,7 +682,7 @@ export function Generate() {
                   </Field>
                 )}
 
-                {imageMode === "upload" && !showImageProviderSelector && (
+                {imageMode === "upload" && (
                   <Field
                     label="Fotos subidas"
                     hint={photoFiles.length ? `${photoFiles.length} archivos` : "jpg/png/webp"}

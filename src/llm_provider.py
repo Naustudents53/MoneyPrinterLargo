@@ -518,7 +518,7 @@ def generate_text(prompt: str, model_name: str = None, temperature: float = 0.7)
                 raise RuntimeError(f"LLM returned a conversational/garbage response: {result[:80]}")
             global _last_used_provider
             if name != _last_used_provider:
-                print(f"  [âœ“] Switched to LLM provider: {name}")
+                print(f"  [ok] Switched to LLM provider: {name}")
                 _last_used_provider = name
             return result
         except Exception as e:
@@ -1023,8 +1023,8 @@ def _generate_text_gemini(
                 out_tok = int(usage.get("candidatesTokenCount") or 0)
                 _log_cost("gemini", model, in_tok, out_tok)
                 chars = len(text)
-                tok_part = f"{in_tok}â†’{out_tok} tok" if (in_tok or out_tok) else f"~{len(text.split())} words"
-                print(f"  [Gemini] {model} Â· {elapsed:.1f}s Â· {tok_part} Â· {chars} chars")
+                tok_part = f"{in_tok}->{out_tok} tok" if (in_tok or out_tok) else f"~{len(text.split())} words"
+                print(f"  [Gemini] {model} - {elapsed:.1f}s - {tok_part} - {chars} chars")
                 return text
             raise RuntimeError("Gemini returned empty text")
         except Exception as e:

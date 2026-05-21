@@ -450,7 +450,7 @@ def main():
                         youtube._hook_profile = chosen_hook
                         info(f" => Hook profile: {chosen_hook}")
 
-                        info("Starting Long Video Generation (15-20 min)...")
+                        info("Starting Long Video Generation (15-16 min max)...")
                         long_path = youtube.generate_long_video(tts, custom_topic=custom_topic)
                         if not long_path:
                             warning("Long video generation aborted — nothing to upload.")

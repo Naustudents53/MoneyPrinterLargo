@@ -1196,6 +1196,7 @@ def _spawn_job(args: list[str], title: str = "",
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     proc = subprocess.Popen(
         [sys.executable, str(_JOB_RUNNER), *args],
         stdout=subprocess.PIPE,
@@ -1396,48 +1397,71 @@ def suggest_topics(
 ):
     """Ask the LLM for `n` topic ideas tailored to the channel's niche and
     language. Returns synchronously (one LLM call, not a streaming job) so
-    the UI can pop them inline. Reads the channel's recent subjects from the
-    cache and asks the LLM to avoid repeating them."""
+    the UI can pop them inline. Reads the channel's full topic history from
+    the cache and filters same-subject repeats."""
     ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
     if not ch:
         raise HTTPException(404, "Channel not found")
     n = max(1, min(int(n or 5), 10))
 
-    # Recent subjects → injected into the prompt so suggestions stay fresh.
+    # Full channel history -- we need ALL past subjects to deduplicate against,
+    # not just a slice. The previous [:30] returned the OLDEST 30 because
+    # add_video() appends, so the LLM never saw the recent topics it was most
+    # likely to repeat.
     raw = _read_youtube_raw()
-    recent_subjects: list[str] = []
+    past_subjects: list[str] = []
     for acc in raw.get("accounts", []):
         if acc.get("id") == channel_id:
-            for v in (acc.get("videos") or [])[:30]:
-                s = (v.get("subject") or v.get("title") or "").strip()
-                if s:
-                    recent_subjects.append(s)
+            for v in (acc.get("videos") or []):
+                for key in ("subject", "title"):
+                    val = v.get(key)
+                    if val and isinstance(val, str) and val.strip():
+                        past_subjects.append(val.strip())
             break
+
+    # Same distinctive-entity dedupe the YouTube pipeline uses. topic_dedupe is
+    # stdlib-only, so importing it here doesn't drag in MoviePy/Selenium.
+    from topic_dedupe import find_duplicate, normalize as _norm  # noqa: E402
+
+    def _is_duplicate(cand: str) -> bool:
+        return bool(find_duplicate(cand, past_subjects))
 
     niche = ch.get("niche") or "(sin niche)"
     language = ch.get("language") or "español"
-    avoid_block = ""
-    if recent_subjects:
-        # Cap to ~20 entries to keep the prompt small.
-        bullets = "\n".join(f"- {s}" for s in recent_subjects[:20])
-        avoid_block = (
-            "\n\nTEMAS RECIENTES A EVITAR (no repitas ni reformules estos):\n"
-            f"{bullets}\n"
-        )
 
-    prompt = (
-        f"Eres un experto en creación de contenido para YouTube Shorts. "
-        f"Genera EXACTAMENTE {n} ideas de temas concretos para un canal en {language} "
-        f"sobre: {niche}.\n\n"
-        f"REGLAS ESTRICTAS:\n"
-        f"- Cada idea debe ser un TEMA específico (no un concepto abstracto). "
-        f"Por ejemplo: 'La caída de Constantinopla en 1453' NO 'la historia bizantina'.\n"
-        f"- Cada idea ocupa UNA línea, sin numeración, sin guiones, sin viñetas.\n"
-        f"- Cada idea debe ser entendible por sí sola y digna de un short de 30-60s.\n"
-        f"- Escribe EN {language}.\n"
-        f"- NO incluyas explicaciones, encabezados ni nada extra. Solo las {n} líneas con los temas."
-        f"{avoid_block}"
-    )
+    def _build_prompt(n_ask: int, extra_reject: list[str]) -> str:
+        avoid_block = ""
+        # Show the most recent 60 to keep the LLM aware of fresh history without
+        # blowing the context window.
+        if past_subjects:
+            shown = past_subjects[-60:]
+            bullets = "\n".join(f"- {s}" for s in shown)
+            avoid_block = (
+                "\n\nTEMAS YA CUBIERTOS EN ESTE CANAL (no repitas, no reformules, "
+                "no propongas variantes del mismo tema):\n"
+                f"{bullets}\n"
+            )
+        reject_block = ""
+        if extra_reject:
+            reject_block = (
+                "\n\nADEMÁS, ya sugeriste estos y FUERON RECHAZADOS por duplicado "
+                "— elige ángulos completamente distintos:\n"
+                + "\n".join(f"- {s}" for s in extra_reject[-15:])
+                + "\n"
+            )
+        return (
+            f"Eres un experto en creación de contenido para YouTube Shorts. "
+            f"Genera EXACTAMENTE {n_ask} ideas de temas concretos para un canal en {language} "
+            f"sobre: {niche}.\n\n"
+            f"REGLAS ESTRICTAS:\n"
+            f"- Cada idea debe ser un TEMA específico (no un concepto abstracto). "
+            f"Por ejemplo: 'La caída de Constantinopla en 1453' NO 'la historia bizantina'.\n"
+            f"- Cada idea ocupa UNA línea, sin numeración, sin guiones, sin viñetas.\n"
+            f"- Cada idea debe ser entendible por sí sola y digna de un short de 30-60s.\n"
+            f"- Escribe EN {language}.\n"
+            f"- NO incluyas explicaciones, encabezados ni nada extra. Solo las {n_ask} líneas con los temas."
+            f"{avoid_block}{reject_block}"
+        )
 
     effort = _normalize_openai_reasoning_effort(llm_reasoning_effort)
     if llm_provider and llm_provider not in ("ollama", "gemini", "openai", "claude", "pollinations"):
@@ -1451,16 +1475,49 @@ def suggest_topics(
     if model and (model.startswith("gemini-") or model.startswith("gemma-")):
         from llm_provider import normalize_gemini_model_id
         os.environ["MP_GEMINI_MODEL_OVERRIDE"] = normalize_gemini_model_id(model) or model
+
+    candidates: list[str] = []
+    rejected: list[str] = []
+    seen_norm: set[str] = set()
     try:
         from llm_provider import generate_text  # lazy import — keeps API startup fast
         provider = llm_provider or _infer_llm_provider_from_model(model)
-        if provider:
-            from llm_provider import force_provider
-            with force_provider(provider, model or None):
-                raw_out = generate_text(prompt, model_name=model or None, temperature=0.9)
-        else:
-            raw_out = generate_text(prompt, temperature=0.9)
+        # Up to 4 LLM passes: ask for 2x what we need each time, then filter
+        # collisions against the full channel history. Stop as soon as we have
+        # `n` clean candidates.
+        for attempt in range(4):
+            if len(candidates) >= n:
+                break
+            prompt = _build_prompt(max(n * 2, 6), rejected)
+            try:
+                if provider:
+                    from llm_provider import force_provider
+                    with force_provider(provider, model or None):
+                        raw_out = generate_text(prompt, model_name=model or None, temperature=0.95)
+                else:
+                    raw_out = generate_text(prompt, temperature=0.95)
+            except Exception as e:
+                if attempt == 0:
+                    raise HTTPException(500, f"LLM failure: {e}") from e
+                break
+            for line in (raw_out or "").splitlines():
+                clean = re.sub(r"^[\s\-\*•\d\.\)]+", "", line).strip()
+                clean = re.sub(r"^[\"'“”‘’«»*]+|[\"'“”‘’«»*]+$", "", clean).strip()
+                if not clean or len(clean) < 6:
+                    continue
+                key = _norm(clean)
+                if not key or key in seen_norm:
+                    continue
+                seen_norm.add(key)
+                if _is_duplicate(clean):
+                    rejected.append(clean)
+                    continue
+                candidates.append(clean)
+                if len(candidates) >= n:
+                    break
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         raise HTTPException(500, f"LLM failure: {e}") from e
     finally:
         if saved_override:
@@ -1472,23 +1529,7 @@ def suggest_topics(
         else:
             os.environ.pop("MP_OPENAI_REASONING_EFFORT", None)
 
-    # Clean up: drop empty lines, strip bullets/numbering, dedupe.
-    import re as _re
-    candidates: list[str] = []
-    seen: set[str] = set()
-    for line in (raw_out or "").splitlines():
-        clean = _re.sub(r"^[\s\-\*•\d\.\)]+", "", line).strip()
-        if not clean or len(clean) < 6:
-            continue
-        key = clean.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        candidates.append(clean)
-        if len(candidates) >= n:
-            break
-
-    return {"topics": candidates}
+    return {"topics": candidates[:n]}
 
 
 @app.get("/api/photo-prompts/options")

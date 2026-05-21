@@ -37,7 +37,12 @@ from .Retention import CosmicRetentionEngine
 from .NarrationVoice import NarrationVoice
 from .MaxRetention import MaxRetentionEngine, is_max_retention
 from .Tts import LONG_VIDEO_NARRATOR, TTS
-from .YouTube import LONG_VIDEO_SECTION_THEMES, YouTube
+from .YouTube import (
+    LONG_VIDEO_SECTION_THEMES,
+    LONG_VIDEO_TARGET_MAX_WORDS,
+    LONG_VIDEO_TARGET_MIN_WORDS,
+    YouTube,
+)
 
 
 PhotoVideoKind = Literal["short", "long"]
@@ -480,7 +485,7 @@ Narrative section plan:
 {theme_text}
 
 Requirements:
-- 2200 to 3200 spoken words.
+- {LONG_VIDEO_TARGET_MIN_WORDS} to {LONG_VIDEO_TARGET_MAX_WORDS} spoken words.
 - Documentary tone with a strong cold open, clear progression, and memorable ending.
 - Use the details from the uploaded photos as anchors, but do NOT include stage directions.
 - No markdown tables, no bullet lists, no image prompts, no narrator labels.

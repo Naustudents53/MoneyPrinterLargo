@@ -37,7 +37,7 @@ def get_email_credentials() -> dict:
     Returns:
         credentials (dict): The email credentials
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["email"]
 
 def get_verbose() -> bool:
@@ -47,7 +47,7 @@ def get_verbose() -> bool:
     Returns:
         verbose (bool): The verbose flag
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["verbose"]
 
 def get_firefox_profile_path() -> str:
@@ -57,7 +57,7 @@ def get_firefox_profile_path() -> str:
     Returns:
         path (str): The path to the Firefox profile
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["firefox_profile"]
 
 def get_headless() -> bool:
@@ -67,7 +67,7 @@ def get_headless() -> bool:
     Returns:
         headless (bool): The headless flag
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["headless"]
 
 def get_ollama_base_url() -> str:
@@ -77,7 +77,7 @@ def get_ollama_base_url() -> str:
     Returns:
         url (str): The Ollama base URL
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("ollama_base_url", "http://127.0.0.1:11434")
 
 def get_ollama_model() -> str:
@@ -87,7 +87,7 @@ def get_ollama_model() -> str:
     Returns:
         model (str): The Ollama model name, or empty string if not set.
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("ollama_model", "")
 
 def get_ollama_models() -> list[str]:
@@ -97,7 +97,7 @@ def get_ollama_models() -> list[str]:
     to ``[get_ollama_model()]`` for backward compatibility with older
     configs that only define the singular field.
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         models = json.load(file).get("ollama_models", [])
     if models:
         return [m for m in models if m]
@@ -109,7 +109,7 @@ def get_long_video_llm_model() -> str:
     Primary Ollama model used by the long-video pipeline.
     Defaults to DeepSeek V4 Pro on Ollama Cloud (`ollama signin` required).
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("long_video_llm_model", "deepseek-v4-pro:cloud")
 
 def get_long_video_llm_models() -> list[str]:
@@ -119,7 +119,7 @@ def get_long_video_llm_models() -> list[str]:
     after all entries fail does the LLM layer fall back to Gemini.
     Falls back to ``[get_long_video_llm_model()]`` if not set.
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         models = json.load(file).get("long_video_llm_models", [])
     if models:
         return [m for m in models if m]
@@ -133,7 +133,7 @@ def get_twitter_language() -> str:
     Returns:
         language (str): The Twitter language
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["twitter_language"]
 
 
@@ -144,11 +144,11 @@ def get_threads() -> int:
     Returns:
         threads (int): Amount of threads
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["threads"]
 
 def _get_config_value(name: str, default=None):
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get(name, default)
 
 def _get_bool_config(name: str, default: bool) -> bool:
@@ -180,10 +180,61 @@ def get_short_render_fps() -> int:
     Gets the FPS used when rendering Shorts.
     Lower FPS reduces MoviePy's per-frame Python work.
     """
-    default = 24 if get_short_render_profile() in {"fast", "turbo"} else 30
+    default = 60
     value = os.environ.get("MP_SHORT_RENDER_FPS", "").strip()
     if not value:
         value = _get_config_value("short_render_fps", default)
+    try:
+        fps = int(value)
+    except (TypeError, ValueError):
+        fps = default
+    return max(12, min(60, fps))
+
+def _parse_render_size(value, default: tuple[int, int]) -> tuple[int, int]:
+    """Parse render sizes from config values such as "2160x3840" or [2160, 3840]."""
+    width, height = default
+    try:
+        if isinstance(value, dict):
+            width = int(value.get("width", width))
+            height = int(value.get("height", height))
+        elif isinstance(value, (list, tuple)) and len(value) >= 2:
+            width = int(value[0])
+            height = int(value[1])
+        elif value:
+            text = str(value).strip().lower().replace(" ", "").replace("×", "x")
+            if text not in {"4k", "uhd", "ultrahd", "ultra-hd"} and "x" in text:
+                raw_width, raw_height = text.split("x", 1)
+                width = int(raw_width)
+                height = int(raw_height)
+    except (TypeError, ValueError):
+        width, height = default
+
+    if width < 256 or height < 256:
+        return default
+    return min(width, 7680), min(height, 7680)
+
+def get_short_render_size() -> tuple[int, int]:
+    """Gets the output canvas for Shorts. Defaults to vertical 4K (2160x3840)."""
+    default = (2160, 3840)
+    value = os.environ.get("MP_SHORT_RENDER_SIZE", "").strip()
+    if not value:
+        value = _get_config_value("short_render_size", default)
+    return _parse_render_size(value, default)
+
+def get_long_render_size() -> tuple[int, int]:
+    """Gets the output canvas for long videos. Defaults to landscape 4K (3840x2160)."""
+    default = (3840, 2160)
+    value = os.environ.get("MP_LONG_RENDER_SIZE", "").strip()
+    if not value:
+        value = _get_config_value("long_render_size", default)
+    return _parse_render_size(value, default)
+
+def get_long_render_fps() -> int:
+    """Gets the FPS used when rendering long videos."""
+    default = 60
+    value = os.environ.get("MP_LONG_RENDER_FPS", "").strip()
+    if not value:
+        value = _get_config_value("long_render_fps", default)
     try:
         fps = int(value)
     except (TypeError, ValueError):
@@ -248,7 +299,7 @@ def get_zip_url() -> str:
     Returns:
         url (str): The URL to the zip file
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["zip_url"]
 
 def get_is_for_kids() -> bool:
@@ -258,7 +309,7 @@ def get_is_for_kids() -> bool:
     Returns:
         is_for_kids (bool): The is for kids flag
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["is_for_kids"]
 
 def get_google_maps_scraper_zip_url() -> str:
@@ -268,7 +319,7 @@ def get_google_maps_scraper_zip_url() -> str:
     Returns:
         url (str): The URL to the zip file
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["google_maps_scraper"]
 
 def get_google_maps_scraper_niche() -> str:
@@ -278,7 +329,7 @@ def get_google_maps_scraper_niche() -> str:
     Returns:
         niche (str): The niche
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["google_maps_scraper_niche"]
 
 def get_scraper_timeout() -> int:
@@ -288,7 +339,7 @@ def get_scraper_timeout() -> int:
     Returns:
         timeout (int): The timeout
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["scraper_timeout"] or 300
 
 def get_outreach_message_subject() -> str:
@@ -298,7 +349,7 @@ def get_outreach_message_subject() -> str:
     Returns:
         subject (str): The outreach message subject
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["outreach_message_subject"]
     
 def get_outreach_message_body_file() -> str:
@@ -308,7 +359,7 @@ def get_outreach_message_body_file() -> str:
     Returns:
         file (str): The outreach message body file
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["outreach_message_body_file"]
 
 def get_tts_voice() -> str:
@@ -318,7 +369,7 @@ def get_tts_voice() -> str:
     Returns:
         voice (str): The TTS voice
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("tts_voice", "Jasper")
 
 def get_assemblyai_api_key() -> str:
@@ -328,37 +379,37 @@ def get_assemblyai_api_key() -> str:
     Returns:
         key (str): The AssemblyAI API key
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["assembly_ai_api_key"]
 
 def get_pexels_api_key() -> str:
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         configured = json.load(file).get("pexels_api_key", "")
         return configured or os.environ.get("PEXELS_API_KEY", "")
 
 def get_pixabay_api_key() -> str:
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         configured = json.load(file).get("pixabay_api_key", "")
         return configured or os.environ.get("PIXABAY_API_KEY", "")
 
 def get_europeana_api_key() -> str:
     """Europeana cultural-heritage archive (free key from https://pro.europeana.eu)."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         configured = json.load(file).get("europeana_api_key", "")
         return configured or os.environ.get("EUROPEANA_API_KEY", "")
 
 def get_ideogram_api_key() -> str:
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         configured = json.load(file).get("ideogram_api_key", "")
         return configured or os.environ.get("IDEOGRAM_API_KEY", "")
 
 def get_leonardo_api_key() -> str:
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         configured = json.load(file).get("leonardo_api_key", "")
         return configured or os.environ.get("LEONARDO_API_KEY", "")
 
 def get_hf_api_key() -> str:
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         configured = json.load(file).get("hf_api_key", "")
         return configured or os.environ.get("HF_TOKEN", "")
 
@@ -369,7 +420,7 @@ def get_stt_provider() -> str:
     Returns:
         provider (str): The STT provider
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("stt_provider", "local_whisper")
 
 def get_whisper_model() -> str:
@@ -379,7 +430,7 @@ def get_whisper_model() -> str:
     Returns:
         model (str): Whisper model name
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("whisper_model", "base")
 
 def get_whisper_device() -> str:
@@ -389,7 +440,7 @@ def get_whisper_device() -> str:
     Returns:
         device (str): Whisper device
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("whisper_device", "auto")
 
 def get_whisper_compute_type() -> str:
@@ -399,7 +450,7 @@ def get_whisper_compute_type() -> str:
     Returns:
         compute_type (str): Whisper compute type
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("whisper_compute_type", "int8")
     
 def equalize_subtitles(srt_path: str, max_chars: int = 10) -> None:
@@ -422,7 +473,7 @@ def get_font() -> str:
     Returns:
         font (str): The font
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["font"]
 
 def get_fonts_dir() -> str:
@@ -441,12 +492,12 @@ def get_imagemagick_path() -> str:
     Returns:
         path (str): The path to ImageMagick
     """
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file)["imagemagick_path"]
 
 def get_llm_provider() -> str:
     """Gets the LLM provider (ollama, pollinations, gemini, openai, or claude)."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("llm_provider", "gemini")
 
 
@@ -469,6 +520,11 @@ def _resolve_cli_command(value: str, default_name: str) -> str:
             os.path.join(npm_dir, base),
         ])
 
+    localappdata = os.environ.get("LOCALAPPDATA", "")
+    base_name = os.path.basename(root or value).lower()
+    if localappdata and base_name == "codex":
+        candidates.append(os.path.join(localappdata, "OpenAI", "Codex", "bin", "codex.exe"))
+
     for candidate in candidates:
         resolved = shutil.which(candidate)
         if resolved:
@@ -480,14 +536,14 @@ def _resolve_cli_command(value: str, default_name: str) -> str:
 
 def get_openai_base_url() -> str:
     """Gets the OpenAI-compatible API base URL."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         configured = json.load(file).get("openai_base_url", "")
         return configured or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
 
 def get_openai_api_key() -> str:
     """Gets the OpenAI API key for GPT text generation."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         configured = json.load(file).get("openai_api_key", "")
         return configured or os.environ.get("OPENAI_API_KEY", "")
 
@@ -524,7 +580,7 @@ def get_claude_cli_model() -> str:
 def get_claude_cli_models() -> list[str]:
     """Gets the ordered Claude CLI models/aliases to expose and try."""
     override = os.environ.get("MP_CLAUDE_CLI_MODEL", "").strip()
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         models = json.load(file).get("claude_cli_models", [])
     if override:
         return [override] + [m for m in (models or []) if m != override]
@@ -648,13 +704,13 @@ def get_nanobanana2_aspect_ratio() -> str:
 
 def get_openai_model() -> str:
     """Gets the primary OpenAI model for text generation."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("openai_model", "gpt-5.5")
 
 
 def get_openai_models() -> list[str]:
     """Gets the ordered list of OpenAI models to try (best first)."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         models = json.load(file).get("openai_models", [])
 
     override = os.environ.get("MP_OPENAI_MODEL_OVERRIDE", "").strip()
@@ -671,7 +727,7 @@ def get_openai_reasoning_effort() -> str:
     """Gets the reasoning effort used for GPT-5/OpenAI reasoning models."""
     value = os.environ.get("MP_OPENAI_REASONING_EFFORT", "").strip()
     if not value:
-        with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+        with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
             value = str(json.load(file).get("openai_reasoning_effort", "medium")).strip()
     value = (value or "medium").lower()
     if value not in {"none", "minimal", "low", "medium", "high", "xhigh"}:
@@ -681,12 +737,12 @@ def get_openai_reasoning_effort() -> str:
 
 def get_pollinations_text_model() -> str:
     """Gets the configured Pollinations text model (default: openai)."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("pollinations_text_model", "openai")
 
 def get_gemini_model() -> str:
     """Gets the primary Gemini model for text generation."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("gemini_model", "gemini-2.5-flash")
 
 def get_gemini_models() -> list[str]:
@@ -696,7 +752,7 @@ def get_gemini_models() -> list[str]:
     the front of the list (and falls back to the configured ones if it gets
     rate-limited) — set by the webapp runner when the user picks a specific
     model in the Generate UI."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         models = json.load(file).get("gemini_models", [])
 
     override = os.environ.get("MP_GEMINI_MODEL_OVERRIDE", "").strip()
@@ -711,12 +767,12 @@ def get_gemini_models() -> list[str]:
 
 def get_gemini_api_key() -> str:
     """Gets the Gemini API key for LLM text generation."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("gemini_api_key", "")
 
 def get_tts_provider() -> str:
     """Gets the TTS provider (edge_tts or kittentts)."""
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         return json.load(file).get("tts_provider", "edge_tts")
 
 def get_series() -> list:
@@ -779,7 +835,7 @@ def get_script_sentence_length() -> int:
         except ValueError:
             pass
 
-    with open(os.path.join(ROOT_DIR, "config.json"), "r") as file:
+    with open(os.path.join(ROOT_DIR, "config.json"), "r", encoding="utf-8") as file:
         config_json = json.load(file)
         if (config_json.get("script_sentence_length") is not None):
             return config_json["script_sentence_length"]

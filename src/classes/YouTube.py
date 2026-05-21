@@ -55,6 +55,10 @@ _PHOTO_STOPWORDS = {
 _UNICODE_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 _UNICODE_TOKEN_RE = re.compile(r"[\w'-]+", re.UNICODE)
 
+LONG_VIDEO_TARGET_MIN_WORDS = 2000
+LONG_VIDEO_TARGET_MAX_WORDS = 2200
+LONG_VIDEO_ESTIMATED_WPM = 140
+
 
 def _unicode_words(text: str) -> list[str]:
     """Return alphabetic words, including accented characters, without fragile ranges."""
@@ -173,17 +177,17 @@ HOOK_PROFILES: dict = {
 # and manage open loops across the rest of the video. Series-defined themes
 # (via `series.section_themes` of exactly 10 entries) override these defaults.
 #
-# Index â†’ minute (approx, at 165 wpm and ~300 words/section):
-#   S1  â‰ˆ min 1-3   immersive vignette (closes nothing, opens visual hook)
-#   S2  â‰ˆ min 3-5   mystery pivot (plants the MAIN loop â€” paid off at S9)
-#   S3  â‰ˆ min 5-7   first partial revelation + LIKE-BREAK at the opening
-#   S4  â‰ˆ min 7-9   backstory / how-we-got-here
-#   S5  â‰ˆ min 9-11  escalation / second hook
-#   S6  â‰ˆ min 11-13 reversal (kills a popular belief)
-#   S7  â‰ˆ min 13-15 human element (anecdote, slower beat)
-#   S8  â‰ˆ min 15-17 unexpected modern connection
-#   S9  â‰ˆ min 17-18 climax â€” pays off the MAIN loop from S2
-#   S10 â‰ˆ min 18-19 legacy / consequences
+# Index -> minute (approx, at 140 wpm and ~175 words/section):
+#   S1  about min 1-2   immersive vignette (closes nothing, opens visual hook)
+#   S2  about min 2-4   mystery pivot (plants the MAIN loop, paid off at S9)
+#   S3  about min 4-5   first partial revelation + LIKE-BREAK at the opening
+#   S4  about min 5-7   backstory / how-we-got-here
+#   S5  about min 7-8   escalation / second hook
+#   S6  about min 8-10  reversal (kills a popular belief)
+#   S7  about min 10-11 human element (anecdote, slower beat)
+#   S8  about min 11-13 unexpected modern connection
+#   S9  about min 13-14 climax, pays off the MAIN loop from S2
+#   S10 about min 14-15 legacy / consequences
 LONG_VIDEO_SECTION_THEMES: list[str] = [
     # S1
     "ViÃ±eta inmersiva: una escena SENSORIAL concreta del momento o lugar mÃ¡s cinematogrÃ¡fico del tema. Mete al espectador DENTRO de la escena con detalles concretos (quÃ© se ve, quÃ© se oye, quÃ© se huele, quiÃ©n estÃ¡ ahÃ­). NO expliques aÃºn el contexto general â€” la escena habla sola. Termina dejando una imagen visual potente que enganche.",
@@ -531,34 +535,29 @@ class YouTube:
 
         # ---- 3. Pre-compute past signatures ----
         past_clean = [_strip_markdown(t) for t in past_topics]
-        past_norm = [_normalize(t) for t in past_clean]
 
         def _is_duplicate(candidate: str) -> tuple[bool, str]:
-            cand_clean = _strip_markdown(candidate)
-            if not cand_clean:
-                return False, ""
-            cand_norm = _normalize(cand_clean)
-            for original, p_norm in zip(past_topics, past_norm):
-                if not p_norm:
-                    continue
-                # Exact normalized match
-                if cand_norm == p_norm:
-                    return True, original
-                # Token overlap: high overlap = same subject rephrased
-                a, b = set(cand_norm.split()), set(p_norm.split())
-                if a and b and len(a & b) / max(len(a), len(b)) >= 0.65:
-                    return True, original
-                # Sequence similarity: catches near-identical phrasings
-                if SequenceMatcher(None, cand_norm, p_norm).ratio() >= 0.72:
-                    return True, original
-            return False, ""
+            # Distinctive-entity + lexical dedupe lives in topic_dedupe so the
+            # webapp's /suggest-topics endpoint shares the exact same logic.
+            # This catches same-subject rephrasings (e.g. "El misterio de
+            # Oumuamua" vs "Oumuamua, el visitante interestelar") that the old
+            # purely-lexical check missed.
+            from topic_dedupe import find_duplicate
+            matched = find_duplicate(candidate, past_topics)
+            return (bool(matched), matched)
 
         # ---- 4. Build forbidden block (recent topics as avoidance hint for the LLM) ----
         forbidden_block = ""
         if past_topics:
-            shown = past_clean[-40:]
+            # Show the most recent 80 so the LLM has enough channel history to avoid
+            # repeats. 40 was too narrow for established channels -- the model would
+            # propose subjects from older history that the dedupe layer then had to
+            # reject, burning attempts.
+            shown = past_clean[-80:]
             forbidden_block = (
-                "\n\nALREADY COVERED in this niche (pick a DIFFERENT angle, but stay WITHIN the niche):\n"
+                "\n\nALREADY COVERED in this niche (do NOT repeat, do NOT rephrase, "
+                "do NOT pick the same subject from a different angle -- pick a DIFFERENT "
+                "subject entirely, but stay WITHIN the niche):\n"
                 + "\n".join(f"- {t}" for t in shown)
                 + f"\n\nGenerate a fresh angle WITHIN the niche \"{self.niche}\". "
                 f"The new topic must still unmistakably belong to this niche â€” "
@@ -621,7 +620,7 @@ Return ONLY that single line. No other text."""
         # ---- 5. Generate with retries ----
         rejected: List[str] = []
         completion = ""
-        max_attempts = 8
+        max_attempts = 15
         for attempt in range(max_attempts):
             creativity_seed = random.randint(1, 100000)
             max_retention_topic = (
@@ -632,9 +631,10 @@ Return ONLY that single line. No other text."""
             extra_reject = ""
             if rejected:
                 extra_reject = (
-                    "\n\nYou already suggested these and they were REJECTED â€” "
-                    "pick a completely unrelated angle:\n"
-                    + "\n".join(f"- {t}" for t in rejected[-6:])
+                    "\n\nYou already suggested these and they were REJECTED as duplicates "
+                    "of previously published videos -- pick a COMPLETELY unrelated subject "
+                    "(different person, different event, different place):\n"
+                    + "\n".join(f"- {t}" for t in rejected[-12:])
                 )
 
             raw_candidate = self.generate_response(
@@ -3984,6 +3984,346 @@ RULES:
         meta["description"] = (desc.rstrip() + "\n\n" + line).lstrip()
 
     @staticmethod
+    def _short_clip_durations(num_clips: int, max_duration: float, crossfade: float) -> list[float]:
+        total_overlap = crossfade * max(0, num_clips - 1)
+        target_total = max_duration + total_overlap
+        req_dur = target_total / num_clips
+        durations = []
+        elapsed = 0.0
+
+        for idx in range(num_clips):
+            this_dur = target_total - elapsed if idx == num_clips - 1 else req_dur
+            if this_dur <= 0:
+                break
+            durations.append(this_dur)
+            elapsed += this_dur
+
+        return durations
+
+    @staticmethod
+    def _long_clip_durations(
+        num_clips: int,
+        max_duration: float,
+        crossfade: float,
+        extra_tail: float,
+    ) -> list[float]:
+        total_overlap = crossfade * max(0, num_clips - 1)
+        target_total = max_duration + total_overlap + extra_tail
+        req_dur = target_total / num_clips
+        durations = []
+        elapsed = 0.0
+
+        for idx in range(num_clips):
+            this_dur = target_total - elapsed if idx == num_clips - 1 else req_dur
+            if this_dur <= 0:
+                break
+            durations.append(this_dur)
+            elapsed += this_dur
+
+        return durations
+
+    @staticmethod
+    def _ass_timestamp(seconds: float) -> str:
+        centiseconds = max(0, int(round(float(seconds) * 100)))
+        hours, rem = divmod(centiseconds, 360000)
+        minutes, rem = divmod(rem, 6000)
+        secs, cs = divmod(rem, 100)
+        return f"{hours}:{minutes:02d}:{secs:02d}.{cs:02d}"
+
+    @staticmethod
+    def _escape_ass_text(text: str) -> str:
+        return (
+            str(text or "")
+            .replace("\\", "\\\\")
+            .replace("{", r"\{")
+            .replace("}", r"\}")
+            .replace("\n", " ")
+            .strip()
+        )
+
+    @staticmethod
+    def _ffmpeg_filter_escape_path(path: str) -> str:
+        normalized = os.path.abspath(path).replace("\\", "/")
+        return normalized.replace(":", r"\:").replace("'", r"\'")
+
+    def _write_karaoke_ass_subtitles(self, output_path: str, audio_duration: float) -> bool:
+        from PIL import ImageFont
+
+        words = self.word_timestamps or []
+        if not words:
+            return False
+
+        max_mode = is_max_retention(getattr(self, "_retention_mode", ""))
+        caption_cfg = MaxRetentionEngine.caption_config() if max_mode else None
+        font_path = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
+        font_size = caption_cfg.font_size if caption_cfg else 80
+        font = ImageFont.truetype(font_path, font_size)
+        max_line_width = 920
+        word_spacing = 28
+        max_words_per_group = caption_cfg.max_words_per_group if caption_cfg else 5
+        max_lines = 2 if max_mode else 3
+        position_y = caption_cfg.position_y if caption_cfg else 1300
+
+        hot_word_set = set()
+        if max_mode:
+            try:
+                hot_word_set = set(
+                    RetentionLab.hot_words(
+                        getattr(self, "script", "") or "",
+                        getattr(self, "subject", "") or "",
+                    )
+                )
+            except Exception:
+                hot_word_set = set()
+
+        def _caption_key(text: str) -> str:
+            return RetentionLab.normalize(text)
+
+        def _measure(text: str) -> int:
+            bb = font.getbbox(text)
+            return bb[2] - bb[0]
+
+        def _word_text(item: dict) -> str:
+            return str(item.get("word", "")).strip().upper()
+
+        def _wrap_texts(texts: list[str]) -> list[list[str]]:
+            lines = []
+            current = []
+            current_w = 0
+            for text in texts:
+                width = _measure(text)
+                test_w = current_w + width + (word_spacing if current else 0)
+                if current and test_w > max_line_width:
+                    lines.append(current)
+                    current = [text]
+                    current_w = width
+                else:
+                    current.append(text)
+                    current_w = test_w
+            if current:
+                lines.append(current)
+            return lines
+
+        groups = []
+        current_group = []
+        for word in words:
+            candidate = current_group + [word]
+            candidate_texts = [_word_text(w) for w in candidate]
+            if len(candidate) > max_words_per_group or len(_wrap_texts(candidate_texts)) > max_lines:
+                if current_group:
+                    groups.append(current_group)
+                current_group = [word]
+            else:
+                current_group = candidate
+        if current_group:
+            groups.append(current_group)
+
+        word_to_group = {}
+        global_idx = 0
+        for group_idx, group in enumerate(groups):
+            for local_idx in range(len(group)):
+                word_to_group[global_idx] = (group_idx, local_idx)
+                global_idx += 1
+
+        white = "&H00FFFFFF&"
+        yellow = "&H0000D7FF&"
+        hot_red = "&H00465FFF&"
+        outline = "&H00000000&"
+
+        def _colored_word(text: str, color: str) -> str:
+            return f"{{\\c{color}}}{self._escape_ass_text(text)}"
+
+        lines = [
+            "[Script Info]",
+            "ScriptType: v4.00+",
+            "PlayResX: 1080",
+            "PlayResY: 1920",
+            "ScaledBorderAndShadow: yes",
+            "",
+            "[V4+ Styles]",
+            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+            "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+            "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+            "Alignment, MarginL, MarginR, MarginV, Encoding",
+            f"Style: Karaoke,Poppins Black,{font_size},{white},{white},{outline},"
+            f"&H00000000&,-1,0,0,0,100,100,0,0,1,6,0,8,0,0,0,1",
+            "",
+            "[Events]",
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+        ]
+
+        for word_idx, word in enumerate(words):
+            if word_idx not in word_to_group:
+                continue
+            start = max(0.0, float(word.get("start", 0.0)))
+            if start >= audio_duration:
+                continue
+            if word_idx < len(words) - 1:
+                end = float(words[word_idx + 1].get("start", start))
+            else:
+                end = audio_duration
+            end = min(audio_duration, max(end, float(word.get("end", start + 0.05)), start + 0.05))
+
+            group_idx, local_idx = word_to_group[word_idx]
+            group = groups[group_idx]
+            texts = [_word_text(w) for w in group]
+            wrapped = _wrap_texts(texts)
+            local_counter = 0
+            rendered_lines = []
+            for wrapped_line in wrapped:
+                rendered_words = []
+                for text in wrapped_line:
+                    if local_counter == local_idx:
+                        color = yellow
+                    elif _caption_key(text) in hot_word_set:
+                        color = hot_red
+                    else:
+                        color = white
+                    rendered_words.append(_colored_word(text, color))
+                    local_counter += 1
+                rendered_lines.append(" ".join(rendered_words))
+
+            ass_text = r"\N".join(rendered_lines)
+            prefix = f"{{\\an8\\pos(540,{position_y})}}"
+            lines.append(
+                "Dialogue: 0,"
+                f"{self._ass_timestamp(start)},{self._ass_timestamp(end)},"
+                f"Karaoke,,0,0,0,,{prefix}{ass_text}"
+            )
+
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write("\n".join(lines) + "\n")
+        return True
+
+    def _write_karaoke_ass_subtitles_landscape(self, output_path: str, audio_duration: float) -> bool:
+        from PIL import ImageFont
+
+        words = self.word_timestamps or []
+        if not words:
+            return False
+
+        font_path = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
+        font_size = 58
+        font = ImageFont.truetype(font_path, font_size)
+        max_line_width = 1500
+        word_spacing = 24
+        max_words_per_group = 7
+        max_lines = 2
+
+        def _measure(text: str) -> int:
+            bb = font.getbbox(text)
+            return bb[2] - bb[0]
+
+        def _word_text(item: dict) -> str:
+            return str(item.get("word", "")).strip().upper()
+
+        def _wrap_texts(texts: list[str]) -> list[list[str]]:
+            lines = []
+            current = []
+            current_w = 0
+            for text in texts:
+                width = _measure(text)
+                test_w = current_w + width + (word_spacing if current else 0)
+                if current and test_w > max_line_width:
+                    lines.append(current)
+                    current = [text]
+                    current_w = width
+                else:
+                    current.append(text)
+                    current_w = test_w
+            if current:
+                lines.append(current)
+            return lines
+
+        groups = []
+        current_group = []
+        for word in words:
+            candidate = current_group + [word]
+            candidate_texts = [_word_text(w) for w in candidate]
+            if len(candidate) > max_words_per_group or len(_wrap_texts(candidate_texts)) > max_lines:
+                if current_group:
+                    groups.append(current_group)
+                current_group = [word]
+            else:
+                current_group = candidate
+        if current_group:
+            groups.append(current_group)
+
+        word_to_group = {}
+        global_idx = 0
+        for group_idx, group in enumerate(groups):
+            for local_idx in range(len(group)):
+                word_to_group[global_idx] = (group_idx, local_idx)
+                global_idx += 1
+
+        white = "&H00FFFFFF&"
+        yellow = "&H0000D7FF&"
+        outline = "&H00000000&"
+
+        def _colored_word(text: str, color: str) -> str:
+            return f"{{\\c{color}}}{self._escape_ass_text(text)}"
+
+        lines = [
+            "[Script Info]",
+            "ScriptType: v4.00+",
+            "PlayResX: 1920",
+            "PlayResY: 1080",
+            "ScaledBorderAndShadow: yes",
+            "",
+            "[V4+ Styles]",
+            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+            "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+            "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+            "Alignment, MarginL, MarginR, MarginV, Encoding",
+            f"Style: Karaoke,Poppins Black,{font_size},{white},{white},{outline},"
+            f"&H00000000&,-1,0,0,0,100,100,0,0,1,5,0,8,0,0,0,1",
+            "",
+            "[Events]",
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+        ]
+
+        for word_idx, word in enumerate(words):
+            if word_idx not in word_to_group:
+                continue
+            start = max(0.0, float(word.get("start", 0.0)))
+            if start >= audio_duration:
+                continue
+            if word_idx < len(words) - 1:
+                end = float(words[word_idx + 1].get("start", start))
+            else:
+                end = float(word.get("end", start + 0.05)) + 0.8
+            end = min(
+                audio_duration,
+                max(end, float(word.get("end", start + 0.05)), start + 0.05),
+            )
+
+            group_idx, local_idx = word_to_group[word_idx]
+            group = groups[group_idx]
+            texts = [_word_text(w) for w in group]
+            wrapped = _wrap_texts(texts)
+            local_counter = 0
+            rendered_lines = []
+            for wrapped_line in wrapped:
+                rendered_words = []
+                for text in wrapped_line:
+                    color = yellow if local_counter == local_idx else white
+                    rendered_words.append(_colored_word(text, color))
+                    local_counter += 1
+                rendered_lines.append(" ".join(rendered_words))
+
+            ass_text = r"\N".join(rendered_lines)
+            prefix = r"{\an8\pos(960,820)}"
+            lines.append(
+                "Dialogue: 0,"
+                f"{self._ass_timestamp(start)},{self._ass_timestamp(end)},"
+                f"Karaoke,,0,0,0,,{prefix}{ass_text}"
+            )
+
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write("\n".join(lines) + "\n")
+        return True
+
+    @staticmethod
     def _available_ffmpeg_encoders() -> set[str]:
         try:
             result = subprocess.run(
@@ -4016,6 +4356,27 @@ RULES:
         candidates.append("libx264")
         return candidates
 
+    @staticmethod
+    def _mp4_compat_ffmpeg_params() -> list[str]:
+        """Keep rendered MP4s playable in Windows Media Player and browser previews."""
+        return [
+            "-pix_fmt", "yuv420p",
+            "-color_range", "tv",
+            "-colorspace", "bt709",
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
+            "-movflags", "+faststart",
+        ]
+
+    @staticmethod
+    def _ffmpeg_failure_tail(result: subprocess.CompletedProcess, max_lines: int = 16) -> str:
+        """Return the useful tail of an FFmpeg failure without flooding the UI."""
+        output = "\n".join(part for part in (result.stderr, result.stdout) if part)
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        if not lines:
+            return "no FFmpeg output"
+        return "\n".join(lines[-max_lines:])
+
     def _write_videofile_with_fallback(self, clip, output_path: str, *, threads: int, fps: int) -> None:
         candidates = self._render_codec_candidates()
         configured_preset = get_render_preset()
@@ -4034,6 +4395,7 @@ RULES:
                 "audio_codec": "aac",
                 "audio": True,
                 "logger": "bar",
+                "ffmpeg_params": self._mp4_compat_ffmpeg_params(),
             }
             if preset:
                 kwargs["preset"] = preset
@@ -4060,6 +4422,458 @@ RULES:
                 )
 
         raise last_error
+
+    def _short_ffmpeg_filter_complex(
+        self,
+        *,
+        image_count: int,
+        durations: list[float],
+        fps: int,
+        crossfade: float,
+        ken_burns_enabled: bool,
+        karaoke_ass_path: str,
+        music_volume: float,
+        audio_duration: float,
+    ) -> str:
+        filters = []
+        pan_scale_w = 1124
+        pan_scale_h = 1998
+        horizontal_pan = 180
+        vertical_pan = 120
+        for idx, this_dur in enumerate(durations):
+            frames = max(1, int(round(this_dur * fps)))
+            frame_denom = max(1, frames - 1)
+            repeated = (
+                f"loop=loop={max(0, frames - 1)}:size=1:start=0,"
+                f"setpts=N/({fps}*TB),"
+            )
+            base = (
+                f"[{idx}:v]"
+                "scale=1080:1920:force_original_aspect_ratio=increase:"
+                "flags=lanczos+accurate_rnd,"
+                "crop=1080:1920,setsar=1,format=rgb24,"
+            )
+            if ken_burns_enabled:
+                pan_base = (
+                    f"[{idx}:v]"
+                    f"scale={pan_scale_w}:{pan_scale_h}:"
+                    "force_original_aspect_ratio=increase:"
+                    "flags=lanczos+accurate_rnd,"
+                    "setsar=1,format=rgb24,"
+                )
+                progress = f"n/{frame_denom}"
+                if idx % 4 == 0:
+                    x_expr = (
+                        f"((iw-ow)/2)-(min(iw-ow\\,{horizontal_pan})/2)+"
+                        f"min(iw-ow\\,{horizontal_pan})*({progress})"
+                    )
+                    y_expr = "(ih-oh)/2"
+                elif idx % 4 == 1:
+                    x_expr = (
+                        f"((iw-ow)/2)+(min(iw-ow\\,{horizontal_pan})/2)-"
+                        f"min(iw-ow\\,{horizontal_pan})*({progress})"
+                    )
+                    y_expr = "(ih-oh)/2"
+                elif idx % 4 == 2:
+                    x_expr = "(iw-ow)/2"
+                    y_expr = (
+                        f"((ih-oh)/2)-(min(ih-oh\\,{vertical_pan})/2)+"
+                        f"min(ih-oh\\,{vertical_pan})*({progress})"
+                    )
+                else:
+                    x_expr = "(iw-ow)/2"
+                    y_expr = (
+                        f"((ih-oh)/2)+(min(ih-oh\\,{vertical_pan})/2)-"
+                        f"min(ih-oh\\,{vertical_pan})*({progress})"
+                    )
+                filters.append(
+                    f"{pan_base}"
+                    f"{repeated}"
+                    f"crop=1080:1920:x='{x_expr}':y='{y_expr}',"
+                    f"trim=duration={this_dur:.6f},"
+                    "setpts=PTS-STARTPTS,format=yuv420p"
+                    f"[v{idx}]"
+                )
+            else:
+                filters.append(
+                    f"{base},"
+                    f"{repeated}"
+                    f"trim=duration={this_dur:.6f},"
+                    "format=yuv420p"
+                    f"[v{idx}]"
+                )
+
+        effective_crossfade = crossfade
+        if image_count <= 1:
+            video_label = "[v0]"
+        elif effective_crossfade > 0 and all(d > effective_crossfade for d in durations):
+            video_label = "[v0]"
+            running_duration = durations[0]
+            for idx in range(1, image_count):
+                out_label = f"[vx{idx}]"
+                offset = max(0.0, running_duration - effective_crossfade)
+                filters.append(
+                    f"{video_label}[v{idx}]"
+                    f"xfade=transition=fade:duration={effective_crossfade:.6f}:"
+                    f"offset={offset:.6f},format=yuv420p"
+                    f"{out_label}"
+                )
+                video_label = out_label
+                running_duration += durations[idx] - effective_crossfade
+        else:
+            concat_inputs = "".join(f"[v{idx}]" for idx in range(image_count))
+            filters.append(f"{concat_inputs}concat=n={image_count}:v=1:a=0,format=yuv420p[vbase]")
+            video_label = "[vbase]"
+
+        if karaoke_ass_path:
+            ass_path = self._ffmpeg_filter_escape_path(karaoke_ass_path)
+            fonts_dir = self._ffmpeg_filter_escape_path(get_fonts_dir())
+            filters.append(
+                f"{video_label}"
+                f"ass=filename='{ass_path}':fontsdir='{fonts_dir}',"
+                "scale=1080:1920:flags=lanczos+accurate_rnd:out_range=tv,"
+                "format=yuv420p,"
+                "setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709"
+                "[vout]"
+            )
+        else:
+            filters.append(
+                f"{video_label}"
+                "scale=1080:1920:flags=lanczos+accurate_rnd:out_range=tv,"
+                "format=yuv420p,"
+                "setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709"
+                "[vout]"
+            )
+
+        voice_idx = image_count
+        music_idx = image_count + 1
+        filters.extend([
+            f"[{voice_idx}:a]aresample=44100,atrim=0:{audio_duration:.6f},"
+            "asetpts=PTS-STARTPTS[voice]",
+            f"[{music_idx}:a]aresample=44100,atrim=0:{audio_duration:.6f},"
+            f"asetpts=PTS-STARTPTS,volume={music_volume:.4f}[music]",
+            "[voice][music]amix=inputs=2:duration=first:dropout_transition=0,"
+            f"atrim=0:{audio_duration:.6f},asetpts=PTS-STARTPTS[aout]",
+        ])
+        return ";".join(filters)
+
+    def _write_quality_short_with_ffmpeg(
+        self,
+        *,
+        output_path: str,
+        image_paths: list[str],
+        durations: list[float],
+        random_song: str,
+        fps: int,
+        crossfade: float,
+        ken_burns_enabled: bool,
+        karaoke_enabled: bool,
+        music_volume: float,
+        audio_duration: float,
+        threads: int,
+    ) -> None:
+        karaoke_ass_path = ""
+        if karaoke_enabled:
+            karaoke_ass_path = os.path.join(get_temp_cache_path(), f"{uuid4()}.ass")
+            if not self._write_karaoke_ass_subtitles(karaoke_ass_path, audio_duration):
+                karaoke_ass_path = ""
+
+        filter_complex = self._short_ffmpeg_filter_complex(
+            image_count=len(image_paths),
+            durations=durations,
+            fps=fps,
+            crossfade=crossfade,
+            ken_burns_enabled=ken_burns_enabled,
+            karaoke_ass_path=karaoke_ass_path,
+            music_volume=music_volume,
+            audio_duration=audio_duration,
+        )
+
+        configured_preset = get_render_preset()
+        bitrate = get_render_bitrate()
+        candidates = self._render_codec_candidates()
+        last_error = None
+
+        for idx, codec in enumerate(candidates):
+            preset = configured_preset
+            if not preset and codec == "libx264":
+                preset = "ultrafast"
+            elif not preset and codec == "h264_nvenc":
+                preset = "p1"
+
+            cmd = ["ffmpeg", "-y", "-hide_banner", "-nostdin"]
+            for image_path in image_paths:
+                cmd.extend(["-i", image_path])
+            cmd.extend(["-i", self.tts_path])
+            cmd.extend(["-stream_loop", "-1", "-i", random_song])
+            cmd.extend([
+                "-filter_complex", filter_complex,
+                "-map", "[vout]",
+                "-map", "[aout]",
+                "-t", f"{audio_duration:.6f}",
+                "-r", str(fps),
+                "-threads", str(threads),
+                "-c:v", codec,
+            ])
+            if preset:
+                cmd.extend(["-preset", preset])
+            if bitrate:
+                cmd.extend(["-b:v", bitrate])
+            cmd.extend([
+                "-c:a", "aac",
+                "-b:a", "192k",
+                *self._mp4_compat_ffmpeg_params(),
+                "-shortest",
+                output_path,
+            ])
+
+            if get_verbose():
+                info(
+                    " => FFmpeg quality render: "
+                    f"fps={fps}, codec={codec}, preset={preset or '(default)'}, "
+                    f"threads={threads}, karaoke={bool(karaoke_ass_path)}"
+                )
+
+            result = subprocess.run(cmd, check=False)
+            if result.returncode == 0:
+                return
+
+            last_error = RuntimeError(f"ffmpeg exited with code {result.returncode}")
+            if idx < len(candidates) - 1:
+                warning(
+                    f"FFmpeg render failed with codec {codec}; "
+                    f"trying {candidates[idx + 1]} instead."
+                )
+
+        raise last_error or RuntimeError("ffmpeg render failed")
+
+    def _long_ffmpeg_filter_complex(
+        self,
+        *,
+        image_count: int,
+        durations: list[float],
+        fps: int,
+        crossfade: float,
+        karaoke_ass_path: str,
+        music_volume: float,
+        audio_duration: float,
+        total_duration: float,
+        extra_tail: float,
+    ) -> str:
+        filters = []
+        pan_scale_w = 1998
+        pan_scale_h = 1124
+        horizontal_pan = 220
+        vertical_pan = 120
+
+        for idx, this_dur in enumerate(durations):
+            frames = max(1, int(round(this_dur * fps)))
+            frame_denom = max(1, frames - 1)
+            repeated = (
+                f"loop=loop={max(0, frames - 1)}:size=1:start=0,"
+                f"setpts=N/({fps}*TB),"
+            )
+            pan_base = (
+                f"[{idx}:v]"
+                f"scale={pan_scale_w}:{pan_scale_h}:"
+                "force_original_aspect_ratio=increase:"
+                "flags=lanczos+accurate_rnd,"
+                "setsar=1,format=rgb24,"
+            )
+            progress = f"n/{frame_denom}"
+            if idx % 4 == 0:
+                x_expr = (
+                    f"((iw-ow)/2)-(min(iw-ow\\,{horizontal_pan})/2)+"
+                    f"min(iw-ow\\,{horizontal_pan})*({progress})"
+                )
+                y_expr = "(ih-oh)/2"
+            elif idx % 4 == 1:
+                x_expr = (
+                    f"((iw-ow)/2)+(min(iw-ow\\,{horizontal_pan})/2)-"
+                    f"min(iw-ow\\,{horizontal_pan})*({progress})"
+                )
+                y_expr = "(ih-oh)/2"
+            elif idx % 4 == 2:
+                x_expr = "(iw-ow)/2"
+                y_expr = (
+                    f"((ih-oh)/2)-(min(ih-oh\\,{vertical_pan})/2)+"
+                    f"min(ih-oh\\,{vertical_pan})*({progress})"
+                )
+            else:
+                x_expr = "(iw-ow)/2"
+                y_expr = (
+                    f"((ih-oh)/2)+(min(ih-oh\\,{vertical_pan})/2)-"
+                    f"min(ih-oh\\,{vertical_pan})*({progress})"
+                )
+
+            filters.append(
+                f"{pan_base}"
+                f"{repeated}"
+                f"crop=1920:1080:x='{x_expr}':y='{y_expr}',"
+                f"trim=duration={this_dur:.6f},"
+                "setpts=PTS-STARTPTS,format=yuv420p"
+                f"[v{idx}]"
+            )
+
+        effective_crossfade = crossfade
+        if image_count <= 1:
+            video_label = "[v0]"
+        elif effective_crossfade > 0 and all(d > effective_crossfade for d in durations):
+            video_label = "[v0]"
+            running_duration = durations[0]
+            for idx in range(1, image_count):
+                out_label = f"[lvx{idx}]"
+                offset = max(0.0, running_duration - effective_crossfade)
+                filters.append(
+                    f"{video_label}[v{idx}]"
+                    f"xfade=transition=fade:duration={effective_crossfade:.6f}:"
+                    f"offset={offset:.6f},format=yuv420p"
+                    f"{out_label}"
+                )
+                video_label = out_label
+                running_duration += durations[idx] - effective_crossfade
+        else:
+            concat_inputs = "".join(f"[v{idx}]" for idx in range(image_count))
+            filters.append(f"{concat_inputs}concat=n={image_count}:v=1:a=0,format=yuv420p[lvbase]")
+            video_label = "[lvbase]"
+
+        if extra_tail > 0:
+            filters.append(
+                f"{video_label}"
+                f"fade=t=out:st={audio_duration:.6f}:d={extra_tail:.6f},"
+                "format=yuv420p[lvfade]"
+            )
+            video_label = "[lvfade]"
+
+        if karaoke_ass_path:
+            ass_path = self._ffmpeg_filter_escape_path(karaoke_ass_path)
+            fonts_dir = self._ffmpeg_filter_escape_path(get_fonts_dir())
+            filters.append(
+                f"{video_label}"
+                f"ass=filename='{ass_path}':fontsdir='{fonts_dir}',"
+                "scale=1920:1080:flags=lanczos+accurate_rnd:out_range=tv,"
+                "format=yuv420p,"
+                "setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709"
+                "[vout]"
+            )
+        else:
+            filters.append(
+                f"{video_label}"
+                "scale=1920:1080:flags=lanczos+accurate_rnd:out_range=tv,"
+                "format=yuv420p,"
+                "setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709"
+                "[vout]"
+            )
+
+        voice_idx = image_count
+        music_idx = image_count + 1
+        music_fadein = min(3.0, total_duration)
+        music_fadeout = min(extra_tail + 1.0, total_duration)
+        music_fadeout_start = max(0.0, total_duration - music_fadeout)
+        filters.extend([
+            f"[{voice_idx}:a]aresample=44100,apad,atrim=0:{total_duration:.6f},"
+            "asetpts=PTS-STARTPTS[voice]",
+            f"[{music_idx}:a]aresample=44100,atrim=0:{total_duration:.6f},"
+            f"asetpts=PTS-STARTPTS,volume={music_volume:.4f},"
+            f"afade=t=in:st=0:d={music_fadein:.6f},"
+            f"afade=t=out:st={music_fadeout_start:.6f}:d={music_fadeout:.6f}"
+            "[music]",
+            "[voice][music]amix=inputs=2:duration=first:dropout_transition=0,"
+            f"atrim=0:{total_duration:.6f},asetpts=PTS-STARTPTS[aout]",
+        ])
+        return ";".join(filters)
+
+    def _write_long_with_ffmpeg(
+        self,
+        *,
+        output_path: str,
+        image_paths: list[str],
+        durations: list[float],
+        random_song: str,
+        fps: int,
+        crossfade: float,
+        karaoke_enabled: bool,
+        music_volume: float,
+        audio_duration: float,
+        total_duration: float,
+        extra_tail: float,
+        threads: int,
+    ) -> None:
+        karaoke_ass_path = ""
+        if karaoke_enabled:
+            karaoke_ass_path = os.path.join(get_temp_cache_path(), f"{uuid4()}.ass")
+            if not self._write_karaoke_ass_subtitles_landscape(karaoke_ass_path, total_duration):
+                karaoke_ass_path = ""
+
+        filter_complex = self._long_ffmpeg_filter_complex(
+            image_count=len(image_paths),
+            durations=durations,
+            fps=fps,
+            crossfade=crossfade,
+            karaoke_ass_path=karaoke_ass_path,
+            music_volume=music_volume,
+            audio_duration=audio_duration,
+            total_duration=total_duration,
+            extra_tail=extra_tail,
+        )
+
+        configured_preset = get_render_preset()
+        bitrate = get_render_bitrate()
+        candidates = self._render_codec_candidates()
+        last_error = None
+
+        for idx, codec in enumerate(candidates):
+            preset = configured_preset
+            if not preset and codec == "libx264":
+                preset = "ultrafast"
+            elif not preset and codec == "h264_nvenc":
+                preset = "p1"
+
+            cmd = ["ffmpeg", "-y", "-hide_banner", "-nostdin"]
+            for image_path in image_paths:
+                cmd.extend(["-i", image_path])
+            cmd.extend(["-i", self.tts_path])
+            cmd.extend(["-stream_loop", "-1", "-i", random_song])
+            cmd.extend([
+                "-filter_complex", filter_complex,
+                "-map", "[vout]",
+                "-map", "[aout]",
+                "-t", f"{total_duration:.6f}",
+                "-r", str(fps),
+                "-threads", str(threads),
+                "-c:v", codec,
+            ])
+            if preset:
+                cmd.extend(["-preset", preset])
+            if bitrate:
+                cmd.extend(["-b:v", bitrate])
+            cmd.extend([
+                "-c:a", "aac",
+                "-b:a", "192k",
+                *self._mp4_compat_ffmpeg_params(),
+                "-shortest",
+                output_path,
+            ])
+
+            if get_verbose():
+                info(
+                    " => FFmpeg long render: "
+                    f"fps={fps}, codec={codec}, preset={preset or '(default)'}, "
+                    f"threads={threads}, karaoke={bool(karaoke_ass_path)}"
+                )
+
+            result = subprocess.run(cmd, check=False)
+            if result.returncode == 0:
+                return
+
+            last_error = RuntimeError(f"ffmpeg exited with code {result.returncode}")
+            if idx < len(candidates) - 1:
+                warning(
+                    f"FFmpeg long render failed with codec {codec}; "
+                    f"trying {candidates[idx + 1]} instead."
+                )
+
+        raise last_error or RuntimeError("ffmpeg long render failed")
 
     def combine(self) -> str:
         """
@@ -4099,21 +4913,47 @@ RULES:
                 warning(f"Missing {len(missing)} images, using {len(valid_images)} valid ones")
             self.images = valid_images
 
+        random_song = choose_random_song(getattr(self, "subject", ""))
+        if is_soundimage_track(random_song):
+            self._append_music_attribution(MATYAS_ATTRIBUTION)
+
+        music_volume = (
+            MaxRetentionEngine.MUSIC_VOLUME
+            if is_max_retention(getattr(self, "_retention_mode", ""))
+            else 0.15
+        )
+
+        if karaoke_enabled and not self.word_timestamps:
+            self.word_timestamps = self._estimate_word_timestamps(max_duration)
+
         # Crossfade overlap between clips â€” compensate so the composed total == max_duration
         n_imgs = len(self.images)
-        total_overlap = crossfade * max(0, n_imgs - 1)
-        req_dur = (max_duration + total_overlap) / n_imgs
+        durations = self._short_clip_durations(n_imgs, max_duration, crossfade)
+
+        if render_profile == "quality":
+            try:
+                print(colored("[+] Rendering quality Short with ffmpeg...", "blue"), flush=True)
+                self._write_quality_short_with_ffmpeg(
+                    output_path=combined_image_path,
+                    image_paths=self.images,
+                    durations=durations,
+                    random_song=random_song,
+                    fps=render_fps,
+                    crossfade=crossfade,
+                    ken_burns_enabled=ken_burns_enabled,
+                    karaoke_enabled=karaoke_enabled,
+                    music_volume=music_volume,
+                    audio_duration=max_duration,
+                    threads=threads,
+                )
+                success(f'Wrote Video to "{combined_image_path}"')
+                return combined_image_path
+            except Exception as e:
+                warning(f"FFmpeg quality render failed, falling back to MoviePy: {e}")
 
         clips = []
-        tot_dur = 0
-        target_total = max_duration + total_overlap
         # Add each image once, distributing duration evenly across the full TTS length
-        for idx, image_path in enumerate(self.images):
-            # Last clip absorbs any float remainder so composed total == max_duration exactly
-            if idx == n_imgs - 1:
-                this_dur = target_total - tot_dur
-            else:
-                this_dur = req_dur
+        for idx, (image_path, this_dur) in enumerate(zip(self.images, durations)):
             if this_dur <= 0:
                 break
             clip = ImageClip(image_path).set_duration(this_dur).set_fps(render_fps)
@@ -4164,7 +5004,6 @@ RULES:
             clip = clip.set_duration(this_dur)
 
             clips.append(clip)
-            tot_dur += this_dur
 
         # Negative padding overlaps clips by `crossfade` seconds for smooth blending.
         # Duration was pre-compensated so composed total == max_duration (no black tail).
@@ -4175,18 +5014,11 @@ RULES:
         # Trim any float drift so video matches TTS exactly
         if final_clip.duration > max_duration:
             final_clip = final_clip.subclip(0, max_duration)
-        random_song = choose_random_song(getattr(self, "subject", ""))
-        if is_soundimage_track(random_song):
-            self._append_music_attribution(MATYAS_ATTRIBUTION)
 
         subtitles = None
         if karaoke_enabled:
             try:
                 print(colored("[+] Building karaoke subtitles...", "blue"), flush=True)
-
-                # If TTS didn't provide word timestamps, estimate them
-                if not self.word_timestamps:
-                    self.word_timestamps = self._estimate_word_timestamps(max_duration)
 
                 subtitles = self._build_karaoke_subtitles(max_duration, fps=render_fps)
 
@@ -4208,11 +5040,6 @@ RULES:
 
         # Keep background music present but under the voice. MAXIMA RETENCION
         # lowers it further so the faster narration remains crisp.
-        music_volume = (
-            MaxRetentionEngine.MUSIC_VOLUME
-            if is_max_retention(getattr(self, "_retention_mode", ""))
-            else 0.15
-        )
         random_song_clip = random_song_clip.fx(afx.volumex, music_volume)
         comp_audio = CompositeAudioClip([tts_clip.set_fps(44100), random_song_clip])
 
@@ -4379,13 +5206,13 @@ RULES:
         return path
 
     # ============================================================
-    #  LONG VIDEO PIPELINE (15-20 minutes, 16:9 landscape)
+    #  LONG VIDEO PIPELINE (15-16 minutes max, 16:9 landscape)
     # ============================================================
 
     def generate_long_script(self) -> str:
         """
-        Generates a structured long-form script for a 15-20 minute video
-        (~2700-3500 words at documentary narration speed).
+        Generates a structured long-form script for a 15-16 minute video
+        (~2000-2200 words at slow Spanish documentary narration speed).
 
         Two strategies, picked by active LLM provider:
           - Gemini Flash 2.5/3 â†’ SINGLE call (large output window handles 3000+ words).
@@ -4435,7 +5262,7 @@ RULES:
                         full = self._postprocess_long_script(full)
                         self.script = full
                         self._persist_long_script(full)
-                        info(f" => Generated long script: {len(full.split())} words (~{len(full.split()) // 165} min) (single-call attempt {attempt})")
+                        info(f" => Generated long script: {len(full.split())} words (~{len(full.split()) // LONG_VIDEO_ESTIMATED_WPM} min) (single-call attempt {attempt})")
                         return full
                     warning(f"   Single-call attempt {attempt}/{SINGLE_CALL_ATTEMPTS} returned only {word_count} words.")
                     if word_count > len(best_short.split()):
@@ -4455,7 +5282,7 @@ RULES:
         """
         Final sanity pass on a long script:
         - Strip any LLM preamble that survived per-call cleaning ("Por supuesto", "Claro,", etc).
-        - Cap total length to ~3700 words (â‰ˆ 22 min) to prevent 50-min runaways.
+        - Cap total length to ~2200 words (about 15-16 min) to prevent runaways.
         - Warn (not fail) if the first 200 words don't mention any topic keyword,
           which is a strong hint the LLM went off-topic.
         """
@@ -4472,8 +5299,8 @@ RULES:
                 break
             text = new
 
-        # Hard cap so we never exceed ~22 min of narration. Cut on a sentence boundary near the cap.
-        WORD_CAP = 3700
+        # Hard cap so we stay around 15-16 min of narration. Cut on a sentence boundary near the cap.
+        WORD_CAP = LONG_VIDEO_TARGET_MAX_WORDS
         words = text.split()
         if len(words) > WORD_CAP:
             warning(f"   Script {len(words)} words â†’ capping to ~{WORD_CAP} words.")
@@ -4529,7 +5356,7 @@ RULES:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(f"# Topic: {self.subject}\n")
                 f.write(f"# Words: {len(script.split())}\n")
-                f.write(f"# Estimated duration: ~{len(script.split()) // 165} min\n")
+                f.write(f"# Estimated duration: ~{len(script.split()) // LONG_VIDEO_ESTIMATED_WPM} min\n")
                 f.write("# " + ("=" * 60) + "\n\n")
                 f.write(script)
             info(f"   [Script] Saved to: {path}")
@@ -4538,7 +5365,7 @@ RULES:
 
     def _generate_long_script_single_call(self, lang: str, hook_style: str, hook_example: str) -> str:
         """
-        Ask the LLM for the entire 15-20 min script in one call.
+        Ask the LLM for the entire 15-16 min script in one call.
         Designed for high-output-window providers (Gemini Flash 2.5/3).
         """
         # Series-aware: when the active series defines a brief / themes, build
@@ -4560,7 +5387,7 @@ RULES:
                 self.niche,
             )
         sections_block = "\n\n".join(
-            f"[SECTION {i+1}: <tÃ­tulo corto descriptivo>]\n{theme}\n(10-14 oraciones, 250-350 palabras.)"
+            f"[SECTION {i+1}: <tÃ­tulo corto descriptivo>]\n{theme}\n(8-10 oraciones, 160-190 palabras.)"
             for i, theme in enumerate(themes)
         )
 
@@ -4576,7 +5403,7 @@ RULES:
         voice_block = NarrationVoice.long_generation_directive(lang)
 
         prompt = f"""Eres un narrador experto de documentales y guionista profesional especializado en RETENCIÃ“N: tu trabajo es que el espectador NO se vaya en los primeros 5 minutos y aguante hasta el final.
-Escribe un GUION COMPLETO de narraciÃ³n cautivador de 15 a 20 minutos sobre el siguiente tema.
+Escribe un GUION COMPLETO de narraciÃ³n cautivador de 15 a 16 minutos como mÃ¡ximo sobre el siguiente tema.
 
 Tema: {self.subject}
 {brief_block}
@@ -4590,7 +5417,7 @@ ARQUITECTURA DE RETENCIÃ“N â€” LEE ESTO ANTES DE EMPEZAR:
 
 ESTRUCTURA OBLIGATORIA (usa estos marcadores EXACTOS):
 [INTRO]
-Cold open de impacto (5-7 oraciones, 130-180 palabras). NO incluyas invitaciÃ³n al like aquÃ­. Estructura interna:
+Cold open de impacto (5-6 oraciones, 100-130 palabras). NO incluyas invitaciÃ³n al like aquÃ­. Estructura interna:
 1. PRIMERA ORACIÃ“N â€” gancho cinematogrÃ¡fico siguiendo EXACTAMENTE este estilo: {hook_style}.
    Ejemplo del estilo (adapta a {lang} y al tema, no copies literal): {hook_example}
    No defaultees a "SabÃ­as que..." ni a "Imagina que...". El estilo de arriba es obligatorio.
@@ -4601,10 +5428,10 @@ Cold open de impacto (5-7 oraciones, 130-180 palabras). NO incluyas invitaciÃ³
 {sections_block}
 
 [CLOSING]
-ConclusiÃ³n memorable (5-7 oraciones, 120-180 palabras). Termina con una reflexiÃ³n que perdure.
+ConclusiÃ³n memorable (4-5 oraciones, 80-110 palabras). Termina con una reflexiÃ³n que perdure.
 
 [OUTRO]
-Despedida cÃ¡lida y llamado a la acciÃ³n para los Ãºltimos segundos del video, cuando aparecen las pantallas finales de YouTube (suscribirse, video recomendado). Dura 3-5 oraciones (60-100 palabras).
+Despedida cÃ¡lida y llamado a la acciÃ³n para los Ãºltimos segundos del video, cuando aparecen las pantallas finales de YouTube (suscribirse, video recomendado). Dura 3-4 oraciones (40-60 palabras).
 DEBE incluir, redactado de forma natural y orgÃ¡nica:
 1. Agradecer al espectador por haber visto el video.
 2. Pedir que dÃ© "me gusta" si le gustÃ³.
@@ -4617,7 +5444,7 @@ REGLAS DE ESTILO:
 - Cada oraciÃ³n fluye naturalmente hacia la siguiente.
 - Usa preguntas retÃ³ricas, comparaciones sorprendentes y ganchos emocionales.
 - Oraciones CORTAS (mÃ¡ximo 20 palabras cada una).
-- TOTAL OBLIGATORIO: entre 2700 y 3500 palabras.
+- TOTAL OBLIGATORIO: entre {LONG_VIDEO_TARGET_MIN_WORDS} y {LONG_VIDEO_TARGET_MAX_WORDS} palabras. Nunca pases de {LONG_VIDEO_TARGET_MAX_WORDS} palabras.
 - Cada secciÃ³n debe aportar material NUEVO, no repetir.
 - ESCRIBE TODO EN {lang}. NO uses inglÃ©s.
 - NO markdown, NO viÃ±etas, NO listas numeradas.
@@ -4702,14 +5529,14 @@ REGLAS DE ESTILO:
             return text
 
         parts: List[str] = []
-        info(f" [Script] Building 15-20 min script section by section...")
+        info(f" [Script] Building 15-16 min script section by section...")
 
         # ---- INTRO â€” cold open + open loops (NO like-ask here) ----
         intro_prompt = f"""Eres un narrador experto de documentales especializado en RETENCIÃ“N. Escribe SOLO la INTRODUCCIÃ“N de un guion documental sobre: {self.subject}
 {brief_block}{retention_block}{voice_block}
-OBJETIVO DE LA INTRO: enganchar al espectador en los primeros 30 segundos para que aguante los 20 minutos. NO menciones "me gusta" ni "like" â€” esa invitaciÃ³n va en otra secciÃ³n posterior, NUNCA aquÃ­.
+OBJETIVO DE LA INTRO: enganchar al espectador en los primeros 30 segundos para que se quede hasta el final. NO menciones "me gusta" ni "like" â€” esa invitaciÃ³n va en otra secciÃ³n posterior, NUNCA aquÃ­.
 
-ESTRUCTURA OBLIGATORIA (5-7 oraciones, 130-180 palabras):
+ESTRUCTURA OBLIGATORIA (5-6 oraciones, 100-130 palabras):
 1. PRIMERA ORACIÃ“N â€” gancho cinematogrÃ¡fico que siga EXACTAMENTE este estilo: {hook_style}.
    Ejemplo del estilo (adapta al tema y a {lang}, NO copies literal): {hook_example}
    No defaultees a "SabÃ­as que..." ni a "Imagina que...". El estilo descrito es OBLIGATORIO.
@@ -4781,7 +5608,7 @@ Esto es lo Ãºltimo que ya se narrÃ³ (NO lo repitas, continÃºa el flujo nat
 
 Escribe SOLO la SECCIÃ“N {i}:
 - ROL NARRATIVO de esta secciÃ³n: {theme}
-- 10-14 oraciones (250-350 palabras).
+- 8-10 oraciones (160-190 palabras).
 - Lenguaje vÃ­vido y sensorial. Oraciones CORTAS (mÃ¡ximo 20 palabras).
 - Aporta material NUEVO, no repitas ideas ya dichas.
 - ESCRIBE TODO EN {lang}. NO uses inglÃ©s.
@@ -4792,7 +5619,7 @@ Escribe SOLO la SECCIÃ“N {i}:
 - AÃ‘O vs DURACIÃ“N â€” distÃ­nguelos siempre. Un AÃ‘O es una FECHA del calendario; una DURACIÃ“N es el tiempo transcurrido. Son cosas distintas. Para citar un aÃ±o, di "el aÃ±o <aÃ±o>". La fÃ³rmula "hace <N> aÃ±os" expresa SOLO duraciÃ³n: <N> es la diferencia entre el aÃ±o actual y el aÃ±o del evento, NO es el aÃ±o mismo. Ante la duda, nombra el aÃ±o ("el aÃ±o X") y NO uses la fÃ³rmula "hace X aÃ±os".
 - Devuelve SOLO el texto de la secciÃ³n, precedido EXACTAMENTE por una lÃ­nea con: [SECTION {i}: <tÃ­tulo breve descriptivo>]
 """
-            section = _ensure_marker(_ask_section(section_prompt, min_words=180), f"[SECTION {i}: parte {i}]")
+            section = _ensure_marker(_ask_section(section_prompt, min_words=160), f"[SECTION {i}: parte {i}]")
             parts.append(section)
             info(f"   [Script] SECTION {i}: {len(section.split())} words")
 
@@ -4807,7 +5634,7 @@ Esto es lo Ãºltimo que se narrÃ³:
 \"\"\"
 
 Escribe SOLO el CIERRE:
-- 5-7 oraciones (120-180 palabras).
+- 4-5 oraciones (80-110 palabras).
 - ConclusiÃ³n memorable. Termina con una reflexiÃ³n que se quede con el espectador.
 - Lenguaje vÃ­vido. Oraciones CORTAS (mÃ¡ximo 20 palabras).
 - ESCRIBE TODO EN {lang}. NO uses inglÃ©s.
@@ -4834,7 +5661,7 @@ Esto es lo Ãºltimo que se narrÃ³:
 
 Escribe SOLO la DESPEDIDA, pensada para los Ãºltimos segundos del video cuando aparecen las pantallas finales de YouTube (suscribirse, video recomendado).
 
-ESTRUCTURA OBLIGATORIA (3-5 oraciones, 60-100 palabras), redactada de forma natural y orgÃ¡nica como si la dijeras hablando con calidez (NO bullets, NO suene robÃ³tico):
+ESTRUCTURA OBLIGATORIA (3-4 oraciones, 40-60 palabras), redactada de forma natural y orgÃ¡nica como si la dijeras hablando con calidez (NO bullets, NO suene robÃ³tico):
 1. Agradece al espectador por haber visto el video.
 2. PÃ­dele que dÃ© "me gusta" si le gustÃ³.
 3. PÃ­dele que se SUSCRIBA al canal y active la CAMPANITA para no perderse contenido similar.
@@ -4859,7 +5686,7 @@ REGLAS:
         if not full or word_count < 600:
             raise RuntimeError(f"Failed to generate long script (only {word_count} words)")
 
-        info(f" => Sectional script built: {word_count} words (~{word_count // 165} min)")
+        info(f" => Sectional script built: {word_count} words (~{word_count // LONG_VIDEO_ESTIMATED_WPM} min)")
         return full
 
     def generate_long_metadata(self) -> dict:
@@ -5907,7 +6734,7 @@ No markdown. No explanation. Just the JSON array."""
     def combine_long(self) -> str:
         """
         Combines images and audio into a long-form 16:9 landscape video.
-        No subtitles, cinematic Ken Burns effect (slow zoom/pan), smooth transitions.
+        Cinematic Ken Burns effect, smooth transitions, and optional karaoke subtitles.
         """
         combined_path = os.path.join(get_video_cache_path(), str(uuid4()) + ".mp4")
         threads = get_threads()
@@ -5922,9 +6749,6 @@ No markdown. No explanation. Just the JSON array."""
             raise FileNotFoundError("No valid images found")
         self.images = valid_images
 
-        clips = []
-        tot_dur = 0
-        clip_idx = 0
         n_total = len(self.images)
 
         # Compensate req_dur for the crossfade overlap so the VISIBLE duration matches
@@ -5934,28 +6758,46 @@ No markdown. No explanation. Just the JSON array."""
         # Also reserve EXTRA_TAIL extra seconds on the last clip so it can fade out gracefully.
         CROSSFADE_DUR = 0.8
         EXTRA_TAIL = 1.5  # the last clip lingers 1.5s for the fade-out
-        overlap_total = CROSSFADE_DUR * (n_total - 1) if n_total > 1 else 0
-        req_dur = (max_duration + overlap_total + EXTRA_TAIL) / n_total
+        durations = self._long_clip_durations(n_total, max_duration, CROSSFADE_DUR, EXTRA_TAIL)
+        target_visual_duration = max_duration + EXTRA_TAIL
+        total_dur = target_visual_duration
+
+        random_song = choose_random_song(getattr(self, "subject", ""))
+        if is_soundimage_track(random_song):
+            self._append_music_attribution(MATYAS_ATTRIBUTION)
+
+        try:
+            print(colored("[+] Rendering long video with ffmpeg...", "blue"), flush=True)
+            t_phase = time.time()
+            self._write_long_with_ffmpeg(
+                output_path=combined_path,
+                image_paths=self.images,
+                durations=durations,
+                random_song=random_song,
+                fps=24,
+                crossfade=CROSSFADE_DUR,
+                karaoke_enabled=bool(getattr(self, "word_timestamps", None)),
+                music_volume=0.10,
+                audio_duration=max_duration,
+                total_duration=total_dur,
+                extra_tail=EXTRA_TAIL,
+                threads=threads,
+            )
+            print(colored(f"    [Render] done in {time.time() - t_phase:.1f}s", "green"), flush=True)
+            print(colored(f"[+] Total combine_long: {time.time() - t_total:.1f}s", "blue"), flush=True)
+            tts_clip.close()
+            success(f'Wrote long video to "{combined_path}"')
+            return combined_path
+        except Exception as e:
+            warning(f"FFmpeg long render failed, falling back to MoviePy: {e}")
 
         t_phase = time.time()
-        from itertools import cycle
-        # Safety cap so a malformed image list (e.g. one image looping with tiny req_dur)
-        # cannot spin forever; in practice the clip_dur < 0.5 break exits well before this.
-        max_iterations = max(n_total * 4, 200)
-        target_total = max_duration + overlap_total + EXTRA_TAIL
-        for iteration, image_path in enumerate(cycle(self.images)):
-            if iteration >= max_iterations:
-                warning(f"    [Build] safety cap hit at {iteration} iterations; stopping.")
-                break
-            if tot_dur >= target_total - 0.01:  # float-tolerant termination
-                break
-
-            clip_dur = min(req_dur, target_total - tot_dur)
+        clips = []
+        for clip_idx, (image_path, clip_dur) in enumerate(zip(self.images, durations), start=1):
             if clip_dur < 0.5:
                 break
 
             try:
-                clip_idx += 1
                 print(colored(f"    [Build] Clip {clip_idx}/{n_total} ({clip_dur:.1f}s)...", "cyan"), flush=True)
                 img_clip = ImageClip(image_path).set_duration(clip_dur)
 
@@ -5981,7 +6823,6 @@ No markdown. No explanation. Just the JSON array."""
 
                 img_clip = img_clip.set_fps(24)
                 clips.append(img_clip)
-                tot_dur += clip_dur
 
             except Exception as e:
                 if get_verbose():
@@ -6027,13 +6868,7 @@ No markdown. No explanation. Just the JSON array."""
         # Audio: TTS + background music
         print(colored("[+] Mixing audio...", "blue"), flush=True)
         t_phase = time.time()
-        random_song = choose_random_song(getattr(self, "subject", ""))
-        if is_soundimage_track(random_song):
-            self._append_music_attribution(MATYAS_ATTRIBUTION)
         music_clip = AudioFileClip(random_song).set_fps(44100)
-
-        # Total audio runs slightly past the narration so the closing fade has music under it.
-        total_dur = max_duration + EXTRA_TAIL
 
         # Loop music if shorter than the full timeline (narration + fade tail)
         if music_clip.duration < total_dur:
@@ -6057,15 +6892,11 @@ No markdown. No explanation. Just the JSON array."""
 
         print(colored("[+] Rendering long video (ffmpeg)...", "blue"), flush=True)
         t_phase = time.time()
-        final_clip.write_videofile(
+        self._write_videofile_with_fallback(
+            final_clip,
             combined_path,
             threads=threads,
             fps=24,
-            codec="libx264",
-            audio_codec="aac",
-            preset="ultrafast",
-            audio=True,
-            logger="bar",
         )
         print(colored(f"    [Render] done in {time.time() - t_phase:.1f}s", "green"), flush=True)
         print(colored(f"[+] Total combine_long: {time.time() - t_total:.1f}s", "blue"), flush=True)
@@ -6099,7 +6930,7 @@ No markdown. No explanation. Just the JSON array."""
 
     def _generate_long_video_inner(self, tts_instance: TTS, custom_topic: str = "") -> str:
         """
-        Full pipeline for generating a long-form YouTube video (15-20 minutes).
+        Full pipeline for generating a long-form YouTube video (15-16 minutes max).
         16:9 landscape, documentary style, no subtitles.
 
         Args:
@@ -7015,6 +7846,7 @@ No markdown. No explanation. Just the JSON array."""
             "Publish anyway",
             "Publicar de todos modos",
             "Publicar igualmente",
+            "Publicar de todas formas",
         )
         text_predicates = " or ".join(
             f"normalize-space(.)='{label}'" for label in publish_anyway_labels
