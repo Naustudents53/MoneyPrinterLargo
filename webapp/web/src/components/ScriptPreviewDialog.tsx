@@ -68,10 +68,15 @@ export function ScriptPreviewDialog({
   const [originalScript, setOriginalScript] = useState("");
   const [voiceLoading, setVoiceLoading] = useState(false);
   const [voiceUrl, setVoiceUrl] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const logBoxRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previewIdRef = useRef<string | null>(null);
+  const jobIdRef = useRef<string | null>(null);
+  const logsRef = useRef<string[]>([]);
+  const reconnectAttemptsRef = useRef(0);
   const doneRef = useRef(false);
 
   useEffect(() => {
@@ -84,6 +89,7 @@ export function ScriptPreviewDialog({
   useEffect(() => {
     if (!open || !sseUrl) return;
     setLogs([]);
+    logsRef.current = [];
     setPreviewId(null);
     previewIdRef.current = null;
     doneRef.current = false;
@@ -91,73 +97,137 @@ export function ScriptPreviewDialog({
     setScript("");
     setVoiceUrl(null);
     setVoiceLoading(false);
+    setJobId(null);
+    setCancelling(false);
+    jobIdRef.current = null;
+    reconnectAttemptsRef.current = 0;
     setPhase("running");
 
-    const es = new EventSource(sseUrl);
-    esRef.current = es;
+    const append = (line: string) => {
+      setLogs((prev) => {
+        const next = prev.length > 1500 ? [...prev.slice(-1000), line] : [...prev, line];
+        logsRef.current = next;
+        return next;
+      });
+    };
 
-    const append = (line: string) =>
-      setLogs((prev) => (prev.length > 1500 ? [...prev.slice(-1000), line] : [...prev, line]));
+    const loadPreview = async (id: string) => {
+      const data = await api.readPreview(id);
+      setSubject(data.subject);
+      setScript(data.script);
+      setOriginalSubject(data.subject);
+      setOriginalScript(data.script);
+      setPhase("ready");
+    };
 
-    es.addEventListener("start", () => {
-      append("──── preview iniciado ────");
-    });
-    es.addEventListener("log", (ev) => {
-      try {
-        const data = JSON.parse((ev as MessageEvent).data);
-        const line: string = data.line ?? "";
-        // Capture the id printed by run_job.py:cmd_preview_script.
-        const m = /PREVIEW_ID=([A-Za-z0-9]+)/.exec(line);
-        if (m) {
-          previewIdRef.current = m[1];
-          setPreviewId(m[1]);
+    const resolvePreviewId = () => {
+      if (previewIdRef.current) return previewIdRef.current;
+      const joined = logsRef.current.join(" ");
+      const m = /PREVIEW_ID=([A-Za-z0-9]+)/.exec(joined);
+      return m?.[1] || "";
+    };
+
+    let reconnectTimer: number | undefined;
+
+    const connect = (url: string, replay = false) => {
+      const stream = new EventSource(url);
+      esRef.current = stream;
+
+      stream.addEventListener("start", (ev) => {
+        try {
+          const data = JSON.parse((ev as MessageEvent).data);
+          if (data.job_id) {
+            jobIdRef.current = data.job_id;
+            setJobId(data.job_id);
+          }
+        } catch {
+          // Older streams may not include JSON metadata.
         }
-        append(line);
-      } catch {
-        append((ev as MessageEvent).data);
-      }
-    });
-    es.addEventListener("done", async () => {
+        append(replay ? "──── stream reconectado ────" : "──── preview iniciado ────");
+      });
+
+      stream.addEventListener("log", (ev) => {
+        try {
+          const data = JSON.parse((ev as MessageEvent).data);
+          const line: string = data.line ?? "";
+          const m = /PREVIEW_ID=([A-Za-z0-9]+)/.exec(line);
+          if (m) {
+            previewIdRef.current = m[1];
+            setPreviewId(m[1]);
+          }
+          append(line);
+        } catch {
+          append((ev as MessageEvent).data);
+        }
+      });
+
+      stream.addEventListener("done", async () => {
       doneRef.current = true;
       append("──── completado ✅ ────");
-      es.close();
-      // Re-read the latest previewId from state via closure — but state may
-      // not have flushed yet in the same tick. Pull it from the logs as a
-      // fallback so we never miss it.
-      const idFromState = previewIdRef.current || previewId;
-      let id = idFromState;
-      if (!id) {
-        const joined = logs.concat([" "]).join(" ");
-        const m = /PREVIEW_ID=([A-Za-z0-9]+)/.exec(joined);
-        if (m) id = m[1];
-      }
+      stream.close();
+      let id = resolvePreviewId();
       if (!id) {
         toast.error("No se obtuvo el id del preview");
         setPhase("error");
         return;
       }
       try {
-        const data = await api.readPreview(id);
-        setSubject(data.subject);
-        setScript(data.script);
-        setOriginalSubject(data.subject);
-        setOriginalScript(data.script);
-        setPhase("ready");
+        await loadPreview(id);
       } catch (e) {
         toast.error("No se pudo leer el preview: " + (e as Error).message);
         setPhase("error");
       }
-    });
-    es.addEventListener("error", () => {
-      if (doneRef.current) return;
-      append("──── error ❌ ────");
-      setPhase("error");
-      es.close();
-      toast.error("Falló la generación del preview");
-    });
+      });
+
+      stream.addEventListener("error", async (ev) => {
+        if (doneRef.current) return;
+
+        const maybeMessage = ev as MessageEvent;
+        if (typeof maybeMessage.data === "string" && maybeMessage.data) {
+          try {
+            const payload = JSON.parse(maybeMessage.data);
+            append(`──── proceso terminó con error (rc ${payload.rc ?? "?"}) ❌ ────`);
+          } catch {
+            append("──── proceso terminó con error ❌ ────");
+          }
+          stream.close();
+          const id = resolvePreviewId();
+          if (id) {
+            try {
+              await loadPreview(id);
+              toast.warning("El proceso terminó con error, pero el preview quedó disponible.");
+              return;
+            } catch {
+              // Fall through to the visible error state.
+            }
+          }
+          setPhase("error");
+          toast.error("Falló la generación del preview");
+          return;
+        }
+
+        stream.close();
+        const id = jobIdRef.current;
+        if (id && reconnectAttemptsRef.current < 4) {
+          reconnectAttemptsRef.current += 1;
+          append(`──── stream interrumpido; reconectando (${reconnectAttemptsRef.current}/4) ────`);
+          reconnectTimer = window.setTimeout(() => {
+            connect(api.jobStreamUrl(id), true);
+          }, 900);
+          return;
+        }
+
+        append("──── error de conexión ❌ ────");
+        setPhase("error");
+        toast.error("Se perdió la conexión con el preview");
+      });
+    };
+
+    connect(sseUrl);
 
     return () => {
-      es.close();
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      esRef.current?.close();
       esRef.current = null;
     };
     // We intentionally exclude `previewId` and `logs` from deps so the SSE
@@ -177,8 +247,13 @@ export function ScriptPreviewDialog({
       esRef.current = null;
       setPhase("idle");
       setLogs([]);
+      logsRef.current = [];
       setPreviewId(null);
       previewIdRef.current = null;
+      setJobId(null);
+      jobIdRef.current = null;
+      reconnectAttemptsRef.current = 0;
+      setCancelling(false);
       doneRef.current = false;
       setSubject("");
       setScript("");
@@ -186,6 +261,24 @@ export function ScriptPreviewDialog({
       setVoiceLoading(false);
     }
   }, [open]);
+
+  const cancelPreview = async () => {
+    const id = jobIdRef.current || jobId;
+    setCancelling(true);
+    try {
+      if (id) {
+        await api.stopJob(id);
+        toast.message("Preview cancelado");
+      }
+      esRef.current?.close();
+      esRef.current = null;
+      setPhase("idle");
+      onOpenChange(false);
+    } catch (e) {
+      toast.error("No se pudo cancelar: " + (e as Error).message);
+      setCancelling(false);
+    }
+  };
 
   const approve = async () => {
     if (!previewId) {
@@ -274,7 +367,7 @@ export function ScriptPreviewDialog({
     .filter((s) => s.length > 0).length;
 
   return (
-    <Dialog open={open} onOpenChange={(o) => (phase === "running" || phase === "saving" ? null : onOpenChange(o))}>
+    <Dialog open={open} onOpenChange={(o) => (phase === "running" || phase === "saving" || cancelling ? null : onOpenChange(o))}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
           <div className="flex items-center justify-between gap-4">
@@ -402,14 +495,29 @@ export function ScriptPreviewDialog({
               <Loader2 className="h-3.5 w-3.5 animate-spin" /> Guardando…
             </Button>
           )}
-          {(phase === "running" || phase === "error" || phase === "idle") && (
+          {phase === "running" && (
+            <Button
+              variant="destructive"
+              size="sm"
+              className="gap-2"
+              disabled={cancelling}
+              onClick={cancelPreview}
+            >
+              {cancelling ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <XCircle className="h-3.5 w-3.5" />
+              )}
+              {cancelling ? "Cancelando" : "Cancelar"}
+            </Button>
+          )}
+          {(phase === "error" || phase === "idle") && (
             <Button
               variant="outline"
               size="sm"
-              disabled={phase === "running"}
               onClick={() => onOpenChange(false)}
             >
-              {phase === "running" ? "Espera…" : "Cerrar"}
+              Cerrar
             </Button>
           )}
         </DialogFooter>

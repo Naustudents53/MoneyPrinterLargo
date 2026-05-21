@@ -42,6 +42,10 @@ def _preview_script_path(preview_id: str) -> str:
     return os.path.join(get_temp_cache_path(), f".preview-{preview_id}.txt")
 
 
+def _disabled_text_generator(_prompt: str, temperature: float = 0.7) -> str:
+    raise RuntimeError("LLM disabled by --no-llm")
+
+
 def _channel_ref_paths(channel_id: str) -> list[str]:
     return [
         os.path.join(get_video_cache_path(), f"{channel_id}{_CHANNEL_REF_SUFFIX}"),
@@ -635,6 +639,64 @@ def cmd_preview_script(args):
     print(f"[runner] DONE — {len(script)} chars in script", flush=True)
 
 
+def cmd_long_script_preview(args):
+    """Convert a saved long-script .txt into an editable Short preview.
+
+    The output format matches cmd_preview_script: a .preview-<id>.txt file
+    containing subject + script, plus a PREVIEW_ID line for the web UI.
+    """
+    from classes.LongScriptShortener import (
+        ShortenOptions,
+        shorten_long_script,
+        write_short_script_files,
+    )
+
+    input_path = Path(args.input)
+    if not input_path.is_absolute():
+        input_path = ROOT_DIR / input_path
+    if not input_path.is_file():
+        print(f"[runner] ERROR: long script file not found: {input_path}", flush=True)
+        sys.exit(2)
+
+    print(f"[runner] Long script source: {input_path.name}", flush=True)
+    print(f"[runner] Target Short duration: {args.duration}s", flush=True)
+
+    try:
+        raw = input_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        print(f"[runner] ERROR: could not read long script: {e}", flush=True)
+        sys.exit(2)
+
+    options = ShortenOptions(
+        duration_seconds=args.duration,
+        language=args.language,
+        topic=args.topic,
+        temperature=args.temperature,
+        allow_fallback=not args.no_fallback,
+    )
+    text_generator = _disabled_text_generator if args.no_llm else None
+
+    try:
+        result = shorten_long_script(raw, options, text_generator=text_generator)
+        written = write_short_script_files(result, preview=True, root_dir=ROOT_DIR)
+    except Exception as e:
+        print(
+            f"[runner] ERROR: could not create Short preview: {type(e).__name__}: {e}",
+            flush=True,
+        )
+        sys.exit(3)
+
+    mode = "LLM" if result.used_llm else "fallback"
+    print(f"[runner] Subject: {result.topic}", flush=True)
+    print(
+        f"[runner] Short script ready: {result.sentence_count}/{result.sentence_target} "
+        f"sentences, {result.word_count}/{result.word_target} words, mode={mode}",
+        flush=True,
+    )
+    print(f"[runner] PREVIEW_ID={written.preview_id}", flush=True)
+    print("[runner] DONE", flush=True)
+
+
 def cmd_preview_voice(args):
     """Generate only the narration audio from an existing preview script."""
     from cache import get_accounts
@@ -990,6 +1052,21 @@ def main():
     p_pv.add_argument("--hook-style", default="")
     p_pv.add_argument("--retention-mode", choices=["standard", "maxima_retencion"], default="")
 
+    p_lsp = sub.add_parser("long-script-preview")
+    p_lsp.add_argument("--input", required=True)
+    p_lsp.add_argument("--duration", type=int, choices=[60, 120, 180], default=60)
+    p_lsp.add_argument("--language", default="espanol")
+    p_lsp.add_argument("--topic", default="")
+    p_lsp.add_argument("--temperature", type=float, default=0.72)
+    p_lsp.add_argument("--llm-provider", default="")
+    p_lsp.add_argument("--llm-model", default="")
+    p_lsp.add_argument("--llm-reasoning-effort", default="",
+                       help="OpenAI/Codex thinking level: low, medium, high, xhigh.")
+    p_lsp.add_argument("--no-llm", action="store_true",
+                       help="Skip the LLM and use the local extractive fallback.")
+    p_lsp.add_argument("--no-fallback", action="store_true",
+                       help="Fail if the LLM cannot produce a Short script.")
+
     p_voice = sub.add_parser("preview-voice")
     p_voice.add_argument("--channel-id", required=True)
     p_voice.add_argument("--kind", choices=["short", "long"], default="short")
@@ -1022,7 +1099,7 @@ def main():
     args = parser.parse_args()
 
     _setup_paths()
-    if args.cmd not in ("thumbnail", "preview-voice"):
+    if args.cmd not in ("thumbnail", "preview-voice") and not getattr(args, "no_llm", False):
         _apply_openai_reasoning_effort(getattr(args, "llm_reasoning_effort", "") or "")
         if args.cmd == "generate":
             _apply_image_provider(getattr(args, "image_provider", "") or "")
@@ -1042,6 +1119,8 @@ def main():
         cmd_generate(args)
     elif args.cmd == "preview-script":
         cmd_preview_script(args)
+    elif args.cmd == "long-script-preview":
+        cmd_long_script_preview(args)
     elif args.cmd == "preview-voice":
         cmd_preview_voice(args)
     elif args.cmd == "upload-last":

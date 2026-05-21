@@ -15,6 +15,8 @@ import {
   Youtube,
   Music2,
   Facebook,
+  FileText,
+  RefreshCw,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
@@ -32,6 +34,7 @@ import {
   type Channel,
   type HookProfile,
   type ImageProvider,
+  type LongScriptFile,
   type LLMProvider,
   type LLMModel,
   type OpenAIReasoningEffort,
@@ -97,6 +100,9 @@ export function Generate() {
   const [channelId, setChannelId] = useState(presetChannel);
   const [kind, setKind] = useState<"short" | "long">("short");
   const [topic, setTopic] = useState("");
+  const [longScripts, setLongScripts] = useState<LongScriptFile[]>([]);
+  const [longScriptsLoading, setLongScriptsLoading] = useState(false);
+  const [selectedLongScriptId, setSelectedLongScriptId] = useState("");
   const [imageMode, setImageMode] = useState<VisualSource>("ai");
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
@@ -151,6 +157,7 @@ export function Generate() {
   // so the renderer skips re-generating the script.
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewSseUrl, setPreviewSseUrl] = useState<string | null>(null);
+  const [previewSource, setPreviewSource] = useState<"generated" | "long-script">("generated");
 
   // Batch generation — pop a dialog that lets the user queue jobs across
   // multiple channels in one shot. Independent of the single-job flow above.
@@ -175,6 +182,13 @@ export function Generate() {
     api
       .listLLMModels()
       .then((d) => setLlmCatalog(d.models ?? []))
+      .catch(() => {});
+    api
+      .listLongScripts()
+      .then((items) => {
+        setLongScripts(items ?? []);
+        setSelectedLongScriptId((current) => current || items?.[0]?.id || "");
+      })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -213,6 +227,10 @@ export function Generate() {
     () => channels.find((c) => c.id === channelId),
     [channels, channelId],
   );
+  const selectedLongScript = useMemo(
+    () => longScripts.find((item) => item.id === selectedLongScriptId),
+    [longScripts, selectedLongScriptId],
+  );
 
   // Filter series to those belonging to the selected channel — when the API
   // doesn't expose a channel link on series, fall back to all series.
@@ -249,6 +267,22 @@ export function Generate() {
       return uploaded.id;
     } finally {
       setUploadingPhotos(false);
+    }
+  };
+
+  const refreshLongScripts = async () => {
+    setLongScriptsLoading(true);
+    try {
+      const items = await api.listLongScripts();
+      setLongScripts(items ?? []);
+      setSelectedLongScriptId((current) =>
+        items.some((item) => item.id === current) ? current : items[0]?.id || "",
+      );
+      if (!items.length) toast.info("No encontré scripts largos en .mp/tmp");
+    } catch (e) {
+      toast.error(`No pude leer los scripts largos: ${(e as Error).message}`);
+    } finally {
+      setLongScriptsLoading(false);
     }
   };
 
@@ -341,6 +375,32 @@ export function Generate() {
       duration_seconds: shortDuration,
       retention_mode: retentionMode,
     });
+    setPreviewSource("generated");
+    setPreviewSseUrl(url);
+    setPreviewOpen(true);
+  };
+
+  const startLongScriptPreview = () => {
+    if (!channelId) {
+      toast.error("Selecciona un canal");
+      return;
+    }
+    if (kind !== "short") {
+      toast.error("El resumen desde guion largo solo genera Shorts");
+      return;
+    }
+    if (!selectedLongScript) {
+      toast.error("Selecciona un script largo");
+      return;
+    }
+    const url = api.longScriptPreviewUrl(selectedLongScript.id, {
+      channel_id: channelId,
+      duration_seconds: shortDuration,
+      llm_provider: llmProvider || undefined,
+      llm_model: llmProvider && llmModel ? llmModel : undefined,
+      llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
+    });
+    setPreviewSource("long-script");
     setPreviewSseUrl(url);
     setPreviewOpen(true);
   };
@@ -595,6 +655,18 @@ export function Generate() {
                     )}
                   </div>
                 </Field>
+                {kind === "short" && (
+                  <LongScriptShortPanel
+                    scripts={longScripts}
+                    selectedId={selectedLongScriptId}
+                    selected={selectedLongScript}
+                    loading={longScriptsLoading}
+                    onSelect={setSelectedLongScriptId}
+                    onRefresh={refreshLongScripts}
+                    onPreview={startLongScriptPreview}
+                    disabled={!channelId}
+                  />
+                )}
                 {kind === "long" && channelSeries.length > 0 && (
                   <Field label="Serie (opcional)">
                     <Segmented
@@ -1030,7 +1102,7 @@ export function Generate() {
         retentionMode={retentionMode}
         sseUrl={previewSseUrl}
         onApprove={onPreviewApproved}
-        onRegenerate={startPreview}
+        onRegenerate={previewSource === "long-script" ? startLongScriptPreview : startPreview}
       />
 
       <BatchGenerateDialog
@@ -1074,6 +1146,120 @@ function GenerateMetric({
       </div>
     </div>
   );
+}
+
+function LongScriptShortPanel({
+  scripts,
+  selectedId,
+  selected,
+  loading,
+  onSelect,
+  onRefresh,
+  onPreview,
+  disabled,
+}: {
+  scripts: LongScriptFile[];
+  selectedId: string;
+  selected?: LongScriptFile;
+  loading: boolean;
+  onSelect: (id: string) => void;
+  onRefresh: () => void;
+  onPreview: () => void;
+  disabled?: boolean;
+}) {
+  const options = scripts.length
+    ? scripts.map((script) => ({
+        value: script.id,
+        label: script.topic || script.name,
+      }))
+    : [{ value: "", label: "Sin scripts en .mp/tmp" }];
+
+  return (
+    <div
+      className="rounded-[10px] px-3 py-3 flex flex-col gap-2.5"
+      style={{
+        background: "hsl(var(--background))",
+        border: "1px solid hsl(var(--border) / .07)",
+      }}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+          <FileText className="h-3.5 w-3.5" strokeWidth={1.7} />
+          <span>Guion largo</span>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground disabled:opacity-50"
+          style={{
+            border: "1px solid hsl(var(--border) / .08)",
+            background: "hsl(var(--bg-raised) / .45)",
+          }}
+          title="Actualizar scripts"
+        >
+          <RefreshCw
+            className={cn("h-3.5 w-3.5", loading && "animate-spin")}
+            strokeWidth={1.7}
+          />
+        </button>
+      </div>
+      <SelectMini
+        value={selectedId}
+        onChange={onSelect}
+        options={options}
+        icon={<FileText className="h-3 w-3" strokeWidth={1.5} />}
+      />
+      <div
+        className="min-h-[58px] rounded-lg px-2.5 py-2 text-[11.5px] leading-relaxed"
+        style={{
+          background: "hsl(var(--bg-raised) / .45)",
+          border: "1px solid hsl(var(--border) / .06)",
+        }}
+      >
+        {selected ? (
+          <>
+            <div className="line-clamp-2 text-foreground">{selected.topic}</div>
+            <div className="mt-1 font-mono text-[10.5px] text-muted-foreground">
+              {formatLongScriptMeta(selected)}
+            </div>
+          </>
+        ) : (
+          <div className="text-muted-foreground">No hay scripts largos guardados.</div>
+        )}
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-9 gap-2"
+        onClick={onPreview}
+        disabled={disabled || loading || !selected}
+        title="Crear preview editable desde el guion seleccionado"
+      >
+        <Sparkles className="h-3.5 w-3.5" />
+        Resumir a Short
+      </Button>
+    </div>
+  );
+}
+
+function formatLongScriptMeta(script: LongScriptFile) {
+  const parts = [];
+  if (script.words) parts.push(`${script.words.toLocaleString("es")} palabras`);
+  if (script.estimated_duration) parts.push(script.estimated_duration);
+  parts.push(formatShortDate(script.mtime));
+  return parts.join(" · ");
+}
+
+function formatShortDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("es", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function TrackHeader({

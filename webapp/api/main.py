@@ -242,6 +242,16 @@ class PhotoPromptGenerateRequest(BaseModel):
     retention_mode: str = "standard"
 
 
+class LongScriptFileOut(BaseModel):
+    id: str
+    name: str
+    topic: str
+    words: int | None = None
+    estimated_duration: str = ""
+    size_bytes: int
+    mtime: str
+
+
 class ConfigPatch(BaseModel):
     data: dict[str, Any]
 
@@ -256,6 +266,45 @@ def _read_youtube_raw() -> dict:
         return {"accounts": []}
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f) or {"accounts": []}
+
+
+_LONG_SCRIPT_NAME_RE = re.compile(r"script_[A-Za-z0-9_.-]+\.txt$")
+
+
+def _safe_long_script_path(script_name: str) -> Path:
+    name = Path(script_name or "").name
+    if not name or name != script_name or not _LONG_SCRIPT_NAME_RE.fullmatch(name):
+        raise HTTPException(400, "Invalid long script file")
+    path = TEMP_DIR / name
+    if not path.is_file():
+        raise HTTPException(404, "Long script not found")
+    return path
+
+
+def _long_script_entry(path: Path) -> dict:
+    try:
+        stat = path.stat()
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        raise HTTPException(500, f"Could not read long script {path.name}: {e}") from e
+
+    from classes.LongScriptShortener import parse_long_script_text
+
+    document = parse_long_script_text(raw)
+    words_raw = document.metadata.get("words", "").replace(",", "").strip()
+    try:
+        words = int(words_raw) if words_raw else None
+    except ValueError:
+        words = None
+    return {
+        "id": path.name,
+        "name": path.name,
+        "topic": document.topic or path.stem,
+        "words": words,
+        "estimated_duration": document.metadata.get("estimated duration", ""),
+        "size_bytes": stat.st_size,
+        "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+    }
 
 
 def _write_youtube_raw(data: dict) -> None:
@@ -1614,6 +1663,62 @@ def generate_photo_prompts(payload: PhotoPromptGenerateRequest):
 # Preview-script artifacts live in .mp/.preview-<uuid>.txt — the same directory
 # as the rest of the pipeline scratch space, prefixed so rem_temp_files() won't
 # wipe them (they end in .txt which is allowed to stay).
+@app.get("/api/long-scripts", response_model=list[LongScriptFileOut])
+def list_long_scripts():
+    scripts = []
+    if TEMP_DIR.exists():
+        for path in TEMP_DIR.glob("script_*.txt"):
+            if path.is_file() and _LONG_SCRIPT_NAME_RE.fullmatch(path.name):
+                scripts.append(_long_script_entry(path))
+    scripts.sort(key=lambda item: item["mtime"], reverse=True)
+    return scripts
+
+
+@app.get("/api/long-scripts/{script_name}/preview-short")
+async def preview_long_script_short(
+    script_name: str,
+    channel_id: str = "",
+    duration_seconds: int = 60,
+    llm_provider: str = "",
+    llm_model: str = "",
+    llm_reasoning_effort: str = "",
+):
+    path = _safe_long_script_path(script_name)
+    if duration_seconds:
+        from classes.duration_presets import ALLOWED_SHORT_DURATIONS
+        if duration_seconds not in ALLOWED_SHORT_DURATIONS:
+            raise HTTPException(
+                400,
+                f"duration_seconds must be one of {list(ALLOWED_SHORT_DURATIONS)}",
+            )
+    if llm_provider and llm_provider not in ("ollama", "gemini", "openai", "claude", "pollinations"):
+        raise HTTPException(400, "llm_provider must be 'ollama', 'gemini', 'openai', 'claude', or 'pollinations'")
+    effort = _normalize_openai_reasoning_effort(llm_reasoning_effort)
+
+    channel_label = ""
+    if channel_id:
+        ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
+        if not ch:
+            raise HTTPException(404, "Channel not found")
+        channel_label = f" — {ch.get('nickname', channel_id)}"
+
+    args = [
+        "long-script-preview",
+        "--input", str(path),
+        "--duration", str(duration_seconds or 60),
+    ]
+    if llm_provider:
+        args += ["--llm-provider", llm_provider]
+    if llm_model:
+        args += ["--llm-model", llm_model]
+    if effort:
+        args += ["--llm-reasoning-effort", effort]
+
+    title = f"Short desde guion largo{channel_label}"
+    job = _spawn_job(args, title=title, channel_id=channel_id or None, kind="short")
+    return EventSourceResponse(_stream_job(job))
+
+
 @app.get("/api/channels/{channel_id}/preview-script")
 async def preview_script(
     channel_id: str,

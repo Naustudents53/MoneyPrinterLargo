@@ -157,6 +157,11 @@ class PhotoVideoTests(unittest.TestCase):
 
         self.assertIn('"topic":"Tema"', text)
         self.assertEqual(captured["args"].count("--image"), 2)
+        self.assertLess(
+            captured["args"].index("--ask-for-approval"),
+            captured["args"].index("exec"),
+        )
+        self.assertEqual(captured["args"][captured["args"].index("--ask-for-approval") + 1], "never")
         self.assertEqual(captured["args"][captured["args"].index("--model") + 1], "gpt-test")
         self.assertEqual(captured["args"][captured["args"].index("--sandbox") + 1], "read-only")
         self.assertEqual(captured["kwargs"]["timeout"], 123)

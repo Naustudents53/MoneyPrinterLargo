@@ -355,6 +355,16 @@ export interface PreviewScript {
   script: string;
 }
 
+export interface LongScriptFile {
+  id: string;
+  name: string;
+  topic: string;
+  words: number | null;
+  estimated_duration: string;
+  size_bytes: number;
+  mtime: string;
+}
+
 export interface PhotoUploadResponse {
   id: string;
   count: number;
@@ -542,6 +552,7 @@ export const api = {
   },
 
   // Preview-script artifacts (used by "Vista previa" flow)
+  listLongScripts: () => request<LongScriptFile[]>("/api/long-scripts"),
   readPreview: (id: string) => request<PreviewScript>(`/api/preview/${id}`),
   savePreview: (id: string, data: { subject: string; script: string }) =>
     request<{ ok: boolean }>(`/api/preview/${id}`, {
@@ -697,6 +708,21 @@ export const api = {
       qs.set("retention_mode", params.retention_mode);
     }
     return `${BASE}/api/channels/${id}/generate?${qs.toString()}`;
+  },
+  longScriptPreviewUrl(name: string, params: {
+    channel_id?: string;
+    duration_seconds?: ShortDurationSeconds;
+    llm_provider?: LLMProvider | "";
+    llm_model?: string;
+    llm_reasoning_effort?: OpenAIReasoningEffort | "";
+  } = {}): string {
+    const qs = new URLSearchParams();
+    if (params.channel_id) qs.set("channel_id", params.channel_id);
+    if (params.duration_seconds) qs.set("duration_seconds", String(params.duration_seconds));
+    if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
+    if (params.llm_model) qs.set("llm_model", params.llm_model);
+    if (params.llm_reasoning_effort) qs.set("llm_reasoning_effort", params.llm_reasoning_effort);
+    return `${BASE}/api/long-scripts/${encodeURIComponent(name)}/preview-short?${qs.toString()}`;
   },
   previewScriptUrl(id: string, params: {
     custom_topic?: string;
