@@ -199,6 +199,10 @@ export interface SystemInfo {
   tts_voice: string;
   image_aspect_ratio: string;
   short_render_profile?: ShortRenderProfile;
+  short_render_size?: string;
+  long_render_size?: string;
+  short_render_fps?: number;
+  long_render_fps?: number;
   stt_provider: string;
   headless: boolean;
   version: string;
@@ -312,6 +316,7 @@ export interface LLMModelList {
 export type OpenAIReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type LLMProvider = "ollama" | "gemini" | "openai" | "claude" | "pollinations";
 export type ImageProvider = "auto" | "leonardo" | "openai" | "gemini";
+export type PhotoVisionProvider = "auto" | "gemini" | "codex" | "claude" | "openai";
 
 export interface HookStyle {
   id: string;       // "<profile>::<name>" — round-trips via MP_HOOK_STYLE_OVERRIDE
@@ -649,6 +654,7 @@ export const api = {
     llm_provider?: LLMProvider | "";
     llm_model?: string;
     llm_reasoning_effort?: OpenAIReasoningEffort | "";
+    photo_vision_provider?: PhotoVisionProvider;
     hook_profile?: HookProfile | "";
     model?: string;
     sentence_length?: number;
@@ -676,6 +682,9 @@ export const api = {
     if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
     if (params.llm_model) qs.set("llm_model", params.llm_model);
     if (params.llm_reasoning_effort) qs.set("llm_reasoning_effort", params.llm_reasoning_effort);
+    if (params.photo_vision_provider) {
+      qs.set("photo_vision_provider", params.photo_vision_provider);
+    }
     if (params.hook_profile) qs.set("hook_profile", params.hook_profile);
     if (params.model) qs.set("model", params.model);
     if (params.sentence_length && params.sentence_length > 0) {

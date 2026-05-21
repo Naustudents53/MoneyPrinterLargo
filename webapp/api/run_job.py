@@ -241,21 +241,21 @@ def _apply_short_render_profile(profile: str) -> None:
     profiles = {
         "quality": {
             "MP_SHORT_RENDER_PROFILE": "quality",
-            "MP_SHORT_RENDER_FPS": "30",
+            "MP_SHORT_RENDER_FPS": "60",
             "MP_SHORT_KEN_BURNS": "true",
             "MP_SHORT_KARAOKE_SUBTITLES": "true",
             "MP_SHORT_CROSSFADE_SECONDS": "0.4",
         },
         "fast": {
             "MP_SHORT_RENDER_PROFILE": "fast",
-            "MP_SHORT_RENDER_FPS": "24",
+            "MP_SHORT_RENDER_FPS": "60",
             "MP_SHORT_KEN_BURNS": "false",
             "MP_SHORT_KARAOKE_SUBTITLES": "true",
             "MP_SHORT_CROSSFADE_SECONDS": "0",
         },
         "turbo": {
             "MP_SHORT_RENDER_PROFILE": "turbo",
-            "MP_SHORT_RENDER_FPS": "24",
+            "MP_SHORT_RENDER_FPS": "60",
             "MP_SHORT_KEN_BURNS": "false",
             "MP_SHORT_KARAOKE_SUBTITLES": "false",
             "MP_SHORT_CROSSFADE_SECONDS": "0",
@@ -473,6 +473,8 @@ def cmd_generate(args):
             f"Topic: {topic or '(auto from photos)'}",
             flush=True,
         )
+        if getattr(args, "photo_vision_provider", ""):
+            print(f"[runner] Photo vision provider: {args.photo_vision_provider}", flush=True)
         path = PhotoVideoGenerator(youtube).generate(
             tts,
             PhotoVideoRequest(
@@ -481,6 +483,7 @@ def cmd_generate(args):
                 topic=topic,
                 script=preset_script,
                 auto_analyze=True,
+                photo_vision_provider=getattr(args, "photo_vision_provider", "") or "",
             ),
         )
     elif args.kind == "long":
@@ -950,6 +953,8 @@ def main():
     p_gen.add_argument("--llm-model", default="")
     p_gen.add_argument("--llm-reasoning-effort", default="",
                        help="OpenAI/Codex thinking level: low, medium, high, xhigh.")
+    p_gen.add_argument("--photo-vision-provider", default="",
+                       help="Uploaded-photo vision backend: auto, gemini, codex, claude, openai.")
     # Per-job hook profile override (educational / storytelling / ...). Empty = use channel default.
     p_gen.add_argument("--hook-profile", default="")
     # Per-job overrides — let the UI pick a specific model and an estimated

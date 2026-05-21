@@ -6,6 +6,7 @@ import os
 import subprocess
 import requests
 import assemblyai as aai
+from io import BytesIO
 
 # Pillow 10+ removed Image.ANTIALIAS, but moviepy 1.0.3 still references it.
 # Patch the alias before moviepy is imported, otherwise resize() / write_videofile()
@@ -75,6 +76,10 @@ def _capitalized_unicode_tokens(text: str) -> list[str]:
         tok for tok in _unicode_tokens(text)
         if len(tok) > 2 and tok[0].isupper()
     ]
+
+
+def _scale_from_base(value: int, base: int, target: int) -> int:
+    return max(1, int(round(value * (target / base))))
 
 
 # Generic science/topic words that are NOT distinctive enough to anchor a
@@ -1603,24 +1608,69 @@ Example format:
 
         return image_prompts
 
-    def _persist_image(self, image_bytes: bytes, provider_label: str) -> str:
+    @staticmethod
+    def _targeted_image_prompt(prompt: str, width: int, height: int) -> str:
+        orientation = "vertical 9:16" if height > width else "landscape 16:9"
+        quality = "4K UHD" if max(width, height) >= 2160 else "HD"
+        return (
+            f"Target canvas: {width}x{height}px, {quality}, {orientation}. "
+            "Generate one native-resolution, high-detail image for this exact canvas; "
+            "do not create a collage, border, caption, logo, watermark, or low-resolution draft. "
+            f"{prompt}"
+        )
+
+    @staticmethod
+    def _normalize_image_bytes_to_size(image_bytes: bytes, width: int, height: int) -> bytes:
+        with _PIL_Image.open(BytesIO(image_bytes)) as img:
+            img.load()
+            img = img.convert("RGB")
+            target_aspect = width / height
+            source_aspect = img.width / img.height
+            if source_aspect > target_aspect:
+                crop_width = max(1, int(round(img.height * target_aspect)))
+                left = max(0, (img.width - crop_width) // 2)
+                img = img.crop((left, 0, left + crop_width, img.height))
+            elif source_aspect < target_aspect:
+                crop_height = max(1, int(round(img.width / target_aspect)))
+                top = max(0, (img.height - crop_height) // 2)
+                img = img.crop((0, top, img.width, top + crop_height))
+            if img.size != (width, height):
+                img = img.resize((width, height), _PIL_Image.LANCZOS)
+            out = BytesIO()
+            img.save(out, format="PNG")
+            return out.getvalue()
+
+    def _persist_image(
+        self,
+        image_bytes: bytes,
+        provider_label: str,
+        target_size: tuple[int, int] | None = None,
+    ) -> str:
         """
         Writes generated image bytes to a PNG file in the .mp scratch folder.
 
         Args:
             image_bytes (bytes): Image payload
             provider_label (str): Label for logging
+            target_size (tuple[int, int] | None): Optional output size normalization
 
         Returns:
             path (str): Absolute image path
         """
         image_path = os.path.join(get_temp_cache_path(), str(uuid4()) + ".png")
+        if target_size:
+            image_bytes = self._normalize_image_bytes_to_size(
+                image_bytes,
+                target_size[0],
+                target_size[1],
+            )
 
         with open(image_path, "wb") as image_file:
             image_file.write(image_bytes)
 
         if get_verbose():
-            info(f' => Wrote image from {provider_label} to "{image_path}"')
+            size_label = f" ({target_size[0]}x{target_size[1]})" if target_size else ""
+            info(f' => Wrote image from {provider_label}{size_label} to "{image_path}"')
 
         self.images.append(image_path)
         return image_path
@@ -1653,16 +1703,16 @@ Example format:
             return [("Gemini Nano Banana", lambda p: self._try_gemini_image(p, width, height), "ai")]
         if provider == "leonardo":
             if width > height:
-                return [("Leonardo AI", lambda p: self._try_leonardo_landscape(p), "ai")]
-            return [("Leonardo AI", self._try_leonardo, "ai")]
+                return [("Leonardo AI", lambda p: self._try_leonardo_landscape(p, width, height), "ai")]
+            return [("Leonardo AI", lambda p: self._try_leonardo(p, width, height), "ai")]
 
         providers = []
         if self._should_use_codex_cli_images():
             providers.append(("Codex CLI Image", lambda p: self._try_codex_cli_image(p, width, height), "ai"))
         if width > height:
-            providers.append(("Leonardo AI", lambda p: self._try_leonardo_landscape(p), "ai"))
+            providers.append(("Leonardo AI", lambda p: self._try_leonardo_landscape(p, width, height), "ai"))
         else:
-            providers.append(("Leonardo AI", self._try_leonardo, "ai"))
+            providers.append(("Leonardo AI", lambda p: self._try_leonardo(p, width, height), "ai"))
         providers.append(("Gemini Nano Banana", lambda p: self._try_gemini_image(p, width, height), "ai"))
         if width <= height:
             providers.append(("HuggingFace", self._try_huggingface, "ai"))
@@ -1676,7 +1726,7 @@ Example format:
         print(colored(f"    [Codex CLI Image] Generating...", "cyan"), flush=True)
         active_model = get_active_model() if get_active_provider() == "openai" else ""
         return generate_image_bytes_with_codex(
-            prompt,
+            self._targeted_image_prompt(prompt, width, height),
             width=width,
             height=height,
             model=active_model if isinstance(active_model, str) else "",
@@ -1687,7 +1737,11 @@ Example format:
         from gemini_image_provider import generate_image_bytes_with_gemini
 
         print(colored(f"    [Gemini Nano Banana] Generating...", "cyan"), flush=True)
-        return generate_image_bytes_with_gemini(prompt, width=width, height=height)
+        return generate_image_bytes_with_gemini(
+            self._targeted_image_prompt(prompt, width, height),
+            width=width,
+            height=height,
+        )
 
     def _try_huggingface(self, prompt: str) -> bytes:
         """Try HuggingFace Inference API. Requires free HF token."""
@@ -1753,7 +1807,7 @@ Example format:
             return img_resp.content
         raise RuntimeError("Ideogram: failed to download image")
 
-    def _try_leonardo(self, prompt: str) -> bytes:
+    def _try_leonardo(self, prompt: str, width: int = 2160, height: int = 3840) -> bytes:
         """Try Leonardo AI API (excellent quality, $5 free credit).
         Uses Phoenix 1.0 by default â€” it follows long prompts much better
         than Lightning XL, which was averaging out specific subjects (e.g.
@@ -1769,7 +1823,7 @@ Example format:
             "Content-Type": "application/json",
         }
         payload = {
-            "prompt": prompt[:1500],
+            "prompt": self._targeted_image_prompt(prompt, width, height)[:1500],
             "modelId": "de7d3faf-762f-48e0-b3b7-9d0ac3a3fcf3",  # Leonardo Phoenix 1.0
             "width": 576,
             "height": 1024,
@@ -3235,7 +3289,7 @@ RULES:
             return resp.content
         raise RuntimeError(f"Picsum returned status {resp.status_code}")
 
-    def _generate_fallback_image(self, prompt: str) -> str:
+    def _generate_fallback_image(self, prompt: str, target_size: tuple[int, int] | None = None) -> str:
         """
         Generates a stylish fallback image using Pillow when all API providers fail.
         """
@@ -3253,19 +3307,20 @@ RULES:
             ((10, 40, 20), (30, 100, 60)),
         ]
         c1, c2 = rand_mod.choice(color_schemes)
-        img = Image.new("RGB", (1080, 1920))
+        width, height = target_size or get_short_render_size()
+        img = Image.new("RGB", (width, height))
         draw = ImageDraw.Draw(img)
 
-        for y in range(1920):
-            r = int(c1[0] + (c2[0] - c1[0]) * y / 1920)
-            g = int(c1[1] + (c2[1] - c1[1]) * y / 1920)
-            b = int(c1[2] + (c2[2] - c1[2]) * y / 1920)
-            draw.line([(0, y), (1080, y)], fill=(r, g, b))
+        for y in range(height):
+            r = int(c1[0] + (c2[0] - c1[0]) * y / height)
+            g = int(c1[1] + (c2[1] - c1[1]) * y / height)
+            b = int(c1[2] + (c2[2] - c1[2]) * y / height)
+            draw.line([(0, y), (width, y)], fill=(r, g, b))
 
         # Add text
         try:
             font_path = os.path.join(get_fonts_dir(), get_font())
-            font = ImageFont.truetype(font_path, 52)
+            font = ImageFont.truetype(font_path, _scale_from_base(52, 1080, width))
         except Exception:
             font = ImageFont.load_default()
 
@@ -3281,15 +3336,17 @@ RULES:
         if current_line:
             lines.append(current_line)
 
-        y_pos = 1920 // 2 - (len(lines) * 70) // 2
+        line_step = _scale_from_base(70, 1920, height)
+        y_pos = height // 2 - (len(lines) * line_step) // 2
         for line in lines:
             bbox = draw.textbbox((0, 0), line, font=font)
             w = bbox[2] - bbox[0]
             # Shadow
-            draw.text(((1080 - w) // 2 + 3, y_pos + 3), line, fill=(0, 0, 0), font=font)
+            shadow = _scale_from_base(3, 1080, width)
+            draw.text(((width - w) // 2 + shadow, y_pos + shadow), line, fill=(0, 0, 0), font=font)
             # Text
-            draw.text(((1080 - w) // 2, y_pos), line, fill="white", font=font)
-            y_pos += 70
+            draw.text(((width - w) // 2, y_pos), line, fill="white", font=font)
+            y_pos += line_step
 
         image_path = os.path.join(get_temp_cache_path(), str(uuid4()) + ".png")
         img.save(image_path)
@@ -3310,7 +3367,8 @@ RULES:
                         "photos" â†’ Wikimedia / stock photos first, AI as last-resort fallback.
         """
         self._image_mode = image_mode
-        selected_ai_providers = self._ai_image_providers(1080, 1920)
+        short_size = get_short_render_size()
+        selected_ai_providers = self._ai_image_providers(*short_size)
 
         if image_mode == "photos":
             print(colored(f"\n  [Images] Fetching {len(prompts)} real photos...", "blue"))
@@ -3364,7 +3422,7 @@ RULES:
                         effective_prompt = self._apply_channel_style(prompt)
                     img_bytes = fn(effective_prompt)
                     if img_bytes and len(img_bytes) > 1000:
-                        self._persist_image(img_bytes, name)
+                        self._persist_image(img_bytes, name, target_size=short_size)
                         saved = True
                         break
                 except Exception as e:
@@ -3372,7 +3430,7 @@ RULES:
                         warning(f"    {name} failed: {str(e)[:100]}")
                     time.sleep(1)
             if not saved:
-                self._generate_fallback_image(prompt)
+                self._generate_fallback_image(prompt, target_size=short_size)
 
         success(f"All {len(prompts)} images ready!")
 
@@ -3391,8 +3449,9 @@ RULES:
         """
         providers = [
             (name, fn)
-            for name, fn, _kind in self._ai_image_providers(1080, 1920)
+            for name, fn, _kind in self._ai_image_providers(*get_short_render_size())
         ]
+        target_size = get_short_render_size()
 
         print(colored(f"  [Image] {prompt[:80]}...", "blue"))
 
@@ -3401,14 +3460,14 @@ RULES:
                 img_bytes = provider_fn(prompt)
                 if img_bytes and len(img_bytes) > 1000:
                     success(f"Image generated via {name}!")
-                    return self._persist_image(img_bytes, name)
+                    return self._persist_image(img_bytes, name, target_size=target_size)
             except Exception as e:
                 if get_verbose():
                     warning(f"{name} failed: {str(e)[:100]}")
                 time.sleep(1)
 
         # All providers failed - use Pillow fallback
-        return self._generate_fallback_image(prompt)
+        return self._generate_fallback_image(prompt, target_size=target_size)
 
     def generate_script_to_speech(self, tts_instance: TTS) -> str:
         """
@@ -3654,7 +3713,131 @@ RULES:
 
         return srt_path
 
-    def _build_karaoke_subtitles(self, audio_duration: float, fps: int = 30):
+    @staticmethod
+    def _subtitle_word_text(item: dict) -> str:
+        return str(item.get("word", "")).strip().upper()
+
+    @staticmethod
+    def _subtitle_breaks_after(text: str) -> bool:
+        return bool(re.search(r"[.!?;:]+[\"')\]]*$", str(text or "").strip()))
+
+    @classmethod
+    def _group_karaoke_words(
+        cls,
+        words: list[dict],
+        max_words_per_group: int,
+        max_lines: int,
+        wrap_texts,
+        pause_gap_seconds: float,
+    ) -> list[list[dict]]:
+        groups = []
+        current_group = []
+
+        for word in words:
+            if current_group:
+                previous = current_group[-1]
+                gap = float(word.get("start", 0.0)) - float(previous.get("end", 0.0))
+                if gap >= pause_gap_seconds or cls._subtitle_breaks_after(previous.get("word", "")):
+                    groups.append(current_group)
+                    current_group = []
+
+            candidate = current_group + [word]
+            candidate_texts = [cls._subtitle_word_text(w) for w in candidate]
+            lines_needed = len(wrap_texts(candidate_texts))
+
+            if current_group and (
+                len(candidate) > max_words_per_group or lines_needed > max_lines
+            ):
+                groups.append(current_group)
+                current_group = [word]
+            else:
+                current_group = candidate
+
+        if current_group:
+            groups.append(current_group)
+        return groups
+
+    @staticmethod
+    def _word_to_group_index(groups: list[list[dict]]) -> dict[int, tuple[int, int]]:
+        word_to_group = {}
+        global_idx = 0
+        for group_idx, group in enumerate(groups):
+            for local_idx in range(len(group)):
+                word_to_group[global_idx] = (group_idx, local_idx)
+                global_idx += 1
+        return word_to_group
+
+    def _generate_word_timestamps_local_whisper(self, audio_path: str) -> list[dict]:
+        """Generate word timestamps with faster-whisper for karaoke fallback."""
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError:
+            warning("Local Whisper is not installed; falling back to estimated karaoke timing.")
+            return []
+
+        try:
+            whisper_model_name = get_whisper_model()
+            print(colored(f"  [Whisper] Loading model '{whisper_model_name}' for word timings...", "cyan"), flush=True)
+            model = WhisperModel(
+                whisper_model_name,
+                device=get_whisper_device(),
+                compute_type=get_whisper_compute_type(),
+            )
+            print(colored("  [Whisper] Transcribing word timings...", "cyan"), flush=True)
+            segments, _ = model.transcribe(audio_path, vad_filter=True, word_timestamps=True)
+
+            word_timestamps = []
+            for segment in segments:
+                segment_words = getattr(segment, "words", None) or []
+                if segment_words:
+                    for item in segment_words:
+                        text = str(getattr(item, "word", "")).strip()
+                        if not text:
+                            continue
+                        start = float(getattr(item, "start", 0.0) or 0.0)
+                        end = float(getattr(item, "end", start + 0.05) or start + 0.05)
+                        word_timestamps.append({
+                            "start": max(0.0, start),
+                            "end": max(start + 0.05, end),
+                            "word": text,
+                        })
+                    continue
+
+                text_words = str(getattr(segment, "text", "") or "").split()
+                if not text_words:
+                    continue
+                start = float(getattr(segment, "start", 0.0) or 0.0)
+                end = float(getattr(segment, "end", start) or start)
+                step = max(0.05, (end - start) / len(text_words))
+                for idx, text in enumerate(text_words):
+                    word_timestamps.append({
+                        "start": start + (idx * step),
+                        "end": start + ((idx + 1) * step),
+                        "word": text,
+                    })
+
+            return word_timestamps
+        except Exception as exc:
+            warning(f"Whisper word timing failed ({exc}); falling back to estimated karaoke timing.")
+            return []
+
+    def _ensure_karaoke_word_timestamps(self, audio_path: str, audio_duration: float) -> list[dict]:
+        if self.word_timestamps:
+            return self.word_timestamps
+
+        word_timestamps = self._generate_word_timestamps_local_whisper(audio_path)
+        if not word_timestamps:
+            word_timestamps = self._estimate_word_timestamps(audio_duration)
+
+        self.word_timestamps = word_timestamps
+        return word_timestamps
+
+    def _build_karaoke_subtitles(
+        self,
+        audio_duration: float,
+        fps: int = 30,
+        output_size: tuple[int, int] = (1080, 1920),
+    ):
         """
         Build word-by-word karaoke subtitle clip from word_timestamps.
         Shows groups of up to 5 words with multi-line wrapping; the active
@@ -3670,14 +3853,20 @@ RULES:
         max_mode = is_max_retention(getattr(self, "_retention_mode", ""))
         caption_cfg = MaxRetentionEngine.caption_config() if max_mode else None
         font_path = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
-        font_size = caption_cfg.font_size if caption_cfg else 80
+        out_w, out_h = output_size
+        canvas_w = out_w
+        default_font_size = caption_cfg.font_size if caption_cfg else 80
+        font_size = _scale_from_base(get_subtitle_font_size(default_font_size), 1080, out_w)
         font = ImageFont.truetype(font_path, font_size)
-        canvas_w = 1080
-        max_line_width = 920
-        word_spacing = 28
+        max_line_width = _scale_from_base(920, 1080, out_w)
+        word_spacing = _scale_from_base(28, 1080, out_w)
         line_spacing = 0  # ascent+descent already provides natural spacing
-        max_words_per_group = caption_cfg.max_words_per_group if caption_cfg else 5
+        max_words_per_group = get_subtitle_max_words_per_group(
+            caption_cfg.max_words_per_group if caption_cfg else 5
+        )
         max_lines = 2 if max_mode else 3
+        stroke_width = _scale_from_base(6, 1080, out_w)
+        pause_gap_seconds = get_subtitle_pause_gap_seconds()
         hot_word_set = set()
         if max_mode:
             try:
@@ -3714,30 +3903,14 @@ RULES:
                 lines.append(current_line)
             return lines
 
-        # --- Group words (up to 5, but never exceeding max_lines when wrapped) ---
-        groups = []
-        current_group = []
-
-        for w in words:
-            candidate = current_group + [w]
-            candidate_texts = [gw["word"].upper() for gw in candidate]
-            lines_needed = len(_wrap_group(candidate_texts))
-            if len(candidate) > max_words_per_group or lines_needed > max_lines:
-                if current_group:
-                    groups.append(current_group)
-                current_group = [w]
-            else:
-                current_group = candidate
-        if current_group:
-            groups.append(current_group)
-
-        # --- Build index: global word index â†’ (group_idx, local_idx) ---
-        word_to_group = {}
-        gi = 0
-        for g_idx, group in enumerate(groups):
-            for l_idx in range(len(group)):
-                word_to_group[gi] = (g_idx, l_idx)
-                gi += 1
+        groups = self._group_karaoke_words(
+            words,
+            max_words_per_group=max_words_per_group,
+            max_lines=max_lines,
+            wrap_texts=_wrap_group,
+            pause_gap_seconds=pause_gap_seconds,
+        )
+        word_to_group = self._word_to_group_index(groups)
 
         # --- Pre-render one frame per word (group with that word highlighted) ---
         # First pass: determine max canvas height across all groups
@@ -3747,7 +3920,7 @@ RULES:
             lines = _wrap_group(texts)
             max_num_lines = max(max_num_lines, len(lines))
 
-        stroke_pad = 6 * 2  # stroke_width extends outward on all sides
+        stroke_pad = stroke_width * 2  # stroke_width extends outward on all sides
         canvas_h = max_num_lines * line_h + (max_num_lines - 1) * line_spacing + stroke_pad + 20
 
         rendered = {}  # global_word_idx â†’ (rgb np.array, alpha np.array)
@@ -3769,11 +3942,11 @@ RULES:
                 for t, tw in line:
                     if word_counter == l_idx:
                         draw.text((x, y), t, fill=(255, 215, 0), font=font,
-                                  stroke_width=6, stroke_fill="black")
+                                  stroke_width=stroke_width, stroke_fill="black")
                     else:
                         fill = (255, 95, 70) if _caption_key(t) in hot_word_set else "white"
                         draw.text((x, y), t, fill=fill, font=font,
-                                  stroke_width=6, stroke_fill="black")
+                                  stroke_width=stroke_width, stroke_fill="black")
                     x += tw + word_spacing
                     word_counter += 1
                 y += line_h + line_spacing
@@ -3813,10 +3986,17 @@ RULES:
         clip = VideoClip(make_rgb, duration=audio_duration).set_fps(fps)
         mask = VideoClip(make_mask, duration=audio_duration, ismask=True).set_fps(fps)
         clip = clip.set_mask(mask)
-        clip = clip.set_position(("center", caption_cfg.position_y if caption_cfg else 1300))
+        default_position_y = caption_cfg.position_y if caption_cfg else 1300
+        position_y = _scale_from_base(get_subtitle_position_y(default_position_y), 1920, out_h)
+        clip = clip.set_position(("center", position_y))
         return clip
 
-    def _build_karaoke_subtitles_landscape(self, audio_duration: float, fps: int = 24):
+    def _build_karaoke_subtitles_landscape(
+        self,
+        audio_duration: float,
+        fps: int = 24,
+        output_size: tuple[int, int] = (1920, 1080),
+    ):
         """
         Build karaoke subtitles for 16:9 long videos.
 
@@ -3833,22 +4013,24 @@ RULES:
         if not words:
             return None
 
+        out_w, out_h = output_size
+        canvas_w = out_w
         font_path = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
-        font_size = 58
+        font_size = _scale_from_base(get_subtitle_font_size(58), 1920, out_w)
         font = ImageFont.truetype(font_path, font_size)
-        canvas_w = 1920
-        max_line_width = 1500
-        word_spacing = 24
-        max_words_per_group = 7
+        max_line_width = _scale_from_base(1500, 1920, out_w)
+        word_spacing = _scale_from_base(24, 1920, out_w)
+        max_words_per_group = get_subtitle_max_words_per_group(7)
         max_lines = 2
-        stroke_width = 5
+        stroke_width = _scale_from_base(5, 1920, out_w)
+        pause_gap_seconds = get_subtitle_pause_gap_seconds()
 
         ascent, descent = font.getmetrics()
         line_h = ascent + descent
         canvas_h = max_lines * line_h + (stroke_width * 2) + 28
 
         def _word_text(item):
-            return str(item.get("word", "")).strip().upper()
+            return self._subtitle_word_text(item)
 
         def _measure(text: str) -> int:
             bb = font.getbbox(text)
@@ -3955,7 +4137,8 @@ RULES:
         clip = VideoClip(make_rgb, duration=audio_duration).set_fps(fps)
         mask = VideoClip(make_mask, duration=audio_duration, ismask=True).set_fps(fps)
         clip = clip.set_mask(mask)
-        clip = clip.set_position(("center", 820))
+        position_y = _scale_from_base(get_subtitle_position_y(820), 1080, out_h)
+        clip = clip.set_position(("center", position_y))
         return clip
 
     def _estimate_word_timestamps(self, audio_duration: float):
@@ -4046,23 +4229,35 @@ RULES:
         normalized = os.path.abspath(path).replace("\\", "/")
         return normalized.replace(":", r"\:").replace("'", r"\'")
 
-    def _write_karaoke_ass_subtitles(self, output_path: str, audio_duration: float) -> bool:
+    def _write_karaoke_ass_subtitles(
+        self,
+        output_path: str,
+        audio_duration: float,
+        output_size: tuple[int, int] = (1080, 1920),
+    ) -> bool:
         from PIL import ImageFont
 
         words = self.word_timestamps or []
         if not words:
             return False
 
+        canvas_w, canvas_h = output_size
         max_mode = is_max_retention(getattr(self, "_retention_mode", ""))
         caption_cfg = MaxRetentionEngine.caption_config() if max_mode else None
         font_path = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
-        font_size = caption_cfg.font_size if caption_cfg else 80
+        default_font_size = caption_cfg.font_size if caption_cfg else 80
+        font_size = _scale_from_base(get_subtitle_font_size(default_font_size), 1080, canvas_w)
         font = ImageFont.truetype(font_path, font_size)
-        max_line_width = 920
-        word_spacing = 28
-        max_words_per_group = caption_cfg.max_words_per_group if caption_cfg else 5
+        max_line_width = _scale_from_base(920, 1080, canvas_w)
+        word_spacing = _scale_from_base(28, 1080, canvas_w)
+        max_words_per_group = get_subtitle_max_words_per_group(
+            caption_cfg.max_words_per_group if caption_cfg else 5
+        )
         max_lines = 2 if max_mode else 3
-        position_y = caption_cfg.position_y if caption_cfg else 1300
+        default_position_y = caption_cfg.position_y if caption_cfg else 1300
+        position_y = _scale_from_base(get_subtitle_position_y(default_position_y), 1920, canvas_h)
+        outline_width = _scale_from_base(6, 1080, canvas_w)
+        pause_gap_seconds = get_subtitle_pause_gap_seconds()
 
         hot_word_set = set()
         if max_mode:
@@ -4084,7 +4279,7 @@ RULES:
             return bb[2] - bb[0]
 
         def _word_text(item: dict) -> str:
-            return str(item.get("word", "")).strip().upper()
+            return self._subtitle_word_text(item)
 
         def _wrap_texts(texts: list[str]) -> list[list[str]]:
             lines = []
@@ -4104,26 +4299,14 @@ RULES:
                 lines.append(current)
             return lines
 
-        groups = []
-        current_group = []
-        for word in words:
-            candidate = current_group + [word]
-            candidate_texts = [_word_text(w) for w in candidate]
-            if len(candidate) > max_words_per_group or len(_wrap_texts(candidate_texts)) > max_lines:
-                if current_group:
-                    groups.append(current_group)
-                current_group = [word]
-            else:
-                current_group = candidate
-        if current_group:
-            groups.append(current_group)
-
-        word_to_group = {}
-        global_idx = 0
-        for group_idx, group in enumerate(groups):
-            for local_idx in range(len(group)):
-                word_to_group[global_idx] = (group_idx, local_idx)
-                global_idx += 1
+        groups = self._group_karaoke_words(
+            words,
+            max_words_per_group=max_words_per_group,
+            max_lines=max_lines,
+            wrap_texts=_wrap_texts,
+            pause_gap_seconds=pause_gap_seconds,
+        )
+        word_to_group = self._word_to_group_index(groups)
 
         white = "&H00FFFFFF&"
         yellow = "&H0000D7FF&"
@@ -4136,8 +4319,8 @@ RULES:
         lines = [
             "[Script Info]",
             "ScriptType: v4.00+",
-            "PlayResX: 1080",
-            "PlayResY: 1920",
+            f"PlayResX: {canvas_w}",
+            f"PlayResY: {canvas_h}",
             "ScaledBorderAndShadow: yes",
             "",
             "[V4+ Styles]",
@@ -4146,7 +4329,7 @@ RULES:
             "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
             "Alignment, MarginL, MarginR, MarginV, Encoding",
             f"Style: Karaoke,Poppins Black,{font_size},{white},{white},{outline},"
-            f"&H00000000&,-1,0,0,0,100,100,0,0,1,6,0,8,0,0,0,1",
+            f"&H00000000&,-1,0,0,0,100,100,0,0,1,{outline_width},0,8,0,0,0,1",
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -4184,7 +4367,7 @@ RULES:
                 rendered_lines.append(" ".join(rendered_words))
 
             ass_text = r"\N".join(rendered_lines)
-            prefix = f"{{\\an8\\pos(540,{position_y})}}"
+            prefix = f"{{\\an8\\pos({canvas_w // 2},{position_y})}}"
             lines.append(
                 "Dialogue: 0,"
                 f"{self._ass_timestamp(start)},{self._ass_timestamp(end)},"
@@ -4195,27 +4378,36 @@ RULES:
             file.write("\n".join(lines) + "\n")
         return True
 
-    def _write_karaoke_ass_subtitles_landscape(self, output_path: str, audio_duration: float) -> bool:
+    def _write_karaoke_ass_subtitles_landscape(
+        self,
+        output_path: str,
+        audio_duration: float,
+        output_size: tuple[int, int] = (1920, 1080),
+    ) -> bool:
         from PIL import ImageFont
 
         words = self.word_timestamps or []
         if not words:
             return False
 
+        canvas_w, canvas_h = output_size
         font_path = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
-        font_size = 58
+        font_size = _scale_from_base(get_subtitle_font_size(58), 1920, canvas_w)
         font = ImageFont.truetype(font_path, font_size)
-        max_line_width = 1500
-        word_spacing = 24
-        max_words_per_group = 7
+        max_line_width = _scale_from_base(1500, 1920, canvas_w)
+        word_spacing = _scale_from_base(24, 1920, canvas_w)
+        max_words_per_group = get_subtitle_max_words_per_group(7)
         max_lines = 2
+        outline_width = _scale_from_base(5, 1920, canvas_w)
+        position_y = _scale_from_base(get_subtitle_position_y(820), 1080, canvas_h)
+        pause_gap_seconds = get_subtitle_pause_gap_seconds()
 
         def _measure(text: str) -> int:
             bb = font.getbbox(text)
             return bb[2] - bb[0]
 
         def _word_text(item: dict) -> str:
-            return str(item.get("word", "")).strip().upper()
+            return self._subtitle_word_text(item)
 
         def _wrap_texts(texts: list[str]) -> list[list[str]]:
             lines = []
@@ -4235,26 +4427,14 @@ RULES:
                 lines.append(current)
             return lines
 
-        groups = []
-        current_group = []
-        for word in words:
-            candidate = current_group + [word]
-            candidate_texts = [_word_text(w) for w in candidate]
-            if len(candidate) > max_words_per_group or len(_wrap_texts(candidate_texts)) > max_lines:
-                if current_group:
-                    groups.append(current_group)
-                current_group = [word]
-            else:
-                current_group = candidate
-        if current_group:
-            groups.append(current_group)
-
-        word_to_group = {}
-        global_idx = 0
-        for group_idx, group in enumerate(groups):
-            for local_idx in range(len(group)):
-                word_to_group[global_idx] = (group_idx, local_idx)
-                global_idx += 1
+        groups = self._group_karaoke_words(
+            words,
+            max_words_per_group=max_words_per_group,
+            max_lines=max_lines,
+            wrap_texts=_wrap_texts,
+            pause_gap_seconds=pause_gap_seconds,
+        )
+        word_to_group = self._word_to_group_index(groups)
 
         white = "&H00FFFFFF&"
         yellow = "&H0000D7FF&"
@@ -4266,8 +4446,8 @@ RULES:
         lines = [
             "[Script Info]",
             "ScriptType: v4.00+",
-            "PlayResX: 1920",
-            "PlayResY: 1080",
+            f"PlayResX: {canvas_w}",
+            f"PlayResY: {canvas_h}",
             "ScaledBorderAndShadow: yes",
             "",
             "[V4+ Styles]",
@@ -4276,7 +4456,7 @@ RULES:
             "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
             "Alignment, MarginL, MarginR, MarginV, Encoding",
             f"Style: Karaoke,Poppins Black,{font_size},{white},{white},{outline},"
-            f"&H00000000&,-1,0,0,0,100,100,0,0,1,5,0,8,0,0,0,1",
+            f"&H00000000&,-1,0,0,0,100,100,0,0,1,{outline_width},0,8,0,0,0,1",
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -4312,7 +4492,7 @@ RULES:
                 rendered_lines.append(" ".join(rendered_words))
 
             ass_text = r"\N".join(rendered_lines)
-            prefix = r"{\an8\pos(960,820)}"
+            prefix = f"{{\\an8\\pos({canvas_w // 2},{position_y})}}"
             lines.append(
                 "Dialogue: 0,"
                 f"{self._ass_timestamp(start)},{self._ass_timestamp(end)},"
@@ -4429,6 +4609,7 @@ RULES:
         image_count: int,
         durations: list[float],
         fps: int,
+        output_size: tuple[int, int],
         crossfade: float,
         ken_burns_enabled: bool,
         karaoke_ass_path: str,
@@ -4436,10 +4617,11 @@ RULES:
         audio_duration: float,
     ) -> str:
         filters = []
-        pan_scale_w = 1124
-        pan_scale_h = 1998
-        horizontal_pan = 180
-        vertical_pan = 120
+        out_w, out_h = output_size
+        pan_scale_w = _scale_from_base(1124, 1080, out_w)
+        pan_scale_h = _scale_from_base(1998, 1920, out_h)
+        horizontal_pan = _scale_from_base(180, 1080, out_w)
+        vertical_pan = _scale_from_base(120, 1920, out_h)
         for idx, this_dur in enumerate(durations):
             frames = max(1, int(round(this_dur * fps)))
             frame_denom = max(1, frames - 1)
@@ -4449,9 +4631,9 @@ RULES:
             )
             base = (
                 f"[{idx}:v]"
-                "scale=1080:1920:force_original_aspect_ratio=increase:"
+                f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase:"
                 "flags=lanczos+accurate_rnd,"
-                "crop=1080:1920,setsar=1,format=rgb24,"
+                f"crop={out_w}:{out_h},setsar=1,format=rgb24,"
             )
             if ken_burns_enabled:
                 pan_base = (
@@ -4489,7 +4671,7 @@ RULES:
                 filters.append(
                     f"{pan_base}"
                     f"{repeated}"
-                    f"crop=1080:1920:x='{x_expr}':y='{y_expr}',"
+                    f"crop={out_w}:{out_h}:x='{x_expr}':y='{y_expr}',"
                     f"trim=duration={this_dur:.6f},"
                     "setpts=PTS-STARTPTS,format=yuv420p"
                     f"[v{idx}]"
@@ -4531,7 +4713,7 @@ RULES:
             filters.append(
                 f"{video_label}"
                 f"ass=filename='{ass_path}':fontsdir='{fonts_dir}',"
-                "scale=1080:1920:flags=lanczos+accurate_rnd:out_range=tv,"
+                f"scale={out_w}:{out_h}:flags=lanczos+accurate_rnd:out_range=tv,"
                 "format=yuv420p,"
                 "setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709"
                 "[vout]"
@@ -4539,7 +4721,7 @@ RULES:
         else:
             filters.append(
                 f"{video_label}"
-                "scale=1080:1920:flags=lanczos+accurate_rnd:out_range=tv,"
+                f"scale={out_w}:{out_h}:flags=lanczos+accurate_rnd:out_range=tv,"
                 "format=yuv420p,"
                 "setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709"
                 "[vout]"
@@ -4565,6 +4747,7 @@ RULES:
         durations: list[float],
         random_song: str,
         fps: int,
+        output_size: tuple[int, int],
         crossfade: float,
         ken_burns_enabled: bool,
         karaoke_enabled: bool,
@@ -4575,13 +4758,14 @@ RULES:
         karaoke_ass_path = ""
         if karaoke_enabled:
             karaoke_ass_path = os.path.join(get_temp_cache_path(), f"{uuid4()}.ass")
-            if not self._write_karaoke_ass_subtitles(karaoke_ass_path, audio_duration):
+            if not self._write_karaoke_ass_subtitles(karaoke_ass_path, audio_duration, output_size):
                 karaoke_ass_path = ""
 
         filter_complex = self._short_ffmpeg_filter_complex(
             image_count=len(image_paths),
             durations=durations,
             fps=fps,
+            output_size=output_size,
             crossfade=crossfade,
             ken_burns_enabled=ken_burns_enabled,
             karaoke_ass_path=karaoke_ass_path,
@@ -4653,6 +4837,7 @@ RULES:
         image_count: int,
         durations: list[float],
         fps: int,
+        output_size: tuple[int, int],
         crossfade: float,
         karaoke_ass_path: str,
         music_volume: float,
@@ -4661,10 +4846,11 @@ RULES:
         extra_tail: float,
     ) -> str:
         filters = []
-        pan_scale_w = 1998
-        pan_scale_h = 1124
-        horizontal_pan = 220
-        vertical_pan = 120
+        out_w, out_h = output_size
+        pan_scale_w = _scale_from_base(1998, 1920, out_w)
+        pan_scale_h = _scale_from_base(1124, 1080, out_h)
+        horizontal_pan = _scale_from_base(220, 1920, out_w)
+        vertical_pan = _scale_from_base(120, 1080, out_h)
 
         for idx, this_dur in enumerate(durations):
             frames = max(1, int(round(this_dur * fps)))
@@ -4709,7 +4895,7 @@ RULES:
             filters.append(
                 f"{pan_base}"
                 f"{repeated}"
-                f"crop=1920:1080:x='{x_expr}':y='{y_expr}',"
+                f"crop={out_w}:{out_h}:x='{x_expr}':y='{y_expr}',"
                 f"trim=duration={this_dur:.6f},"
                 "setpts=PTS-STARTPTS,format=yuv420p"
                 f"[v{idx}]"
@@ -4751,7 +4937,7 @@ RULES:
             filters.append(
                 f"{video_label}"
                 f"ass=filename='{ass_path}':fontsdir='{fonts_dir}',"
-                "scale=1920:1080:flags=lanczos+accurate_rnd:out_range=tv,"
+                f"scale={out_w}:{out_h}:flags=lanczos+accurate_rnd:out_range=tv,"
                 "format=yuv420p,"
                 "setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709"
                 "[vout]"
@@ -4759,7 +4945,7 @@ RULES:
         else:
             filters.append(
                 f"{video_label}"
-                "scale=1920:1080:flags=lanczos+accurate_rnd:out_range=tv,"
+                f"scale={out_w}:{out_h}:flags=lanczos+accurate_rnd:out_range=tv,"
                 "format=yuv420p,"
                 "setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709"
                 "[vout]"
@@ -4791,6 +4977,7 @@ RULES:
         durations: list[float],
         random_song: str,
         fps: int,
+        output_size: tuple[int, int],
         crossfade: float,
         karaoke_enabled: bool,
         music_volume: float,
@@ -4802,13 +4989,18 @@ RULES:
         karaoke_ass_path = ""
         if karaoke_enabled:
             karaoke_ass_path = os.path.join(get_temp_cache_path(), f"{uuid4()}.ass")
-            if not self._write_karaoke_ass_subtitles_landscape(karaoke_ass_path, total_duration):
+            if not self._write_karaoke_ass_subtitles_landscape(
+                karaoke_ass_path,
+                total_duration,
+                output_size,
+            ):
                 karaoke_ass_path = ""
 
         filter_complex = self._long_ffmpeg_filter_complex(
             image_count=len(image_paths),
             durations=durations,
             fps=fps,
+            output_size=output_size,
             crossfade=crossfade,
             karaoke_ass_path=karaoke_ass_path,
             music_volume=music_volume,
@@ -4886,6 +5078,8 @@ RULES:
         threads = get_threads()
         render_profile = get_short_render_profile()
         render_fps = get_short_render_fps()
+        short_size = get_short_render_size()
+        out_w, out_h = short_size
         ken_burns_enabled = get_short_ken_burns_enabled()
         karaoke_enabled = get_short_karaoke_subtitles_enabled()
         crossfade = get_short_crossfade_seconds()
@@ -4896,7 +5090,7 @@ RULES:
         if get_verbose():
             info(
                 " => Short render profile: "
-                f"{render_profile} | fps={render_fps} | "
+                f"{render_profile} | size={out_w}x{out_h} | fps={render_fps} | "
                 f"ken_burns={ken_burns_enabled} | "
                 f"karaoke={karaoke_enabled} | crossfade={crossfade:.2f}s"
             )
@@ -4923,8 +5117,8 @@ RULES:
             else 0.15
         )
 
-        if karaoke_enabled and not self.word_timestamps:
-            self.word_timestamps = self._estimate_word_timestamps(max_duration)
+        if karaoke_enabled:
+            self._ensure_karaoke_word_timestamps(self.tts_path, max_duration)
 
         # Crossfade overlap between clips â€” compensate so the composed total == max_duration
         n_imgs = len(self.images)
@@ -4939,6 +5133,7 @@ RULES:
                     durations=durations,
                     random_song=random_song,
                     fps=render_fps,
+                    output_size=short_size,
                     crossfade=crossfade,
                     ken_burns_enabled=ken_burns_enabled,
                     karaoke_enabled=karaoke_enabled,
@@ -4960,33 +5155,34 @@ RULES:
 
             # Not all images are same size,
             # so we need to resize them
-            if round((clip.w / clip.h), 4) < 0.5625:
+            target_aspect = out_w / out_h
+            if round((clip.w / clip.h), 4) < target_aspect:
                 if get_verbose():
-                    info(f" => Resizing Image: {image_path} to 1080x1920")
+                    info(f" => Resizing Image: {image_path} to {out_w}x{out_h}")
                 clip = crop(
                     clip,
                     width=clip.w,
-                    height=round(clip.w / 0.5625),
+                    height=round(clip.w / target_aspect),
                     x_center=clip.w / 2,
                     y_center=clip.h / 2,
                 )
             else:
                 if get_verbose():
-                    info(f" => Resizing Image: {image_path} to 1920x1080")
+                    info(f" => Resizing Image: {image_path} to {out_w}x{out_h}")
                 clip = crop(
                     clip,
-                    width=round(0.5625 * clip.h),
+                    width=round(target_aspect * clip.h),
                     height=clip.h,
                     x_center=clip.w / 2,
                     y_center=clip.h / 2,
                 )
-            clip = clip.resize((1080, 1920))
+            clip = clip.resize(short_size)
 
             if ken_burns_enabled:
                 # Ken Burns: subtle zoom (alternating in/out per image for variety).
                 # Pre-scale to 1.06x so zoom never reveals empty edges, then animate scale
                 # between 1.00 (fit) and ~1.06 (fill+zoom). We wrap in a fixed-size
-                # CompositeVideoClip so the output stays a deterministic 1080x1920.
+                # CompositeVideoClip so the output stays a deterministic canvas size.
                 base = clip.resize(1.06).set_position("center")
                 if idx % 2 == 0:
                     kb = base.resize(lambda t, d=this_dur: (1 / 1.06) + (1 - 1 / 1.06) * (t / d))
@@ -4994,7 +5190,7 @@ RULES:
                     kb = base.resize(lambda t, d=this_dur: 1 - (1 - 1 / 1.06) * (t / d))
                 kb = kb.set_position("center")
 
-                clip = CompositeVideoClip([kb], size=(1080, 1920)).set_duration(this_dur)
+                clip = CompositeVideoClip([kb], size=short_size).set_duration(this_dur)
 
             # Subtle crossfade in (except first clip) for smooth transitions
             if crossfade > 0 and idx > 0 and this_dur > crossfade:
@@ -5020,7 +5216,11 @@ RULES:
             try:
                 print(colored("[+] Building karaoke subtitles...", "blue"), flush=True)
 
-                subtitles = self._build_karaoke_subtitles(max_duration, fps=render_fps)
+                subtitles = self._build_karaoke_subtitles(
+                    max_duration,
+                    fps=render_fps,
+                    output_size=short_size,
+                )
 
                 if subtitles is not None:
                     print(colored("[+] Karaoke subtitles ready.", "green"), flush=True)
@@ -5052,7 +5252,7 @@ RULES:
             # past the last image (which would produce a black tail with subs visible).
             subtitles = subtitles.set_duration(max_duration)
             final_clip = CompositeVideoClip(
-                [final_clip, subtitles], size=(1080, 1920)
+                [final_clip, subtitles], size=short_size
             ).set_duration(max_duration)
 
         print(colored("[+] Rendering final video (this may take a minute)...", "blue"), flush=True)
@@ -6449,7 +6649,7 @@ No markdown. No explanation. Just the JSON array."""
 
         return image_prompts
 
-    def _try_leonardo_landscape(self, prompt: str) -> bytes:
+    def _try_leonardo_landscape(self, prompt: str, width: int = 3840, height: int = 2160) -> bytes:
         """Try Leonardo AI API in 16:9 landscape format for long videos."""
         from config import get_leonardo_api_key
         api_key = get_leonardo_api_key()
@@ -6462,7 +6662,7 @@ No markdown. No explanation. Just the JSON array."""
             "Content-Type": "application/json",
         }
         payload = {
-            "prompt": prompt[:1500],
+            "prompt": self._targeted_image_prompt(prompt, width, height)[:1500],
             "modelId": "de7d3faf-762f-48e0-b3b7-9d0ac3a3fcf3",  # Leonardo Phoenix 1.0
             "width": 1024,
             "height": 576,
@@ -6510,10 +6710,14 @@ No markdown. No explanation. Just the JSON array."""
 
     def generate_long_images(self, prompts: List[str]) -> None:
         """
-        Generate images for long video in 16:9 landscape format (1920x1080).
+        Generate images for long video in 16:9 landscape format.
         Cascade: Leonardo AI â†’ HuggingFace â†’ Pillow fallback.
         """
-        print(colored(f"\n  [Long Video] Generating {len(prompts)} images (1920x1080)...", "blue"))
+        long_size = get_long_render_size()
+        print(colored(
+            f"\n  [Long Video] Generating {len(prompts)} images ({long_size[0]}x{long_size[1]})...",
+            "blue",
+        ))
 
         for i, prompt in enumerate(prompts):
             print(colored(f"\n  Image {i+1}/{len(prompts)}", "blue"))
@@ -6524,13 +6728,13 @@ No markdown. No explanation. Just the JSON array."""
 
             providers = [
                 (name, fn)
-                for name, fn, _kind in self._ai_image_providers(1920, 1080)
+                for name, fn, _kind in self._ai_image_providers(*long_size)
             ]
             for name, fn in providers:
                 try:
                     img_bytes = fn(styled_prompt)
                     if img_bytes and len(img_bytes) > 1000:
-                        self._persist_image(img_bytes, name)
+                        self._persist_image(img_bytes, name, target_size=long_size)
                         saved = True
                         break
                 except Exception as e:
@@ -6539,12 +6743,16 @@ No markdown. No explanation. Just the JSON array."""
                     time.sleep(1)
 
             if not saved:
-                self._generate_fallback_image_landscape(prompt)
+                self._generate_fallback_image_landscape(prompt, target_size=long_size)
 
         success(f"All {len(self.images)} long video images ready!")
 
-    def _generate_fallback_image_landscape(self, prompt: str) -> str:
-        """Fallback landscape image (1920x1080) when all providers fail."""
+    def _generate_fallback_image_landscape(
+        self,
+        prompt: str,
+        target_size: tuple[int, int] | None = None,
+    ) -> str:
+        """Fallback landscape image when all providers fail."""
         from PIL import Image, ImageDraw, ImageFont
         import random as rand_mod
 
@@ -6558,18 +6766,19 @@ No markdown. No explanation. Just the JSON array."""
             ((10, 40, 20), (30, 100, 60)),
         ]
         c1, c2 = rand_mod.choice(color_schemes)
-        img = Image.new("RGB", (1920, 1080))
+        width, height = target_size or get_long_render_size()
+        img = Image.new("RGB", (width, height))
         draw = ImageDraw.Draw(img)
 
-        for y in range(1080):
-            r = int(c1[0] + (c2[0] - c1[0]) * y / 1080)
-            g = int(c1[1] + (c2[1] - c1[1]) * y / 1080)
-            b = int(c1[2] + (c2[2] - c1[2]) * y / 1080)
-            draw.line([(0, y), (1920, y)], fill=(r, g, b))
+        for y in range(height):
+            r = int(c1[0] + (c2[0] - c1[0]) * y / height)
+            g = int(c1[1] + (c2[1] - c1[1]) * y / height)
+            b = int(c1[2] + (c2[2] - c1[2]) * y / height)
+            draw.line([(0, y), (width, y)], fill=(r, g, b))
 
         try:
             font_path = os.path.join(get_fonts_dir(), get_font())
-            font = ImageFont.truetype(font_path, 48)
+            font = ImageFont.truetype(font_path, _scale_from_base(48, 1920, width))
         except Exception:
             font = ImageFont.load_default()
 
@@ -6585,13 +6794,15 @@ No markdown. No explanation. Just the JSON array."""
         if current_line:
             text_lines.append(current_line)
 
-        y_pos = 1080 // 2 - (len(text_lines) * 60) // 2
+        line_step = _scale_from_base(60, 1080, height)
+        y_pos = height // 2 - (len(text_lines) * line_step) // 2
         for line in text_lines:
             bbox = draw.textbbox((0, 0), line, font=font)
             w = bbox[2] - bbox[0]
-            draw.text(((1920 - w) // 2 + 3, y_pos + 3), line, fill=(0, 0, 0), font=font)
-            draw.text(((1920 - w) // 2, y_pos), line, fill="white", font=font)
-            y_pos += 60
+            shadow = _scale_from_base(3, 1920, width)
+            draw.text(((width - w) // 2 + shadow, y_pos + shadow), line, fill=(0, 0, 0), font=font)
+            draw.text(((width - w) // 2, y_pos), line, fill="white", font=font)
+            y_pos += line_step
 
         image_path = os.path.join(get_temp_cache_path(), str(uuid4()) + ".png")
         img.save(image_path)
@@ -6738,11 +6949,18 @@ No markdown. No explanation. Just the JSON array."""
         """
         combined_path = os.path.join(get_video_cache_path(), str(uuid4()) + ".mp4")
         threads = get_threads()
+        long_size = get_long_render_size()
+        out_w, out_h = long_size
+        render_fps = get_long_render_fps()
         tts_clip = AudioFileClip(self.tts_path)
         max_duration = tts_clip.duration
 
         t_total = time.time()
-        print(colored(f"[+] Combining {len(self.images)} images into long video ({max_duration:.0f}s)...", "blue"), flush=True)
+        print(colored(
+            f"[+] Combining {len(self.images)} images into long video "
+            f"({out_w}x{out_h} @ {render_fps}fps, {max_duration:.0f}s)...",
+            "blue",
+        ), flush=True)
 
         valid_images = [p for p in self.images if os.path.exists(p)]
         if not valid_images:
@@ -6766,6 +6984,9 @@ No markdown. No explanation. Just the JSON array."""
         if is_soundimage_track(random_song):
             self._append_music_attribution(MATYAS_ATTRIBUTION)
 
+        if not getattr(self, "word_timestamps", None):
+            self._ensure_karaoke_word_timestamps(self.tts_path, max_duration)
+
         try:
             print(colored("[+] Rendering long video with ffmpeg...", "blue"), flush=True)
             t_phase = time.time()
@@ -6774,7 +6995,8 @@ No markdown. No explanation. Just the JSON array."""
                 image_paths=self.images,
                 durations=durations,
                 random_song=random_song,
-                fps=24,
+                fps=render_fps,
+                output_size=long_size,
                 crossfade=CROSSFADE_DUR,
                 karaoke_enabled=bool(getattr(self, "word_timestamps", None)),
                 music_volume=0.10,
@@ -6801,17 +7023,29 @@ No markdown. No explanation. Just the JSON array."""
                 print(colored(f"    [Build] Clip {clip_idx}/{n_total} ({clip_dur:.1f}s)...", "cyan"), flush=True)
                 img_clip = ImageClip(image_path).set_duration(clip_dur)
 
-                # Resize to 1920x1080
+                # Resize to the configured landscape canvas.
                 w, h = img_clip.size
                 aspect = w / h
-                target_aspect = 1920 / 1080
+                target_aspect = out_w / out_h
 
                 if aspect > target_aspect:
-                    img_clip = img_clip.resize(height=1080)
-                    img_clip = crop(img_clip, x_center=img_clip.w / 2, y_center=540, width=1920, height=1080)
+                    img_clip = img_clip.resize(height=out_h)
+                    img_clip = crop(
+                        img_clip,
+                        x_center=img_clip.w / 2,
+                        y_center=out_h / 2,
+                        width=out_w,
+                        height=out_h,
+                    )
                 else:
-                    img_clip = img_clip.resize(width=1920)
-                    img_clip = crop(img_clip, x_center=960, y_center=img_clip.h / 2, width=1920, height=1080)
+                    img_clip = img_clip.resize(width=out_w)
+                    img_clip = crop(
+                        img_clip,
+                        x_center=out_w / 2,
+                        y_center=img_clip.h / 2,
+                        width=out_w,
+                        height=out_h,
+                    )
 
                 # Ken Burns: gentle slow zoom (1.0x â†’ 1.08x over clip duration)
                 # Use default arg to capture clip_dur in the closure
@@ -6821,7 +7055,7 @@ No markdown. No explanation. Just the JSON array."""
                 if clip_dur > 2.0:
                     img_clip = img_clip.crossfadein(0.8)
 
-                img_clip = img_clip.set_fps(24)
+                img_clip = img_clip.set_fps(render_fps)
                 clips.append(img_clip)
 
             except Exception as e:
@@ -6838,7 +7072,7 @@ No markdown. No explanation. Just the JSON array."""
         t_phase = time.time()
         padding = -CROSSFADE_DUR if len(clips) > 1 else 0
         final_clip = concatenate_videoclips(clips, padding=padding, method="compose")
-        final_clip = final_clip.set_fps(24)
+        final_clip = final_clip.set_fps(render_fps)
 
         # The video should now last about (audio + EXTRA_TAIL); cap to (audio + EXTRA_TAIL)
         # so we have a small visual tail beyond the last narration word that fades out.
@@ -6853,11 +7087,15 @@ No markdown. No explanation. Just the JSON array."""
         if getattr(self, "word_timestamps", None):
             try:
                 print(colored("[+] Building long-video karaoke subtitles...", "blue"), flush=True)
-                subtitles = self._build_karaoke_subtitles_landscape(target_visual_duration, fps=24)
+                subtitles = self._build_karaoke_subtitles_landscape(
+                    target_visual_duration,
+                    fps=render_fps,
+                    output_size=long_size,
+                )
                 if subtitles is not None:
                     subtitles = subtitles.set_duration(target_visual_duration)
                     final_clip = CompositeVideoClip(
-                        [final_clip, subtitles], size=(1920, 1080)
+                        [final_clip, subtitles], size=long_size
                     ).set_duration(target_visual_duration)
                     print(colored("[+] Long karaoke subtitles ready.", "green"), flush=True)
             except Exception as e:
@@ -6896,7 +7134,7 @@ No markdown. No explanation. Just the JSON array."""
             final_clip,
             combined_path,
             threads=threads,
-            fps=24,
+            fps=render_fps,
         )
         print(colored(f"    [Render] done in {time.time() - t_phase:.1f}s", "green"), flush=True)
         print(colored(f"[+] Total combine_long: {time.time() - t_total:.1f}s", "blue"), flush=True)
@@ -7000,7 +7238,7 @@ No markdown. No explanation. Just the JSON array."""
         self.images = []  # Reset images
         self.generate_long_prompts()
 
-        # Step 6: Generate images (landscape 1920x1080)
+        # Step 6: Generate images at the configured landscape render size.
         info("\n[6/7] Generating images...")
         self.generate_long_images(self.image_prompts)
 

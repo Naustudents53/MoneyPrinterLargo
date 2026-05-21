@@ -45,12 +45,14 @@ def main() -> int:
     stt_provider = str(cfg.get("stt_provider", "local_whisper")).lower()
     llm_provider = str(cfg.get("llm_provider", "gemini")).lower()
     image_provider = str(cfg.get("image_provider", "auto")).lower()
+    photo_vision_provider = str(cfg.get("photo_vision_provider", "auto")).lower()
     openai_use_codex_cli = bool(cfg.get("openai_use_codex_cli", False))
     codex_cli_generate_images = bool(cfg.get("codex_cli_generate_images", True))
 
     ok(f"stt_provider={stt_provider}")
     ok(f"llm_provider={llm_provider}")
     ok(f"image_provider={image_provider}")
+    ok(f"photo_vision_provider={photo_vision_provider}")
 
     imagemagick_path = cfg.get("imagemagick_path", "")
     if imagemagick_path and os.path.exists(imagemagick_path):
@@ -142,6 +144,46 @@ def main() -> int:
             ok("Nano Banana/Gemini image key is set")
         else:
             fail("Nano Banana image provider needs nanobanana2_api_key or gemini_api_key")
+            failures += 1
+
+    # Uploaded-photo vision analysis
+    vision_aliases = {
+        "codex_cli": "codex",
+        "codex-cli": "codex",
+        "claude_cli": "claude",
+        "claude-cli": "claude",
+        "openai_api": "openai",
+        "openai-api": "openai",
+    }
+    photo_vision_provider = vision_aliases.get(photo_vision_provider, photo_vision_provider)
+    if photo_vision_provider not in {"auto", "gemini", "codex", "claude", "openai"}:
+        fail("photo_vision_provider must be auto, gemini, codex, claude, or openai")
+        failures += 1
+    elif photo_vision_provider == "gemini":
+        if cfg.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY"):
+            ok("Gemini photo vision key is set")
+        else:
+            fail("photo_vision_provider=gemini needs gemini_api_key")
+            failures += 1
+    elif photo_vision_provider == "codex":
+        codex_cmd = str(cfg.get("codex_cli_command", "codex") or "codex")
+        if shutil.which(codex_cmd) or os.path.exists(codex_cmd):
+            ok(f"Codex CLI available for photo vision: {codex_cmd}")
+        else:
+            fail(f"Codex CLI command not found for photo vision: {codex_cmd}")
+            failures += 1
+    elif photo_vision_provider == "claude":
+        claude_cmd = str(cfg.get("claude_cli_command", "claude") or "claude")
+        if shutil.which(claude_cmd) or os.path.exists(claude_cmd):
+            ok(f"Claude CLI available for photo vision: {claude_cmd}")
+        else:
+            fail(f"Claude CLI command not found for photo vision: {claude_cmd}")
+            failures += 1
+    elif photo_vision_provider == "openai":
+        if cfg.get("openai_api_key") or os.environ.get("OPENAI_API_KEY"):
+            ok("OpenAI photo vision key is set")
+        else:
+            fail("photo_vision_provider=openai needs openai_api_key")
             failures += 1
 
     if stt_provider == "local_whisper":

@@ -35,6 +35,7 @@ import {
   type LLMProvider,
   type LLMModel,
   type OpenAIReasoningEffort,
+  type PhotoVisionProvider,
   type SeriesEntry,
   type ShortDurationSeconds,
   type ShortRenderProfile,
@@ -50,9 +51,9 @@ const SHORT_RENDER_META: Record<ShortRenderProfile, {
   hint: string;
   fps: number;
 }> = {
-  quality: { label: "Calidad", hint: "Ken Burns + karaoke", fps: 30 },
-  fast: { label: "Rápido", hint: "Karaoke, sin zoom", fps: 24 },
-  turbo: { label: "Turbo", hint: "Render limpio", fps: 24 },
+  quality: { label: "Calidad", hint: "Ken Burns + karaoke", fps: 60 },
+  fast: { label: "Rápido", hint: "Karaoke, sin zoom", fps: 60 },
+  turbo: { label: "Turbo", hint: "Render limpio", fps: 60 },
 };
 
 const RETENTION_MODE_META: Record<RetentionMode, {
@@ -76,6 +77,14 @@ const IMAGE_PROVIDER_OPTIONS: Array<{ value: ImageProvider; label: string }> = [
   { value: "leonardo", label: "Leonardo API" },
   { value: "openai", label: "OpenAI · Codex Image 2" },
   { value: "gemini", label: "Gemini · Nano Banana" },
+];
+
+const PHOTO_VISION_OPTIONS: Array<{ value: PhotoVisionProvider; label: string }> = [
+  { value: "auto", label: "Auto · LLM actual" },
+  { value: "gemini", label: "Gemini Vision" },
+  { value: "codex", label: "Codex CLI" },
+  { value: "claude", label: "Claude CLI" },
+  { value: "openai", label: "OpenAI API" },
 ];
 
 export function Generate() {
@@ -114,6 +123,7 @@ export function Generate() {
   const [llmModel, setLlmModel] = useState<string>("");
   const [openaiReasoningEffort, setOpenaiReasoningEffort] = useState<OpenAIReasoningEffort>("xhigh");
   const [imageProvider, setImageProvider] = useState<ImageProvider>("auto");
+  const [photoVisionProvider, setPhotoVisionProvider] = useState<PhotoVisionProvider>("auto");
   // Rich model catalog from /api/llm/models — keeps `label` + `description` so
   // the dropdown can show human-readable names instead of raw ids like
   // "gemini-2.5-flash-lite" or "kimi-k2.6:cloud".
@@ -270,6 +280,7 @@ export function Generate() {
       llm_provider: llmProvider || undefined,
       llm_model: llmProvider && llmModel ? llmModel : undefined,
       llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
+      photo_vision_provider: imageMode === "upload" ? photoVisionProvider : undefined,
       hook_profile: hookProfile || undefined,
       photo_upload_id: photoUploadId || undefined,
       retention_mode: kind === "short" ? retentionMode : undefined,
@@ -362,6 +373,7 @@ export function Generate() {
       llm_provider: llmProvider || undefined,
       llm_model: llmProvider && llmModel ? llmModel : undefined,
       llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
+      photo_vision_provider: imageMode === "upload" ? photoVisionProvider : undefined,
       script_file: data.previewId,
       photo_upload_id: photoUploadId || undefined,
       retention_mode: retentionMode,
@@ -383,7 +395,12 @@ export function Generate() {
           (retentionMode === "maxima_retencion" ? shortDuration * 0.08 + 45 : 0),
       )
     : 900;
-  const outputFps = kind === "short" ? SHORT_RENDER_META[shortRenderProfile].fps : 24;
+  const shortResolution = info?.short_render_size || "2160×3840";
+  const longResolution = info?.long_render_size || "3840×2160";
+  const outputFps = kind === "short"
+    ? (info?.short_render_fps || SHORT_RENDER_META[shortRenderProfile].fps)
+    : (info?.long_render_fps || 60);
+  const outputResolution = kind === "short" ? shortResolution : longResolution;
 
   return (
     <>
@@ -683,55 +700,65 @@ export function Generate() {
                 )}
 
                 {imageMode === "upload" && (
-                  <Field
-                    label="Fotos subidas"
-                    hint={photoFiles.length ? `${photoFiles.length} archivos` : "jpg/png/webp"}
-                  >
-                    <div className="flex flex-col gap-2">
-                      <input
-                        id="photo-video-files"
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        className="sr-only"
-                        onChange={(event) =>
-                          setPhotoFiles(Array.from(event.target.files ?? []))
-                        }
+                  <>
+                    <Field label="Vision fotos" hint={photoVisionProvider}>
+                      <SelectMini
+                        value={photoVisionProvider}
+                        onChange={(v) => setPhotoVisionProvider(v as PhotoVisionProvider)}
+                        options={PHOTO_VISION_OPTIONS}
+                        icon={<Eye className="h-3 w-3" strokeWidth={1.5} />}
                       />
-                      <label
-                        htmlFor="photo-video-files"
-                        className={cn(
-                          "inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg px-3 text-[12px] font-medium transition-colors",
-                          "border text-foreground hover:bg-surface",
-                        )}
-                        style={{
-                          borderColor: "hsl(var(--border) / .13)",
-                          background: "hsl(var(--bg-raised) / .55)",
-                        }}
-                      >
-                        <Upload className="h-4 w-4" strokeWidth={1.8} />
-                        {photoFiles.length ? "Cambiar fotos" : "Elegir fotos"}
-                      </label>
-                      {photoFiles.length > 0 && (
-                        <div
-                          className="max-h-[92px] overflow-auto rounded-lg px-2 py-1.5 text-[11px] leading-relaxed font-mono text-muted-foreground"
+                    </Field>
+                    <Field
+                      label="Fotos subidas"
+                      hint={photoFiles.length ? `${photoFiles.length} archivos` : "jpg/png/webp"}
+                    >
+                      <div className="flex flex-col gap-2">
+                        <input
+                          id="photo-video-files"
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          className="sr-only"
+                          onChange={(event) =>
+                            setPhotoFiles(Array.from(event.target.files ?? []))
+                          }
+                        />
+                        <label
+                          htmlFor="photo-video-files"
+                          className={cn(
+                            "inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg px-3 text-[12px] font-medium transition-colors",
+                            "border text-foreground hover:bg-surface",
+                          )}
                           style={{
-                            background: "hsl(var(--background))",
-                            border: "1px solid hsl(var(--border) / .07)",
+                            borderColor: "hsl(var(--border) / .13)",
+                            background: "hsl(var(--bg-raised) / .55)",
                           }}
                         >
-                          {photoFiles.slice(0, 8).map((file) => (
-                            <div key={`${file.name}-${file.size}`} className="truncate">
-                              {file.name}
-                            </div>
-                          ))}
-                          {photoFiles.length > 8 && (
-                            <div>+{photoFiles.length - 8} mas</div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </Field>
+                          <Upload className="h-4 w-4" strokeWidth={1.8} />
+                          {photoFiles.length ? "Cambiar fotos" : "Elegir fotos"}
+                        </label>
+                        {photoFiles.length > 0 && (
+                          <div
+                            className="max-h-[92px] overflow-auto rounded-lg px-2 py-1.5 text-[11px] leading-relaxed font-mono text-muted-foreground"
+                            style={{
+                              background: "hsl(var(--background))",
+                              border: "1px solid hsl(var(--border) / .07)",
+                            }}
+                          >
+                            {photoFiles.slice(0, 8).map((file) => (
+                              <div key={`${file.name}-${file.size}`} className="truncate">
+                                {file.name}
+                              </div>
+                            ))}
+                            {photoFiles.length > 8 && (
+                              <div>+{photoFiles.length - 8} mas</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </Field>
+                  </>
                 )}
 
                 <Field
@@ -934,7 +961,7 @@ export function Generate() {
                   <div className="mt-2.5 flex items-center justify-between text-[11px] text-muted-foreground font-mono">
                     <span>ETA ~{eta}s</span>
                     <span>
-                      · {kind === "short" ? "1080×1920" : "1920×1080"} · {outputFps}fps
+                      · {outputResolution} · {outputFps}fps
                     </span>
                   </div>
                 </div>

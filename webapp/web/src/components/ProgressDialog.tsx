@@ -353,15 +353,16 @@ function formatProgressLine(rawLine: string): string | null {
   match = /Wrote TTS to .+?\((\d+) words timed\)/.exec(line);
   if (match) return `Voz generada: ${match[1]} palabras con tiempos`;
 
-  match = /Short render profile:\s*([^|]+)\|\s*fps=(\d+)\s*\|\s*ken_burns=([^|]+)\|\s*karaoke=([^|]+)\|\s*crossfade=([\d.]+)s/i.exec(line);
+  match = /Short render profile:\s*([^|]+)\|\s*(?:size=([^|]+)\|\s*)?fps=(\d+)\s*\|\s*ken_burns=([^|]+)\|\s*karaoke=([^|]+)\|\s*crossfade=([\d.]+)s/i.exec(line);
   if (match) {
     return [
       `Render Short: ${match[1].trim()}`,
-      `${match[2]} fps`,
-      `movimiento=${yesNo(match[3].trim())}`,
-      `subtitulos=${yesNo(match[4].trim())}`,
-      `transicion=${match[5]}s`,
-    ].join(", ");
+      match[2] ? match[2].trim() : "",
+      `${match[3]} fps`,
+      `movimiento=${yesNo(match[4].trim())}`,
+      `subtitulos=${yesNo(match[5].trim())}`,
+      `transicion=${match[6]}s`,
+    ].filter(Boolean).join(", ");
   }
 
   match = /Chose song:\s*([^\s]+)(?:\s+\(.+\))?/.exec(line);

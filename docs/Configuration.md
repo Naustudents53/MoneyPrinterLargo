@@ -10,6 +10,7 @@ All your configurations will be in a file in the root directory, called `config.
 - `ollama_base_url`: `string` - Base URL of your local Ollama server (default: `http://127.0.0.1:11434`).
 - `ollama_model`: `string` - Ollama model to use for text generation (e.g. `llama3.2:3b`). If empty, the app queries Ollama at startup and lets you pick from the available models interactively.
 - `image_provider`: `string` - AI image backend override: `auto`, `leonardo`, `openai` (Codex CLI Image), or `gemini` (Nano Banana).
+- `photo_vision_provider`: `string` - Uploaded-photo analysis backend: `auto`, `gemini`, `codex` (Codex CLI), `claude` (Claude CLI), or `openai` (OpenAI API). `auto` starts with the selected LLM when it supports vision, then falls back through the configured local/API options.
 - `twitter_language`: `string` - The language that will be used to generate & post tweets.
 - `nanobanana2_api_base_url`: `string` - Nano Banana 2 API base URL (default: `https://generativelanguage.googleapis.com/v1beta`).
 - `gemini_api_key`: `string` - API key for the Gemini API (used for both text generation and Nano Banana 2 image generation). If empty, MPP falls back to environment variable `GEMINI_API_KEY`.
@@ -31,10 +32,17 @@ All your configurations will be in a file in the root directory, called `config.
 - `nanobanana2_aspect_ratio`: `string` - Aspect ratio for generated images (default: `9:16`).
 - `threads`: `number` - The amount of threads that will be used to execute operations, e.g. writing to a file using MoviePy.
 - `short_render_profile`: `string` - Short render tradeoff: `quality` keeps Ken Burns + karaoke subtitles, `fast` uses static images + karaoke subtitles, and `turbo` uses static images without burned-in karaoke for maximum render speed.
-- `short_render_fps`: `number` - FPS for Shorts rendering. Lower values reduce MoviePy per-frame work; `24` is a good speed/quality default.
+- `short_render_size`: `string` - Shorts render and generated-image canvas, e.g. `2160x3840` for vertical 4K.
+- `short_render_fps`: `number` - FPS for Shorts rendering. Defaults to `60`; lower values reduce MoviePy/ffmpeg work.
 - `short_ken_burns`: `boolean` - If `true`, Shorts animate image zooms. This is visually richer but much slower because MoviePy resizes every frame in Python.
 - `short_karaoke_subtitles`: `boolean` - If `true`, Shorts burn word-level karaoke subtitles into the video. Disable for the fastest render.
 - `short_crossfade_seconds`: `number` - Crossfade overlap between Short images. Use `0` for the fastest concatenation path.
+- `subtitle_font_size`: `number` - Base karaoke subtitle font size before render-size scaling.
+- `subtitle_position_y`: `number` - Base karaoke subtitle vertical position before render-size scaling.
+- `subtitle_max_words_per_group`: `number` - Maximum words shown together in one karaoke subtitle phrase.
+- `subtitle_pause_gap_seconds`: `number` - Pause length that starts a new karaoke subtitle phrase.
+- `long_render_size`: `string` - Long-video render and generated-image canvas, e.g. `3840x2160` for landscape 4K.
+- `long_render_fps`: `number` - FPS for long-video rendering. Defaults to `60`.
 - `render_codec`: `string` - ffmpeg codec used by MoviePy. Use `libx264` for reliable CPU encoding or `auto` to try hardware H.264 encoders before falling back.
 - `render_preset`: `string` - Optional ffmpeg preset override. Empty uses `ultrafast` for `libx264` and the encoder default for hardware codecs.
 - `render_bitrate`: `string` - Optional video bitrate override, e.g. `8000k`.
@@ -72,6 +80,7 @@ All your configurations will be in a file in the root directory, called `config.
   "ollama_base_url": "http://127.0.0.1:11434",
   "ollama_model": "",
   "image_provider": "auto",
+  "photo_vision_provider": "auto",
   "twitter_language": "English",
   "nanobanana2_api_base_url": "https://generativelanguage.googleapis.com/v1beta",
   "nanobanana2_api_key": "",
@@ -94,10 +103,17 @@ All your configurations will be in a file in the root directory, called `config.
   "nanobanana2_aspect_ratio": "9:16",
   "threads": 2,
   "short_render_profile": "quality",
-  "short_render_fps": 30,
+  "short_render_size": "2160x3840",
+  "short_render_fps": 60,
   "short_ken_burns": true,
   "short_karaoke_subtitles": true,
   "short_crossfade_seconds": 0.4,
+  "subtitle_font_size": 80,
+  "subtitle_position_y": 1300,
+  "subtitle_max_words_per_group": 5,
+  "subtitle_pause_gap_seconds": 0.35,
+  "long_render_size": "3840x2160",
+  "long_render_fps": 60,
   "render_codec": "libx264",
   "render_preset": "ultrafast",
   "render_bitrate": "",
@@ -133,6 +149,8 @@ All your configurations will be in a file in the root directory, called `config.
 - `MP_OPENAI_USE_CODEX_CLI`: set to `true` to route the OpenAI provider through `codex exec` without editing `config.json`.
 - `MP_CODEX_CLI_COMMAND`, `MP_CODEX_CLI_MODEL`, `MP_CODEX_CLI_SANDBOX`, `MP_CODEX_CLI_TIMEOUT_SECONDS`: override Codex CLI settings.
 - `MP_CODEX_CLI_IMAGE_SANDBOX`, `MP_CODEX_CLI_IMAGE_TIMEOUT_SECONDS`: override Codex CLI image settings.
+- `MP_PHOTO_VISION_PROVIDER`: override uploaded-photo analysis for one run (`auto`, `gemini`, `codex`, `claude`, or `openai`).
+- `MP_SHORT_RENDER_SIZE`, `MP_SHORT_RENDER_FPS`, `MP_LONG_RENDER_SIZE`, `MP_LONG_RENDER_FPS`: override render canvases/FPS per run.
 
 Example:
 

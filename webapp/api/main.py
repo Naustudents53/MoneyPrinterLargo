@@ -354,6 +354,27 @@ def _infer_llm_provider_from_model(model_id: str) -> str:
 @app.get("/api/system/info")
 def system_info():
     cfg = _read_config()
+
+    def _cfg_size(name: str, default: str) -> str:
+        value = cfg.get(name) or default
+        if isinstance(value, dict):
+            width = value.get("width")
+            height = value.get("height")
+            if width and height:
+                return f"{width}×{height}"
+        if isinstance(value, (list, tuple)) and len(value) >= 2:
+            return f"{value[0]}×{value[1]}"
+        return str(value).replace("x", "×")
+
+    short_size = _cfg_size("short_render_size", "2160x3840")
+    long_size = _cfg_size("long_render_size", "3840x2160")
+
+    def _cfg_int(name: str, default: int) -> int:
+        try:
+            return int(cfg.get(name) or default)
+        except (TypeError, ValueError):
+            return default
+
     return {
         "root_dir": str(ROOT_DIR),
         "mp_dir_exists": MP_DIR.exists(),
@@ -362,6 +383,10 @@ def system_info():
         "tts_voice": cfg.get("tts_voice", "Jasper"),
         "image_aspect_ratio": "9:16",
         "short_render_profile": cfg.get("short_render_profile", "quality"),
+        "short_render_size": short_size,
+        "long_render_size": long_size,
+        "short_render_fps": _cfg_int("short_render_fps", 60),
+        "long_render_fps": _cfg_int("long_render_fps", 60),
         "stt_provider": cfg.get("stt_provider", "local_whisper"),
         "headless": cfg.get("headless", False),
         "version": "1.0.0",
@@ -734,6 +759,7 @@ _CONFIG_FIELD_DEFS = [
     # LLM
     {"key": "llm_provider", "label": "LLM provider (openai / claude / gemini / ollama / pollinations)", "type": "str", "group": "LLM"},
     {"key": "image_provider", "label": "AI image provider (auto / leonardo / openai / gemini)", "type": "str", "group": "Image"},
+    {"key": "photo_vision_provider", "label": "Uploaded-photo vision (auto / gemini / codex / claude / openai)", "type": "str", "group": "LLM"},
     {"key": "openai_api_key", "label": "OpenAI API key", "type": "secret", "group": "LLM"},
     {"key": "openai_base_url", "label": "OpenAI base URL", "type": "str", "group": "LLM"},
     {"key": "openai_model", "label": "OpenAI default model", "type": "str", "group": "LLM"},
@@ -776,6 +802,7 @@ _CONFIG_FIELD_DEFS = [
 
 
 _OPENAI_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
+_PHOTO_VISION_PROVIDERS = {"auto", "gemini", "codex", "claude", "openai"}
 
 
 def _normalize_openai_reasoning_effort(value: str) -> str:
@@ -1841,6 +1868,7 @@ async def generate_video(
     llm_provider: str = "",
     llm_model: str = "",
     llm_reasoning_effort: str = "",
+    photo_vision_provider: str = "",
     hook_profile: str = "",
     model: str = "",
     sentence_length: int = 0,
@@ -1867,6 +1895,9 @@ async def generate_video(
 
     if llm_provider and llm_provider not in ("ollama", "gemini", "openai", "claude", "pollinations"):
         raise HTTPException(400, "llm_provider must be 'ollama', 'gemini', 'openai', 'claude', or 'pollinations'")
+    photo_vision_provider_norm = (photo_vision_provider or "").strip().lower()
+    if photo_vision_provider_norm and photo_vision_provider_norm not in _PHOTO_VISION_PROVIDERS:
+        raise HTTPException(400, "photo_vision_provider must be 'auto', 'gemini', 'codex', 'claude', or 'openai'")
     image_provider_norm = (image_provider or "auto").strip().lower()
     if image_provider_norm not in ("auto", "leonardo", "openai", "gemini"):
         raise HTTPException(400, "image_provider must be 'auto', 'leonardo', 'openai', or 'gemini'")
@@ -1921,6 +1952,8 @@ async def generate_video(
         args += ["--llm-model", llm_model]
     if effort:
         args += ["--llm-reasoning-effort", effort]
+    if photo_vision_provider_norm:
+        args += ["--photo-vision-provider", photo_vision_provider_norm]
     if hook_profile_norm:
         args += ["--hook-profile", hook_profile_norm]
     if model:

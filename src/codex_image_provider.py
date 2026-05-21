@@ -27,6 +27,7 @@ Canvas:
 - {width}x{height}px
 - PNG format
 - {orientation}
+- Native 4K/UHD detail when the requested canvas is 4K-sized; do not create a low-resolution draft and upscale it.
 
 Visual prompt:
 {prompt}

@@ -267,6 +267,42 @@ def get_short_crossfade_seconds() -> float:
         seconds = default
     return max(0.0, min(2.0, seconds))
 
+def _get_int_config(name: str, default: int, minimum: int, maximum: int) -> int:
+    value = os.environ.get(f"MP_{name.upper()}", "").strip()
+    if not value:
+        value = _get_config_value(name, default)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+def _get_float_config(name: str, default: float, minimum: float, maximum: float) -> float:
+    value = os.environ.get(f"MP_{name.upper()}", "").strip()
+    if not value:
+        value = _get_config_value(name, default)
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+def get_subtitle_font_size(default: int) -> int:
+    """Gets the base karaoke subtitle font size before render-size scaling."""
+    return _get_int_config("subtitle_font_size", default, 28, 180)
+
+def get_subtitle_position_y(default: int) -> int:
+    """Gets the base karaoke subtitle vertical position before render-size scaling."""
+    return _get_int_config("subtitle_position_y", default, 0, 4320)
+
+def get_subtitle_max_words_per_group(default: int) -> int:
+    """Gets the max words shown together in one karaoke subtitle phrase."""
+    return _get_int_config("subtitle_max_words_per_group", default, 1, 10)
+
+def get_subtitle_pause_gap_seconds(default: float = 0.35) -> float:
+    """Gets the pause length that starts a new karaoke subtitle phrase."""
+    return _get_float_config("subtitle_pause_gap_seconds", default, 0.0, 2.0)
+
 def get_render_codec() -> str:
     """
     Gets the MoviePy/ffmpeg video codec.
@@ -666,6 +702,25 @@ def get_image_provider() -> str:
     if not value:
         value = str(_get_config_value("image_provider", "auto") or "").strip().lower()
     if value not in {"auto", "leonardo", "openai", "gemini"}:
+        return "auto"
+    return value
+
+
+def get_photo_vision_provider() -> str:
+    """Gets the preferred uploaded-photo vision backend."""
+    value = os.environ.get("MP_PHOTO_VISION_PROVIDER", "").strip().lower()
+    if not value:
+        value = str(_get_config_value("photo_vision_provider", "auto") or "").strip().lower()
+    aliases = {
+        "codex_cli": "codex",
+        "codex-cli": "codex",
+        "claude_cli": "claude",
+        "claude-cli": "claude",
+        "openai_api": "openai",
+        "openai-api": "openai",
+    }
+    value = aliases.get(value, value)
+    if value not in {"auto", "gemini", "codex", "claude", "openai"}:
         return "auto"
     return value
 

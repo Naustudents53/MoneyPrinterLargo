@@ -149,6 +149,7 @@ Configura, como mínimo:
 - Para usar tu cuenta local de Codex como backend de OpenAI: `llm_provider: "openai"`, `openai_use_codex_cli: true` y `codex_cli_generate_images: true`.
 - API keys necesarias según el proveedor elegido.
 - Proveedor de imágenes.
+- `photo_vision_provider`: proveedor para analizar fotos subidas (`auto`, `gemini`, `codex`, `claude`, `openai`).
 - Proveedor de TTS/STT.
 - Canales, voces, estilos y series si vas a generar videos largos.
 

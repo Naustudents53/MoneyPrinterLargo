@@ -50,6 +50,7 @@ with open(cfg_path, "r", encoding="utf-8") as f:
 # Set defaults per service without overriding explicit user choices.
 cfg.setdefault("llm_provider", "local_ollama")
 cfg.setdefault("image_provider", "local_automatic1111")
+cfg.setdefault("photo_vision_provider", "auto")
 cfg.setdefault("stt_provider", "local_whisper")
 
 cfg.setdefault("ollama_base_url", "http://127.0.0.1:11434")
@@ -58,6 +59,14 @@ cfg.setdefault("cloudflare_worker_url", "")
 cfg.setdefault("whisper_model", "base")
 cfg.setdefault("whisper_device", "auto")
 cfg.setdefault("whisper_compute_type", "int8")
+cfg.setdefault("short_render_size", "2160x3840")
+cfg.setdefault("short_render_fps", 60)
+cfg.setdefault("long_render_size", "3840x2160")
+cfg.setdefault("long_render_fps", 60)
+cfg.setdefault("subtitle_font_size", 80)
+cfg.setdefault("subtitle_position_y", 1300)
+cfg.setdefault("subtitle_max_words_per_group", 5)
+cfg.setdefault("subtitle_pause_gap_seconds", 0.35)
 
 magick_path = os.environ.get("MAGICK_PATH", "")
 if magick_path:

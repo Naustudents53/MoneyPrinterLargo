@@ -5,9 +5,11 @@ import io
 import json
 import os
 import re
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Callable, Iterable, Literal
 from uuid import uuid4
 
 import requests
@@ -16,11 +18,22 @@ from PIL import Image, ImageOps
 
 from config import (
     ROOT_DIR,
+    get_claude_cli_command,
+    get_claude_cli_model,
+    get_claude_cli_models,
+    get_claude_cli_timeout_seconds,
+    get_codex_cli_command,
+    get_codex_cli_model,
+    get_codex_cli_sandbox,
+    get_codex_cli_timeout_seconds,
     get_gemini_api_key,
     get_gemini_models,
+    get_openai_reasoning_effort,
     get_openai_api_key,
     get_openai_base_url,
     get_openai_models,
+    get_openai_use_codex_cli,
+    get_photo_vision_provider,
     resolve_series,
 )
 from status import info, success, warning
@@ -57,6 +70,14 @@ SUPPORTED_PHOTO_EXTENSIONS = {
     ".tiff",
 }
 
+SUPPORTED_PHOTO_VISION_PROVIDERS = {"auto", "gemini", "codex", "claude", "openai"}
+PHOTO_VISION_PROVIDER_LABELS = {
+    "gemini": "Gemini vision",
+    "codex": "Codex CLI vision",
+    "claude": "Claude CLI vision",
+    "openai": "OpenAI API vision",
+}
+
 
 @dataclass
 class PhotoVideoRequest:
@@ -67,6 +88,7 @@ class PhotoVideoRequest:
     topic: str = ""
     script: str = ""
     auto_analyze: bool = True
+    photo_vision_provider: str = ""
 
 
 @dataclass
@@ -132,6 +154,20 @@ def _strip_wrapping_quotes(text: str) -> str:
     return re.sub(r'^[\s"\'`]+|[\s"\'`]+$', "", text or "").strip()
 
 
+def _normalize_photo_vision_provider(value: str) -> str:
+    provider = (value or "").strip().lower()
+    aliases = {
+        "codex_cli": "codex",
+        "codex-cli": "codex",
+        "claude_cli": "claude",
+        "claude-cli": "claude",
+        "openai_api": "openai",
+        "openai-api": "openai",
+    }
+    provider = aliases.get(provider, provider)
+    return provider if provider in SUPPORTED_PHOTO_VISION_PROVIDERS else "auto"
+
+
 class PhotoVideoGenerator:
     """
     Orchestrates a complete video from user-uploaded photos.
@@ -167,6 +203,7 @@ class PhotoVideoGenerator:
                 kind=kind,
                 photo_paths=self.youtube.images,
                 user_topic=request.topic,
+                vision_provider=request.photo_vision_provider,
             )
 
         self.youtube.subject = self._resolve_subject(request, analysis)
@@ -215,13 +252,11 @@ class PhotoVideoGenerator:
         kind: PhotoVideoKind,
         photo_paths: list[str],
         user_topic: str = "",
+        vision_provider: str = "",
     ) -> PhotoAnalysis:
         prompt = self._photo_analysis_prompt(kind, photo_paths, user_topic)
 
-        for provider_name, fn in (
-            ("Gemini vision", self._analyze_with_gemini_vision),
-            ("OpenAI vision", self._analyze_with_openai_vision),
-        ):
+        for provider_name, fn in self._photo_vision_providers(vision_provider):
             try:
                 raw = fn(prompt, photo_paths)
                 analysis = self._parse_analysis(raw)
@@ -237,6 +272,50 @@ class PhotoVideoGenerator:
             self._metadata_only_analysis_prompt(kind, photo_paths, user_topic)
         )
         return self._parse_analysis(raw)
+
+    def _photo_vision_providers(
+        self,
+        requested_provider: str = "",
+    ) -> list[tuple[str, Callable[[str, list[str]], str]]]:
+        provider = _normalize_photo_vision_provider(
+            requested_provider or get_photo_vision_provider()
+        )
+
+        order: list[str] = []
+        if provider != "auto":
+            order.append(provider)
+        else:
+            active_provider = ""
+            try:
+                from llm_provider import get_active_provider
+
+                active_provider = (get_active_provider() or "").strip().lower()
+            except Exception:
+                active_provider = ""
+
+            if active_provider == "gemini":
+                order.append("gemini")
+            elif active_provider == "claude":
+                order.append("claude")
+            elif active_provider == "openai":
+                order.append("codex" if get_openai_use_codex_cli() else "openai")
+
+            order.extend(["gemini", "codex", "claude", "openai"])
+
+        providers = {
+            "gemini": self._analyze_with_gemini_vision,
+            "codex": self._analyze_with_codex_cli_vision,
+            "claude": self._analyze_with_claude_cli_vision,
+            "openai": self._analyze_with_openai_vision,
+        }
+        out: list[tuple[str, Callable[[str, list[str]], str]]] = []
+        seen: set[str] = set()
+        for key in order:
+            if key in seen or key not in providers:
+                continue
+            seen.add(key)
+            out.append((PHOTO_VISION_PROVIDER_LABELS[key], providers[key]))
+        return out
 
     def _resolve_subject(self, request: PhotoVideoRequest, analysis: PhotoAnalysis) -> str:
         if request.topic.strip():
@@ -595,6 +674,185 @@ Return only the topic, under 90 characters. No quotes."""
             raw=raw or "",
         )
 
+    def _build_codex_vision_prompt(self, prompt: str) -> str:
+        return (
+            "You are a non-interactive vision backend for MoneyPrinter Largo. "
+            "Analyze the attached images in order. Return only the JSON object "
+            "requested by the user, with no markdown, no preamble and no extra keys.\n\n"
+            f"{prompt}"
+        )
+
+    def _build_claude_vision_prompt(self, prompt: str, photo_paths: list[str]) -> str:
+        image_list = "\n".join(
+            f"{idx}. {path}" for idx, path in enumerate(photo_paths[:10], 1)
+        )
+        return (
+            "You are a non-interactive vision backend for MoneyPrinter Largo. "
+            "Use the Read tool to inspect these local image files in order. "
+            "Do not edit files or run commands. Return only the JSON object "
+            "requested by the user, with no markdown, no preamble and no extra keys.\n\n"
+            f"Image files:\n{image_list}\n\n"
+            f"{prompt}"
+        )
+
+    def _analyze_with_codex_cli_vision(self, prompt: str, photo_paths: list[str]) -> str:
+        selected_model = ""
+        try:
+            from llm_provider import get_active_model, get_active_provider
+
+            active_model = get_active_model()
+            if get_active_provider() == "openai" and isinstance(active_model, str):
+                selected_model = active_model.strip()
+        except Exception:
+            selected_model = ""
+        selected_model = selected_model or get_codex_cli_model()
+
+        fd, output_path = tempfile.mkstemp(prefix="mp_codex_vision_", suffix=".txt")
+        os.close(fd)
+
+        effort = get_openai_reasoning_effort().lower()
+        if effort not in {"none", "minimal", "low", "medium", "high", "xhigh"}:
+            effort = "medium"
+
+        args = [
+            get_codex_cli_command(),
+            "-c",
+            f'model_reasoning_effort="{effort}"',
+            "exec",
+            "--cd",
+            str(ROOT_DIR),
+            "--sandbox",
+            get_codex_cli_sandbox(),
+            "--ask-for-approval",
+            "never",
+            "--color",
+            "never",
+            "--ephemeral",
+            "--output-last-message",
+            output_path,
+        ]
+        if selected_model:
+            args += ["--model", selected_model]
+        for path in photo_paths[:10]:
+            args += ["--image", path]
+        args.append("-")
+
+        try:
+            result = subprocess.run(
+                args,
+                input=self._build_codex_vision_prompt(prompt),
+                cwd=str(ROOT_DIR),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=get_codex_cli_timeout_seconds(),
+            )
+
+            text = ""
+            try:
+                with open(output_path, "r", encoding="utf-8", errors="replace") as file:
+                    text = file.read().strip()
+            except FileNotFoundError:
+                pass
+
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "").strip()
+                raise RuntimeError(
+                    f"codex exec exited {result.returncode}: {detail[-1000:]}"
+                )
+            if not text:
+                text = (result.stdout or "").strip()
+            if not text:
+                raise RuntimeError("codex exec returned empty vision analysis")
+            return text
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "Codex CLI was not found on PATH. Install/login with `codex login` "
+                "or set MP_CODEX_CLI_COMMAND."
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("codex exec timed out while analyzing uploaded photos") from exc
+        finally:
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
+
+    def _analyze_with_claude_cli_vision(self, prompt: str, photo_paths: list[str]) -> str:
+        explicit = ""
+        try:
+            from llm_provider import get_active_model, get_active_provider
+
+            active_model = get_active_model()
+            if get_active_provider() == "claude" and isinstance(active_model, str):
+                explicit = active_model.strip()
+        except Exception:
+            explicit = ""
+
+        chain: list[str] = []
+        if explicit:
+            chain.append(explicit)
+        for model in get_claude_cli_models():
+            if model and model not in chain:
+                chain.append(model)
+        if not chain:
+            chain = [get_claude_cli_model()]
+
+        last_error = None
+        for model in chain:
+            args = [
+                get_claude_cli_command(),
+                "--print",
+                "--output-format",
+                "text",
+                "--no-session-persistence",
+                "--permission-mode",
+                "dontAsk",
+                "--tools",
+                "Read",
+                "--add-dir",
+                str(ROOT_DIR),
+                "--system-prompt",
+                "You inspect user-provided images and return only the requested JSON.",
+            ]
+            if model:
+                args += ["--model", model]
+
+            try:
+                result = subprocess.run(
+                    args,
+                    input=self._build_claude_vision_prompt(prompt, photo_paths),
+                    cwd=str(ROOT_DIR),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=get_claude_cli_timeout_seconds(),
+                )
+                text = (result.stdout or "").strip()
+                if result.returncode != 0:
+                    detail = (result.stderr or result.stdout or "").strip()
+                    raise RuntimeError(
+                        f"claude --print exited {result.returncode}: {detail[-1000:]}"
+                    )
+                if text:
+                    return text
+                last_error = RuntimeError("claude --print returned empty vision analysis")
+            except FileNotFoundError as exc:
+                raise RuntimeError(
+                    "Claude CLI was not found on PATH. Install/login with `claude auth` "
+                    "or set MP_CLAUDE_CLI_COMMAND."
+                ) from exc
+            except subprocess.TimeoutExpired as exc:
+                last_error = RuntimeError("claude --print timed out while analyzing uploaded photos")
+                continue
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        raise RuntimeError(f"All Claude vision models failed. Last error: {last_error}")
+
     def _analyze_with_gemini_vision(self, prompt: str, photo_paths: list[str]) -> str:
         api_key = get_gemini_api_key()
         if not api_key:
@@ -605,7 +863,20 @@ Return only the topic, under 90 characters. No quotes."""
         except Exception:
             normalize_gemini_model_id = lambda m: m  # noqa: E731
 
-        models = [normalize_gemini_model_id(m) for m in get_gemini_models()]
+        models: list[str] = []
+        try:
+            from llm_provider import get_active_model, get_active_provider
+
+            active_model = get_active_model()
+            if get_active_provider() == "gemini" and isinstance(active_model, str):
+                model = normalize_gemini_model_id(active_model)
+                if model:
+                    models.append(model)
+        except Exception:
+            pass
+        for model in [normalize_gemini_model_id(m) for m in get_gemini_models()]:
+            if model and model not in models:
+                models.append(model)
         if not models:
             raise RuntimeError("No Gemini model configured")
 
@@ -652,7 +923,20 @@ Return only the topic, under 90 characters. No quotes."""
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
-        models = get_openai_models()
+        models: list[str] = []
+        try:
+            from llm_provider import get_active_model, get_active_provider
+
+            active_model = get_active_model()
+            if get_active_provider() == "openai" and isinstance(active_model, str):
+                active_model = active_model.strip()
+                if active_model:
+                    models.append(active_model)
+        except Exception:
+            pass
+        for model in get_openai_models():
+            if model and model not in models:
+                models.append(model)
         last_error = None
         for model in models:
             body = {

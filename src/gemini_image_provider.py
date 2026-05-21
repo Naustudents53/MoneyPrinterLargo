@@ -64,6 +64,8 @@ def generate_image_bytes_with_gemini(prompt: str, *, width: int, height: int) ->
                 "text": (
                     "Create exactly one production-ready YouTube visual. "
                     "No text, no captions, no logos, no watermark. "
+                    f"Target canvas: {width}x{height}px. "
+                    "Generate native high-detail output for that canvas. "
                     f"Composition: {aspect_ratio}. Prompt: {prompt[:2500]}"
                 )
             }]
