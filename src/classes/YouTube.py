@@ -6459,16 +6459,46 @@ Return ONLY the JSON. No markdown, no explanation."""
             (name, fn)
             for name, fn, _kind in self._ai_image_providers(1280, 720)
         ]
+        # Thumbnail lab: render up to N candidates from the first provider
+        # that works and keep the one most likely to pop in the feed
+        # (deterministic scoring — contrast, color, focal subject, clutter).
+        candidates_target = 1
+        try:
+            candidates_target = get_thumbnail_lab_candidates()
+        except Exception:
+            pass
+        collected: list[bytes] = []
         for name, fn in thumb_providers:
-            try:
-                bg_bytes = fn(styled_visual_prompt)
-                if bg_bytes and len(bg_bytes) > 5000:
+            while len(collected) < candidates_target:
+                try:
+                    data = fn(styled_visual_prompt)
+                except Exception as e:
+                    if get_verbose():
+                        warning(f"Thumbnail bg via {name} failed: {str(e)[:120]}")
                     break
-                bg_bytes = None
+                if data and len(data) > 5000:
+                    collected.append(data)
+                else:
+                    break
+            if collected:
+                break  # one provider per thumbnail keeps the look consistent
+
+        if len(collected) > 1:
+            try:
+                from . import ThumbnailLab
+
+                best_idx, thumb_report = ThumbnailLab.select_best_background(collected)
+                self.thumbnail_lab_report = thumb_report
+                info(
+                    f" => Thumbnail lab: candidate {best_idx + 1}/{len(collected)} "
+                    f"({thumb_report['best_score']}/10)"
+                )
+                bg_bytes = collected[best_idx]
             except Exception as e:
-                if get_verbose():
-                    warning(f"Thumbnail bg via {name} failed: {str(e)[:120]}")
-                bg_bytes = None
+                warning(f"Thumbnail lab scoring skipped: {str(e)[:120]}")
+                bg_bytes = collected[0]
+        elif collected:
+            bg_bytes = collected[0]
 
         THUMB_W, THUMB_H = 1280, 720
 

@@ -910,6 +910,14 @@ def get_long_retention_enabled() -> bool:
     return _get_bool_config("long_retention_enabled", default=True)
 
 
+def get_thumbnail_lab_candidates() -> int:
+    """How many thumbnail backgrounds to generate and score (1 = disabled).
+
+    Each extra candidate costs one image-generation call, so the default
+    stays modest. The best-scoring background wins per ThumbnailLab."""
+    return _get_int_config("thumbnail_lab_candidates", default=3, minimum=1, maximum=6)
+
+
 def get_learning_enabled() -> bool:
     """Returns whether the LearningCoach reflects after a YouTube sync."""
     return _get_bool_config("learning_enabled", default=True)
