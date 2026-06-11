@@ -406,6 +406,28 @@ def sync_channel(acc: dict, handle: str, args, all_published: dict[str, dict],
     return reclassified, pruned, added, meta_refreshed
 
 
+def _reflect_after_sync(data: dict) -> None:
+    """Let the LearningCoach reflect on each channel's freshly-synced stats.
+
+    Guarded end-to-end: if the coach (or its deps) are unavailable, the sync
+    still succeeds silently.
+    """
+    src_dir = os.path.join(ROOT_DIR, "src")
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    try:
+        from classes.LearningCoach import reflect_after_sync
+    except Exception:
+        return
+    for acc in data.get("accounts", []):
+        try:
+            if reflect_after_sync(acc):
+                nick = acc.get("nickname", acc.get("id", "?"))
+                print(f"  coach: reflected on {nick}", flush=True)
+        except Exception:
+            pass
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
@@ -480,6 +502,7 @@ def main() -> int:
     if args.apply and (total_r or total_p or total_a or total_m):
         save_cache(data)
         print(f"  wrote: {CACHE_PATH}", flush=True)
+        _reflect_after_sync(data)
     elif total_r or total_p or total_a or total_m:
         print("  (dry-run -- pass --apply to persist)", flush=True)
     else:

@@ -21,6 +21,9 @@ from .Tts import TTS
 from .Retention import CosmicRetentionEngine
 from .MaxRetention import MaxRetentionEngine, is_max_retention, normalize_retention_mode
 from .RetentionLab import RetentionLab
+from . import WinnerRemix
+from .WinnerRemix import should_remix
+from . import LearningCoach
 from .NarrationVoice import NarrationVoice
 from llm_provider import generate_text
 from config import *
@@ -433,6 +436,25 @@ class YouTube:
         """
         return generate_text(prompt, model_name=model_name, temperature=temperature)
 
+    def _learning_directive(self) -> str:
+        """Learned-playbook block for this channel, prefixed with a blank line.
+
+        Empty when nothing has been learned yet. Cached per instance so the
+        memory file is read once per video run.
+        """
+        cached = getattr(self, "_learning_directive_cache", None)
+        if cached is not None:
+            return cached
+        directive = ""
+        try:
+            text = LearningCoach.directive_for_account(self._account_uuid)
+            if text:
+                directive = "\n\n" + text
+        except Exception:
+            directive = ""
+        self._learning_directive_cache = directive
+        return directive
+
     def generate_topic(self) -> str:
         """
         Generates a topic based on the YouTube Channel niche.
@@ -666,7 +688,7 @@ OUTPUT FORMAT (strict):
 - NO markdown (no **, no backticks, no headers).
 - NO prefixes like "Topic:", "Tema:", "Title:".
 - NO surrounding quotes.
-- WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.{forbidden_block}{extra_reject}
+- WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.{forbidden_block}{extra_reject}{self._learning_directive()}
 
 (Creativity seed: {creativity_seed} â€” use this to inspire a fresh angle WITHIN the niche. "Fresh" means a different specific subject from the same niche, NOT a different field.)""",
                 temperature=0.95,
@@ -738,6 +760,80 @@ OUTPUT FORMAT (strict):
 
         self.subject = completion
         return completion
+
+    def generate_winner_remix_topic(self) -> str:
+        """Generate a disguised remix of one of the channel's best videos.
+
+        Picks a winning past video (excluding any already used as a remix source),
+        then asks the LLM for a fresh subject in the SAME subtheme but about a
+        DIFFERENT named subject, so it does not read as the same video. Returns
+        the accepted topic and records its provenance on the instance (so the
+        saved video can be tagged), or "" when no eligible winner exists or every
+        attempt failed — the caller then falls back to normal topic generation.
+        """
+        try:
+            videos = self.get_videos() or []
+        except Exception:
+            videos = []
+
+        winner = WinnerRemix.pick_winner(videos, min_views=get_winner_remix_min_views())
+        if not winner:
+            return ""
+
+        past_topics: List[str] = []
+        for v in videos:
+            for key in ("subject", "title"):
+                val = v.get(key)
+                if val and isinstance(val, str):
+                    past_topics.append(val.strip())
+
+        source_subject = str(winner.get("subject") or winner.get("title") or "").strip()
+        source_url = str(winner.get("url") or "").strip()
+        info(f" => Winner Remix: revisiting '{source_subject[:80]}' in disguise")
+
+        prompt = WinnerRemix.build_remix_prompt(
+            winner, self.niche, self.language, directive=self._learning_directive()
+        )
+        for attempt in range(8):
+            raw = self.generate_response(prompt, temperature=0.95)
+            from topic_dedupe import strip_markdown
+            candidate = strip_markdown(raw or "")
+            if not candidate:
+                continue
+            if not WinnerRemix.is_acceptable_remix(candidate, winner, past_topics):
+                continue
+            if not self._topic_belongs_to_niche(candidate):
+                continue
+            self.subject = candidate
+            self._remix_source_url = source_url
+            self._remix_subtheme = source_subject
+            info(f" => Winner Remix topic: {candidate[:90]}")
+            return candidate
+
+        warning("Winner Remix could not produce a usable topic; using normal generation.")
+        return ""
+
+    def _topic_belongs_to_niche(self, candidate: str) -> bool:
+        """Lightweight niche check reused by the remix flow."""
+        try:
+            verdict = self.generate_response(
+                f"""You are a strict content classifier. Decide if this video topic clearly belongs to the channel's niche.
+
+CHANNEL NICHE: {self.niche}
+
+CANDIDATE TOPIC: {candidate}
+
+Answer FITS only if the topic undeniably belongs to the niche. Answer OFFNICHE if fictional, abstract, or off-topic. When in doubt, OFFNICHE.
+
+OUTPUT (exactly one line):
+VERDICT: <FITS or OFFNICHE> - <short reason in 5-15 words>"""
+            )
+        except Exception:
+            return True
+        verdict_up = (verdict or "").strip().upper()
+        if "OFFNICHE" in verdict_up or "OFF-NICHE" in verdict_up or "OFF NICHE" in verdict_up:
+            return False
+        return True
 
     def _run_max_retention_preflight(
         self,
@@ -1050,7 +1146,7 @@ CRITICAL RULES:
 - NUMBERS: spell numbers out as words, not digits. Examples (in {self.language}): "mil cuatrocientos cincuenta y tres" not "1453"; "four thousand five hundred" not "4,500".
 - YEAR vs DURATION â€” keep them strictly separate. A YEAR is a calendar date; a DURATION is elapsed time. They are different things. To cite a calendar year, say "el aÃ±o <aÃ±o>" / "in the year <year>". The phrase "hace <N> aÃ±os" / "<N> years ago" expresses ONLY duration: <N> is the difference between the current year and the year of the event â€” it is NOT the year itself. When in doubt, name the year ("el aÃ±o X") and do NOT use the "hace X aÃ±os" / "X years ago" phrasing.
 - ONLY return the raw script text. Nothing else.
-- WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.
+- WRITE ENTIRELY IN {self.language}. Every word must be in {self.language}.{self._learning_directive()}
 """
         completion = self.generate_response(prompt)
 
@@ -5334,6 +5430,8 @@ RULES:
         self.visual_beat_report = {}
         self.visual_preflight = {}
         self.retention_plan = {}
+        self._remix_source_url = ""
+        self._remix_subtheme = ""
         # Shorts upload fast â€” no need for the long-video patient wait.
         self._is_long_video = False
 
@@ -5343,7 +5441,16 @@ RULES:
             if get_verbose():
                 info(f" => Using custom topic: {self.subject}")
         else:
-            self.generate_topic()
+            # Winner Remix: on a controlled cadence, deliberately revisit one of
+            # the channel's best videos in disguise (same subtheme, different
+            # subject). Falls back to normal topic generation when it declines or
+            # has no eligible winner.
+            remixed = False
+            if get_winner_remix_enabled() and should_remix(get_winner_remix_ratio()):
+                if self.generate_winner_remix_topic():
+                    remixed = True
+            if not remixed:
+                self.generate_topic()
 
         # Duplicate guard: generate_topic returns "" when it cannot produce a
         # topic that has not already been used on this channel. We refuse to
@@ -5460,6 +5567,7 @@ RULES:
                     word_count = len(full.split())
                     if word_count >= 2000:
                         full = self._postprocess_long_script(full)
+                        full = self._run_long_retention_gate(full)
                         self.script = full
                         self._persist_long_script(full)
                         info(f" => Generated long script: {len(full.split())} words (~{len(full.split()) // LONG_VIDEO_ESTIMATED_WPM} min) (single-call attempt {attempt})")
@@ -5474,9 +5582,51 @@ RULES:
         # ---- DEFAULT PATH: per-section for capped providers ----
         full = self._generate_long_script_sectional(lang, hook_style, hook_example)
         full = self._postprocess_long_script(full)
+        full = self._run_long_retention_gate(full)
         self.script = full
         self._persist_long_script(full)
         return full
+
+    def _run_long_retention_gate(self, script: str) -> str:
+        """Retention gate for long scripts (the Shorts lab never covered them).
+
+        Scores the generated script with deterministic heuristics (cold open,
+        CTA placement, open loops, cliffhangers, pacing, dead zones). When the
+        intro scores below threshold, rewrites ONLY the intro — the highest-
+        leverage block — instead of risking a full 2200-word regeneration.
+        Fully guarded: any failure returns the script unchanged.
+        """
+        try:
+            from . import LongRetention
+
+            if not get_long_retention_enabled():
+                return script
+
+            report = LongRetention.score_long_script(script, self.subject, self.language)
+            self.long_retention_report = report
+            info(
+                f" => Long retention gate: {report['overall_score']}/10 "
+                f"(intro {report['intro_score']}/10)"
+                + (f" | issues: {'; '.join(report['issues'][:3])}" if report["issues"] else "")
+            )
+            if report["intro_score"] < LongRetention.INTRO_SCORE_THRESHOLD:
+                rewritten, applied = LongRetention.rewrite_intro(
+                    script, report, self.subject, self.language, self.generate_response
+                )
+                if applied:
+                    new_report = LongRetention.score_long_script(
+                        rewritten, self.subject, self.language
+                    )
+                    info(
+                        f" => Long retention: intro rewritten "
+                        f"({report['intro_score']} -> {new_report['intro_score']}/10)"
+                    )
+                    self.long_retention_report = new_report
+                    return rewritten
+            return script
+        except Exception as e:
+            warning(f"   Long retention gate skipped: {str(e)[:160]}")
+            return script
 
     def _postprocess_long_script(self, script: str) -> str:
         """
@@ -8461,6 +8611,9 @@ No markdown. No explanation. Just the JSON array."""
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "thumbnail_path": getattr(self, "thumbnail_path", "") or "",
                 "is_short": not is_long_video,
+                "is_remix": bool(getattr(self, "_remix_source_url", "")),
+                "remix_source_url": getattr(self, "_remix_source_url", "") or "",
+                "remix_subtheme": getattr(self, "_remix_subtheme", "") or "",
                 "retention_mode": getattr(self, "_retention_mode", "") or "",
                 "retention_score": (
                     (getattr(self, "retention_preflight", {}) or {}).get("final_score")

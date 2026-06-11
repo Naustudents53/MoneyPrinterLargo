@@ -293,8 +293,9 @@ function formatProgressLine(rawLine: string): string | null {
   match = /^\[runner\]\s+Using\s+(.+?)\s+provider$/i.exec(line);
   if (match) return `IA: ${providerLabel(match[1])}`;
 
-  match = /^\[runner\]\s+Override: short_render_profile=(.+)$/.exec(line);
-  if (match) return `Calidad de render: ${match[1]}`;
+  if (/^\[runner\]\s+Short render: quality/.test(line)) {
+    return "Calidad de render: alta (Ken Burns + karaoke)";
+  }
 
   match = /^\[runner\]\s+Override: script_sentence_length=(\d+)$/.exec(line);
   if (match) return `Longitud de frases: ${match[1]} palabras aprox.`;
@@ -905,38 +906,76 @@ export function ProgressDialog({
 function RenderProgressBar({ progress }: { progress: RenderProgress }) {
   const percent = clampPercent(progress.percent);
   const percentLabel = `${Math.round(percent)}%`;
+  const stats = [
+    { label: "frames", value: progress.frame },
+    { label: "fps", value: progress.fps },
+    { label: "speed", value: progress.speed },
+    { label: "size", value: progress.size },
+    { label: "bitrate", value: progress.bitrate },
+  ];
   return (
-    <div className="border-x hairline-strong bg-[hsl(var(--ink))] px-4 pb-3 pt-2 text-emerald-200">
+    <div className="border-x hairline-strong bg-[hsl(var(--ink))] px-4 pb-3.5 pt-3 text-emerald-100">
+      {/* status + clock + percent */}
       <div className="flex items-center justify-between gap-3 text-[11px] font-mono">
         <div className="flex items-center gap-2 min-w-0">
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${
-              progress.done ? "bg-success" : "bg-primary animate-pulse"
-            }`}
-          />
-          <span className="uppercase tracking-wide text-emerald-200/75">
+          <span className="relative flex h-2 w-2 shrink-0">
+            {!progress.done && (
+              <span className="absolute inset-0 rounded-full bg-emerald-400/60 animate-ping" />
+            )}
+            <span
+              className={`relative h-2 w-2 rounded-full ${
+                progress.done ? "bg-emerald-400" : "bg-emerald-300"
+              }`}
+            />
+          </span>
+          <span className="uppercase tracking-[0.14em] text-[10px] font-semibold text-emerald-200/90">
             {progress.done ? "render listo" : "renderizando"}
           </span>
-          <span className="text-emerald-200/45 truncate">
-            {progress.time} / {progress.durationLabel}
+          <span className="text-emerald-200/30">·</span>
+          <span className="tabular-nums text-emerald-200/55 truncate">
+            {progress.time}
+            <span className="mx-1 text-emerald-200/30">/</span>
+            {progress.durationLabel}
           </span>
         </div>
-        <span className="tabular-nums text-emerald-100">{percentLabel}</span>
+        <span className="tabular-nums text-[13px] font-semibold text-emerald-50">
+          {percentLabel}
+        </span>
       </div>
 
-      <div className="mt-2 h-2 overflow-hidden rounded-sm bg-emerald-950/70 ring-1 ring-emerald-300/10">
+      {/* progress track */}
+      <div className="relative mt-2.5 h-2.5 overflow-hidden rounded-full bg-emerald-950/80 ring-1 ring-inset ring-emerald-300/10">
         <div
-          className="h-full rounded-sm bg-gradient-to-r from-lime-300 via-emerald-300 to-sky-300 transition-[width] duration-300 ease-out"
-          style={{ width: `${percent}%` }}
-        />
+          className="relative h-full rounded-full bg-gradient-to-r from-emerald-400 via-teal-300 to-sky-300 transition-[width] duration-500 ease-out"
+          style={{ width: `${Math.max(percent, 2)}%` }}
+        >
+          {!progress.done && (
+            <span
+              aria-hidden
+              className="absolute inset-0"
+              style={{
+                background:
+                  "linear-gradient(90deg, transparent, rgba(255,255,255,.5), transparent)",
+                backgroundSize: "200% 100%",
+                animation: "mpl-shimmer 1.8s linear infinite",
+              }}
+            />
+          )}
+        </div>
       </div>
 
-      <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] font-mono text-emerald-200/60 sm:grid-cols-5">
-        <span className="tabular-nums">frames {progress.frame}</span>
-        <span className="tabular-nums">fps {progress.fps}</span>
-        <span className="tabular-nums">speed {progress.speed}</span>
-        <span className="tabular-nums">size {progress.size}</span>
-        <span className="tabular-nums">bitrate {progress.bitrate}</span>
+      {/* stats — labeled cells with hairline dividers */}
+      <div className="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-md ring-1 ring-inset ring-emerald-300/10 sm:grid-cols-5">
+        {stats.map((s) => (
+          <div key={s.label} className="bg-emerald-950/40 px-2.5 py-1.5">
+            <div className="text-[8.5px] font-mono uppercase tracking-[0.12em] text-emerald-200/40">
+              {s.label}
+            </div>
+            <div className="mt-0.5 font-mono text-[11px] tabular-nums text-emerald-100/90 truncate">
+              {s.value}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

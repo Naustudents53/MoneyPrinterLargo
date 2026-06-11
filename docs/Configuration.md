@@ -31,7 +31,6 @@ All your configurations will be in a file in the root directory, called `config.
 - `nanobanana2_model`: `string` - Nano Banana model name (default: `gemini-2.5-flash-image`).
 - `nanobanana2_aspect_ratio`: `string` - Aspect ratio for generated images (default: `9:16`).
 - `threads`: `number` - The amount of threads that will be used to execute operations, e.g. writing to a file using MoviePy.
-- `short_render_profile`: `string` - Short render tradeoff: `quality` keeps Ken Burns + karaoke subtitles, `fast` uses static images + karaoke subtitles, and `turbo` uses static images without burned-in karaoke for maximum render speed.
 - `short_render_size`: `string` - Shorts render and generated-image canvas, e.g. `2160x3840` for vertical 4K.
 - `short_render_fps`: `number` - FPS for Shorts rendering. Defaults to `60`; lower values reduce MoviePy/ffmpeg work.
 - `short_ken_burns`: `boolean` - If `true`, Shorts animate image zooms. This is visually richer but much slower because MoviePy resizes every frame in Python.
@@ -69,6 +68,12 @@ All your configurations will be in a file in the root directory, called `config.
 - `font`: `string` - The font that will be used to generate images. This should be a `.ttf` file in the `fonts/` directory.
 - `imagemagick_path`: `string` - The path to the ImageMagick binary. This is used by MoviePy to manipulate images. Install ImageMagick from [here](https://imagemagick.org/script/download.php) and set the path to the `magick.exe` on Windows, or on Linux/MacOS the path to `convert` (usually /usr/bin/convert).
 - `script_sentence_length`: `number` - The number of sentences in the generated video script (default: `4`).
+- `winner_remix_enabled`: `boolean` - When enabled, roughly 1 in every `winner_remix_ratio` Shorts is generated as a disguised remix of one of the channel's best-performing videos: same subtheme, a different concrete subject (default: `true`).
+- `winner_remix_ratio`: `number` - Cadence for the Winner Remix flow — about 1 remix every N videos (default: `6`).
+- `winner_remix_min_views`: `number` - Minimum view count for a past video to qualify as a remix source (default: `1000`).
+- `learning_enabled`: `boolean` - When enabled, the LearningCoach reflects after each YouTube sync (`sync YT`) on the channel's freshest view/like/comment numbers via `claude -p`, distilling natural-language lessons that are injected back into topic, remix, hook and script generation. It reflects at most once per new data: if the synced numbers have not changed since the last reflection, it skips (default: `true`).
+- `learning_max_lessons`: `number` - Maximum natural-language lessons kept per channel before the oldest are dropped (default: `30`).
+- `learning_model`: `string` - Optional Claude CLI model/alias used for the reflection call. Empty uses the configured Claude CLI default.
 
 ## Example
 
@@ -102,7 +107,6 @@ All your configurations will be in a file in the root directory, called `config.
   "nanobanana2_model": "gemini-2.5-flash-image",
   "nanobanana2_aspect_ratio": "9:16",
   "threads": 2,
-  "short_render_profile": "quality",
   "short_render_size": "2160x3840",
   "short_render_fps": 60,
   "short_ken_burns": true,

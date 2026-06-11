@@ -242,16 +242,6 @@ class PhotoPromptGenerateRequest(BaseModel):
     retention_mode: str = "standard"
 
 
-class LongScriptFileOut(BaseModel):
-    id: str
-    name: str
-    topic: str
-    words: int | None = None
-    estimated_duration: str = ""
-    size_bytes: int
-    mtime: str
-
-
 class ConfigPatch(BaseModel):
     data: dict[str, Any]
 
@@ -266,45 +256,6 @@ def _read_youtube_raw() -> dict:
         return {"accounts": []}
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f) or {"accounts": []}
-
-
-_LONG_SCRIPT_NAME_RE = re.compile(r"script_[A-Za-z0-9_.-]+\.txt$")
-
-
-def _safe_long_script_path(script_name: str) -> Path:
-    name = Path(script_name or "").name
-    if not name or name != script_name or not _LONG_SCRIPT_NAME_RE.fullmatch(name):
-        raise HTTPException(400, "Invalid long script file")
-    path = TEMP_DIR / name
-    if not path.is_file():
-        raise HTTPException(404, "Long script not found")
-    return path
-
-
-def _long_script_entry(path: Path) -> dict:
-    try:
-        stat = path.stat()
-        raw = path.read_text(encoding="utf-8", errors="replace")
-    except Exception as e:
-        raise HTTPException(500, f"Could not read long script {path.name}: {e}") from e
-
-    from classes.LongScriptShortener import parse_long_script_text
-
-    document = parse_long_script_text(raw)
-    words_raw = document.metadata.get("words", "").replace(",", "").strip()
-    try:
-        words = int(words_raw) if words_raw else None
-    except ValueError:
-        words = None
-    return {
-        "id": path.name,
-        "name": path.name,
-        "topic": document.topic or path.stem,
-        "words": words,
-        "estimated_duration": document.metadata.get("estimated duration", ""),
-        "size_bytes": stat.st_size,
-        "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
-    }
 
 
 def _write_youtube_raw(data: dict) -> None:
@@ -431,7 +382,6 @@ def system_info():
         "llm_provider": cfg.get("llm_provider", "ollama"),
         "tts_voice": cfg.get("tts_voice", "Jasper"),
         "image_aspect_ratio": "9:16",
-        "short_render_profile": cfg.get("short_render_profile", "quality"),
         "short_render_size": short_size,
         "long_render_size": long_size,
         "short_render_fps": _cfg_int("short_render_fps", 60),
@@ -1663,62 +1613,6 @@ def generate_photo_prompts(payload: PhotoPromptGenerateRequest):
 # Preview-script artifacts live in .mp/.preview-<uuid>.txt — the same directory
 # as the rest of the pipeline scratch space, prefixed so rem_temp_files() won't
 # wipe them (they end in .txt which is allowed to stay).
-@app.get("/api/long-scripts", response_model=list[LongScriptFileOut])
-def list_long_scripts():
-    scripts = []
-    if TEMP_DIR.exists():
-        for path in TEMP_DIR.glob("script_*.txt"):
-            if path.is_file() and _LONG_SCRIPT_NAME_RE.fullmatch(path.name):
-                scripts.append(_long_script_entry(path))
-    scripts.sort(key=lambda item: item["mtime"], reverse=True)
-    return scripts
-
-
-@app.get("/api/long-scripts/{script_name}/preview-short")
-async def preview_long_script_short(
-    script_name: str,
-    channel_id: str = "",
-    duration_seconds: int = 60,
-    llm_provider: str = "",
-    llm_model: str = "",
-    llm_reasoning_effort: str = "",
-):
-    path = _safe_long_script_path(script_name)
-    if duration_seconds:
-        from classes.duration_presets import ALLOWED_SHORT_DURATIONS
-        if duration_seconds not in ALLOWED_SHORT_DURATIONS:
-            raise HTTPException(
-                400,
-                f"duration_seconds must be one of {list(ALLOWED_SHORT_DURATIONS)}",
-            )
-    if llm_provider and llm_provider not in ("ollama", "gemini", "openai", "claude", "pollinations"):
-        raise HTTPException(400, "llm_provider must be 'ollama', 'gemini', 'openai', 'claude', or 'pollinations'")
-    effort = _normalize_openai_reasoning_effort(llm_reasoning_effort)
-
-    channel_label = ""
-    if channel_id:
-        ch = next((a for a in get_accounts("youtube") if a.get("id") == channel_id), None)
-        if not ch:
-            raise HTTPException(404, "Channel not found")
-        channel_label = f" — {ch.get('nickname', channel_id)}"
-
-    args = [
-        "long-script-preview",
-        "--input", str(path),
-        "--duration", str(duration_seconds or 60),
-    ]
-    if llm_provider:
-        args += ["--llm-provider", llm_provider]
-    if llm_model:
-        args += ["--llm-model", llm_model]
-    if effort:
-        args += ["--llm-reasoning-effort", effort]
-
-    title = f"Short desde guion largo{channel_label}"
-    job = _spawn_job(args, title=title, channel_id=channel_id or None, kind="short")
-    return EventSourceResponse(_stream_job(job))
-
-
 @app.get("/api/channels/{channel_id}/preview-script")
 async def preview_script(
     channel_id: str,
@@ -1969,7 +1863,6 @@ async def generate_video(
     upload_platforms: str = "",
     series_id: str = "",
     duration_seconds: int = 0,
-    render_profile: str = "",
     llm_provider: str = "",
     llm_model: str = "",
     llm_reasoning_effort: str = "",
@@ -2020,9 +1913,6 @@ async def generate_video(
                 f"hook_profile must be one of {list(HOOK_PROFILES.keys())}",
             )
 
-    if kind == "short" and render_profile and render_profile not in ("quality", "fast", "turbo"):
-        raise HTTPException(400, "render_profile must be 'quality', 'fast', or 'turbo'")
-
     from classes.MaxRetention import MAX_RETENTION_MODE, is_known_retention_mode, normalize_retention_mode
     retention_mode_norm = normalize_retention_mode(retention_mode)
     if retention_mode and not is_known_retention_mode(retention_mode):
@@ -2049,8 +1939,6 @@ async def generate_video(
         args += ["--series-id", series_id]
     if kind == "short" and duration_seconds:
         args += ["--duration", str(duration_seconds)]
-    if kind == "short" and render_profile:
-        args += ["--render-profile", render_profile]
     if llm_provider:
         args += ["--llm-provider", llm_provider]
     if llm_model:
@@ -2098,7 +1986,6 @@ class BatchJobItem(BaseModel):
     model: str = ""
     sentence_length: int = 0
     hook_style: str = ""
-    render_profile: str = ""
     retention_mode: str = ""
 
 
@@ -2137,13 +2024,6 @@ def generate_batch(payload: BatchGeneratePayload):
                 "error": f"invalid kind {item.kind!r}",
             })
             continue
-        if item.kind == "short" and item.render_profile and item.render_profile not in ("quality", "fast", "turbo"):
-            out.append({
-                "channel_id": item.channel_id,
-                "ok": False,
-                "error": f"invalid render_profile {item.render_profile!r}",
-            })
-            continue
         from classes.MaxRetention import MAX_RETENTION_MODE, is_known_retention_mode, normalize_retention_mode
         retention_mode_norm = normalize_retention_mode(item.retention_mode)
         if item.retention_mode and not is_known_retention_mode(item.retention_mode):
@@ -2176,8 +2056,6 @@ def generate_batch(payload: BatchGeneratePayload):
             args += ["--sentence-length", str(item.sentence_length)]
         if item.hook_style:
             args += ["--hook-style", item.hook_style]
-        if item.kind == "short" and item.render_profile:
-            args += ["--render-profile", item.render_profile]
         if item.kind == "short" and retention_mode_norm == MAX_RETENTION_MODE:
             args += ["--retention-mode", retention_mode_norm]
 

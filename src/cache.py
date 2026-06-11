@@ -256,3 +256,40 @@ def get_results_cache_path() -> str:
         path (str): The path to the results cache folder
     """
     return os.path.join(get_cache_path(), 'scraper_results.csv')
+
+def _sanitize_account_id(account_id: str) -> str:
+    """Reduce an account id to a filesystem-safe slug for a memory file."""
+    safe = ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in str(account_id or ''))
+    return safe or 'default'
+
+def get_learning_cache_path(account_id: str) -> str:
+    """Per-account LearningCoach memory file under .mp/learning/."""
+    folder = _get_cache_subdir('learning')
+    return os.path.join(folder, f"{_sanitize_account_id(account_id)}.json")
+
+def get_learning(account_id: str) -> dict:
+    """Read the LearningCoach memory for an account (empty dict if none).
+
+    Reads under the same lock used by `save_learning` so a concurrent writer
+    can never hand us a half-written file (which would read as {} and let the
+    next reflection overwrite — and lose — every accumulated lesson).
+    """
+    path = get_learning_cache_path(account_id)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with json_write_lock(path):
+            with open(path, 'r', encoding='utf-8') as file:
+                parsed = json.load(file)
+    except (ValueError, OSError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+def save_learning(account_id: str, data: dict) -> None:
+    """Persist the LearningCoach memory for an account atomically."""
+    path = get_learning_cache_path(account_id)
+    tmp_path = path + '.tmp'
+    with json_write_lock(path):
+        with open(tmp_path, 'w', encoding='utf-8') as file:
+            json.dump(data or {}, file, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)

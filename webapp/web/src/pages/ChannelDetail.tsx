@@ -17,6 +17,12 @@ import {
   ThumbsUp,
   ThumbsDown,
   MessageSquare,
+  Users,
+  Globe,
+  AudioLines,
+  Palette,
+  Target,
+  type LucideIcon,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
@@ -264,36 +270,45 @@ export function ChannelDetail() {
                     : undefined
                 }
                 highlight={channel.subscriber_count != null}
+                icon={Users}
+                numeric
                 dotVar="var(--violeta)"
               />
               <SummaryItem
                 label="Videos"
                 value={`${channel.videos_count}`}
+                icon={Film}
+                numeric
                 dotVar="var(--primary)"
               />
               <SummaryItem
                 label="Idioma"
                 value={channel.language || "—"}
+                icon={Globe}
                 dotVar="var(--accent)"
               />
               <SummaryItem
                 label="Voz short"
                 value={channel.short_voice || "default"}
+                icon={AudioLines}
                 dotVar="var(--gold)"
               />
               <SummaryItem
                 label="Voz long"
                 value={channel.long_voice || "default"}
+                icon={AudioLines}
                 dotVar="var(--lima)"
               />
               <SummaryItem
                 label="Estilo"
                 value={truncate(channel.image_style, 24) || "default"}
+                icon={Palette}
                 dotVar="var(--violeta)"
               />
               <SummaryItem
                 label="Hook profile"
                 value={channel.hook_profile || "default"}
+                icon={Target}
                 dotVar="var(--success)"
                 last
               />
@@ -631,12 +646,24 @@ function ChannelMetric({
 }) {
   const color = tone === "primary" ? "var(--primary)" : tone === "accent" ? "var(--accent)" : "var(--gold)";
   return (
-    <div className="px-4 py-3" style={{ borderRight: "1px solid hsl(var(--border) / .06)" }}>
+    <div
+      className="group relative px-4 py-3 transition-colors duration-200 hover:bg-[hsl(var(--bg-raised)/.5)]"
+      style={{ borderRight: "1px solid hsl(var(--border) / .06)" }}
+    >
+      {/* tone-tinted top accent that brightens on hover */}
+      <span
+        aria-hidden
+        className="absolute left-0 right-0 top-0 h-[2px] opacity-50 transition-opacity duration-200 group-hover:opacity-100"
+        style={{ background: `linear-gradient(90deg, hsl(${color} / .9), transparent)` }}
+      />
       <div className="flex items-center gap-1.5">
         <span className="h-1.5 w-1.5 rounded-full" style={{ background: `hsl(${color})` }} />
         <span className="tiny-label">{label}</span>
       </div>
-      <div className="mt-1 font-mono text-[17px] font-semibold tabular-nums text-foreground">
+      <div
+        className="mt-1.5 font-display text-[26px] font-bold leading-none tabular-nums tracking-tight"
+        style={{ color: `hsl(${color})` }}
+      >
         {value}
       </div>
     </div>
@@ -812,6 +839,8 @@ function SummaryItem({
   label,
   value,
   dotVar,
+  icon: Icon,
+  numeric,
   last,
   hint,
   fullValue,
@@ -820,6 +849,10 @@ function SummaryItem({
   label: string;
   value: string;
   dotVar: string;
+  icon?: LucideIcon;
+  // When true, render the value in the display font (cleaner numerals) instead
+  // of monospace — used for numeric KPIs like subscriber/video counts.
+  numeric?: boolean;
   last?: boolean;
   hint?: string;
   // Optional precise number (e.g. "12,345") shown below the compact value
@@ -831,19 +864,32 @@ function SummaryItem({
 }) {
   return (
     <div
-      className="px-[18px] py-3.5 flex flex-col gap-1 min-w-0"
+      className="group px-[18px] py-3.5 flex flex-col gap-1.5 min-w-0 transition-colors hover:bg-[hsl(var(--bg-raised)/.45)]"
       style={{
         borderRight: last ? undefined : "1px solid hsl(var(--border) / .04)",
       }}
       title={hint || value}
     >
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-2">
+        {Icon ? (
+          <span
+            className="grid h-5 w-5 shrink-0 place-items-center rounded-md transition-colors"
+            style={{
+              background: `hsl(${dotVar} / .12)`,
+              border: `1px solid hsl(${dotVar} / .22)`,
+              color: `hsl(${dotVar})`,
+            }}
+          >
+            <Icon className="h-3 w-3" strokeWidth={2} />
+          </span>
+        ) : (
+          <span
+            className="w-1.5 h-1.5 rounded-full shrink-0"
+            style={{ background: `hsl(${dotVar})` }}
+          />
+        )}
         <span
-          className="w-1.5 h-1.5 rounded-full shrink-0"
-          style={{ background: `hsl(${dotVar})` }}
-        />
-        <span
-          className="font-mono uppercase text-[10px] font-semibold text-muted-foreground"
+          className="font-mono uppercase text-[10px] font-semibold text-muted-foreground truncate"
           style={{ letterSpacing: "0" }}
         >
           {label}
@@ -851,7 +897,9 @@ function SummaryItem({
       </div>
       <span
         className={
-          "font-mono text-[15px] font-semibold tabular-nums truncate " +
+          (numeric
+            ? "font-display text-[18px] font-bold tracking-tight tabular-nums truncate "
+            : "font-mono text-[15px] font-semibold tabular-nums truncate ") +
           (highlight ? "text-primary" : "text-foreground")
         }
       >

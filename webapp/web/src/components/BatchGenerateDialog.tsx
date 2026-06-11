@@ -35,7 +35,6 @@ import {
   type BatchJobResult,
   type ImageProvider,
   type RetentionMode,
-  type ShortRenderProfile,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -60,7 +59,6 @@ interface BatchGenerateDialogProps {
     model?: string;
     sentenceLength?: number;
     hookStyle?: string;
-    renderProfile?: ShortRenderProfile;
     retentionMode?: RetentionMode;
   };
 }
@@ -170,7 +168,6 @@ export function BatchGenerateDialog({
           model: defaults.model || undefined,
           sentence_length: defaults.sentenceLength,
           hook_style: defaults.hookStyle || undefined,
-          render_profile: defaults.renderProfile,
           retention_mode: defaults.retentionMode,
         });
       }
@@ -357,9 +354,6 @@ function InheritedConfigBar({
         ) : null}
         {defaults.hookStyle && (
           <span>Hook: <span className="text-foreground font-medium">{defaults.hookStyle.split("::")[1] || defaults.hookStyle}</span></span>
-        )}
-        {defaults.renderProfile && (
-          <span>Render: <span className="text-foreground font-medium">{defaults.renderProfile}</span></span>
         )}
         {defaults.retentionMode && defaults.retentionMode !== "standard" && (
           <span>Modo: <span className="text-foreground font-medium">MAXIMA RETENCION</span></span>

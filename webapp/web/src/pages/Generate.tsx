@@ -15,8 +15,6 @@ import {
   Youtube,
   Music2,
   Facebook,
-  FileText,
-  RefreshCw,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { PageShell } from "@/components/layout/AppShell";
@@ -30,34 +28,21 @@ import {
   RETENTION_MODE_OPTIONS,
   SHORT_DURATION_OPTIONS,
   HOOK_PROFILE_OPTIONS,
-  SHORT_RENDER_PROFILE_OPTIONS,
   type Channel,
   type HookProfile,
   type ImageProvider,
-  type LongScriptFile,
   type LLMProvider,
   type LLMModel,
   type OpenAIReasoningEffort,
   type PhotoVisionProvider,
   type SeriesEntry,
   type ShortDurationSeconds,
-  type ShortRenderProfile,
   type RetentionMode,
   type SystemInfo,
   type UploadPlatform,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-
-const SHORT_RENDER_META: Record<ShortRenderProfile, {
-  label: string;
-  hint: string;
-  fps: number;
-}> = {
-  quality: { label: "Calidad", hint: "Ken Burns + karaoke", fps: 60 },
-  fast: { label: "Rápido", hint: "Karaoke, sin zoom", fps: 60 },
-  turbo: { label: "Turbo", hint: "Render limpio", fps: 60 },
-};
 
 const RETENTION_MODE_META: Record<RetentionMode, {
   label: string;
@@ -100,9 +85,6 @@ export function Generate() {
   const [channelId, setChannelId] = useState(presetChannel);
   const [kind, setKind] = useState<"short" | "long">("short");
   const [topic, setTopic] = useState("");
-  const [longScripts, setLongScripts] = useState<LongScriptFile[]>([]);
-  const [longScriptsLoading, setLongScriptsLoading] = useState(false);
-  const [selectedLongScriptId, setSelectedLongScriptId] = useState("");
   const [imageMode, setImageMode] = useState<VisualSource>("ai");
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
@@ -113,7 +95,6 @@ export function Generate() {
   const [uploadPlatforms, setUploadPlatforms] = useState<UploadPlatform[]>([]);
   const [previewAtEnd, setPreviewAtEnd] = useState(false);
   const [shortDuration, setShortDuration] = useState<ShortDurationSeconds>(60);
-  const [shortRenderProfile, setShortRenderProfile] = useState<ShortRenderProfile>("fast");
   const [retentionMode, setRetentionMode] = useState<RetentionMode>("standard");
 
   // Decorative mixer knobs — not wired to the backend. They make the panel
@@ -157,7 +138,6 @@ export function Generate() {
   // so the renderer skips re-generating the script.
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewSseUrl, setPreviewSseUrl] = useState<string | null>(null);
-  const [previewSource, setPreviewSource] = useState<"generated" | "long-script">("generated");
 
   // Batch generation — pop a dialog that lets the user queue jobs across
   // multiple channels in one shot. Independent of the single-job flow above.
@@ -183,22 +163,8 @@ export function Generate() {
       .listLLMModels()
       .then((d) => setLlmCatalog(d.models ?? []))
       .catch(() => {});
-    api
-      .listLongScripts()
-      .then((items) => {
-        setLongScripts(items ?? []);
-        setSelectedLongScriptId((current) => current || items?.[0]?.id || "");
-      })
-      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    const profile = info?.short_render_profile;
-    if (profile && SHORT_RENDER_PROFILE_OPTIONS.includes(profile)) {
-      setShortRenderProfile(profile);
-    }
-  }, [info?.short_render_profile]);
 
   useEffect(() => {
     if (!llmProvider) {
@@ -226,10 +192,6 @@ export function Generate() {
   const selectedChannel = useMemo(
     () => channels.find((c) => c.id === channelId),
     [channels, channelId],
-  );
-  const selectedLongScript = useMemo(
-    () => longScripts.find((item) => item.id === selectedLongScriptId),
-    [longScripts, selectedLongScriptId],
   );
 
   // Filter series to those belonging to the selected channel — when the API
@@ -270,22 +232,6 @@ export function Generate() {
     }
   };
 
-  const refreshLongScripts = async () => {
-    setLongScriptsLoading(true);
-    try {
-      const items = await api.listLongScripts();
-      setLongScripts(items ?? []);
-      setSelectedLongScriptId((current) =>
-        items.some((item) => item.id === current) ? current : items[0]?.id || "",
-      );
-      if (!items.length) toast.info("No encontré scripts largos en .mp/tmp");
-    } catch (e) {
-      toast.error(`No pude leer los scripts largos: ${(e as Error).message}`);
-    } finally {
-      setLongScriptsLoading(false);
-    }
-  };
-
   const start = async () => {
     if (!channelId) {
       toast.error("Selecciona un canal");
@@ -310,7 +256,6 @@ export function Generate() {
       upload_platforms: serverUploadPlatforms,
       series_id: seriesId || undefined,
       duration_seconds: kind === "short" ? shortDuration : undefined,
-      render_profile: kind === "short" ? shortRenderProfile : undefined,
       llm_provider: llmProvider || undefined,
       llm_model: llmProvider && llmModel ? llmModel : undefined,
       llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
@@ -375,32 +320,6 @@ export function Generate() {
       duration_seconds: shortDuration,
       retention_mode: retentionMode,
     });
-    setPreviewSource("generated");
-    setPreviewSseUrl(url);
-    setPreviewOpen(true);
-  };
-
-  const startLongScriptPreview = () => {
-    if (!channelId) {
-      toast.error("Selecciona un canal");
-      return;
-    }
-    if (kind !== "short") {
-      toast.error("El resumen desde guion largo solo genera Shorts");
-      return;
-    }
-    if (!selectedLongScript) {
-      toast.error("Selecciona un script largo");
-      return;
-    }
-    const url = api.longScriptPreviewUrl(selectedLongScript.id, {
-      channel_id: channelId,
-      duration_seconds: shortDuration,
-      llm_provider: llmProvider || undefined,
-      llm_model: llmProvider && llmModel ? llmModel : undefined,
-      llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
-    });
-    setPreviewSource("long-script");
     setPreviewSseUrl(url);
     setPreviewOpen(true);
   };
@@ -429,7 +348,6 @@ export function Generate() {
       upload_platforms: serverUploadPlatforms,
       series_id: seriesId || undefined,
       duration_seconds: shortDuration,
-      render_profile: shortRenderProfile,
       llm_provider: llmProvider || undefined,
       llm_model: llmProvider && llmModel ? llmModel : undefined,
       llm_reasoning_effort: llmProvider === "openai" ? openaiReasoningEffort : undefined,
@@ -445,12 +363,7 @@ export function Generate() {
 
   const eta = kind === "short"
     ? Math.round(
-        shortDuration *
-          (shortRenderProfile === "quality"
-            ? 0.18
-            : shortRenderProfile === "fast"
-            ? 0.11
-            : 0.07) +
+        shortDuration * 0.18 +
           90 +
           (retentionMode === "maxima_retencion" ? shortDuration * 0.08 + 45 : 0),
       )
@@ -458,7 +371,7 @@ export function Generate() {
   const shortResolution = info?.short_render_size || "2160×3840";
   const longResolution = info?.long_render_size || "3840×2160";
   const outputFps = kind === "short"
-    ? (info?.short_render_fps || SHORT_RENDER_META[shortRenderProfile].fps)
+    ? (info?.short_render_fps || 60)
     : (info?.long_render_fps || 60);
   const outputResolution = kind === "short" ? shortResolution : longResolution;
 
@@ -655,18 +568,6 @@ export function Generate() {
                     )}
                   </div>
                 </Field>
-                {kind === "short" && (
-                  <LongScriptShortPanel
-                    scripts={longScripts}
-                    selectedId={selectedLongScriptId}
-                    selected={selectedLongScript}
-                    loading={longScriptsLoading}
-                    onSelect={setSelectedLongScriptId}
-                    onRefresh={refreshLongScripts}
-                    onPreview={startLongScriptPreview}
-                    disabled={!channelId}
-                  />
-                )}
                 {kind === "long" && channelSeries.length > 0 && (
                   <Field label="Serie (opcional)">
                     <Segmented
@@ -730,20 +631,6 @@ export function Generate() {
                           }))}
                         />
                       </div>
-                    </Field>
-                    <Field
-                      label="Render"
-                      hint={SHORT_RENDER_META[shortRenderProfile].hint}
-                    >
-                      <Segmented
-                        value={shortRenderProfile}
-                        onChange={(v) => setShortRenderProfile(v as ShortRenderProfile)}
-                        accentVar="var(--accent)"
-                        options={SHORT_RENDER_PROFILE_OPTIONS.map((p) => ({
-                          value: p,
-                          label: SHORT_RENDER_META[p].label,
-                        }))}
-                      />
                     </Field>
                   </>
                 )}
@@ -1102,7 +989,7 @@ export function Generate() {
         retentionMode={retentionMode}
         sseUrl={previewSseUrl}
         onApprove={onPreviewApproved}
-        onRegenerate={previewSource === "long-script" ? startLongScriptPreview : startPreview}
+        onRegenerate={startPreview}
       />
 
       <BatchGenerateDialog
@@ -1115,7 +1002,6 @@ export function Generate() {
           imageProvider: showImageProviderSelector ? imageProvider : undefined,
           autoUpload: uploadPlatforms.includes("youtube"),
           model: llmProvider && llmModel ? llmModel : undefined,
-          renderProfile: kind === "short" ? shortRenderProfile : undefined,
           retentionMode: kind === "short" ? retentionMode : undefined,
         }}
       />
@@ -1146,120 +1032,6 @@ function GenerateMetric({
       </div>
     </div>
   );
-}
-
-function LongScriptShortPanel({
-  scripts,
-  selectedId,
-  selected,
-  loading,
-  onSelect,
-  onRefresh,
-  onPreview,
-  disabled,
-}: {
-  scripts: LongScriptFile[];
-  selectedId: string;
-  selected?: LongScriptFile;
-  loading: boolean;
-  onSelect: (id: string) => void;
-  onRefresh: () => void;
-  onPreview: () => void;
-  disabled?: boolean;
-}) {
-  const options = scripts.length
-    ? scripts.map((script) => ({
-        value: script.id,
-        label: script.topic || script.name,
-      }))
-    : [{ value: "", label: "Sin scripts en .mp/tmp" }];
-
-  return (
-    <div
-      className="rounded-[10px] px-3 py-3 flex flex-col gap-2.5"
-      style={{
-        background: "hsl(var(--background))",
-        border: "1px solid hsl(var(--border) / .07)",
-      }}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-          <FileText className="h-3.5 w-3.5" strokeWidth={1.7} />
-          <span>Guion largo</span>
-        </div>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={loading}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground disabled:opacity-50"
-          style={{
-            border: "1px solid hsl(var(--border) / .08)",
-            background: "hsl(var(--bg-raised) / .45)",
-          }}
-          title="Actualizar scripts"
-        >
-          <RefreshCw
-            className={cn("h-3.5 w-3.5", loading && "animate-spin")}
-            strokeWidth={1.7}
-          />
-        </button>
-      </div>
-      <SelectMini
-        value={selectedId}
-        onChange={onSelect}
-        options={options}
-        icon={<FileText className="h-3 w-3" strokeWidth={1.5} />}
-      />
-      <div
-        className="min-h-[58px] rounded-lg px-2.5 py-2 text-[11.5px] leading-relaxed"
-        style={{
-          background: "hsl(var(--bg-raised) / .45)",
-          border: "1px solid hsl(var(--border) / .06)",
-        }}
-      >
-        {selected ? (
-          <>
-            <div className="line-clamp-2 text-foreground">{selected.topic}</div>
-            <div className="mt-1 font-mono text-[10.5px] text-muted-foreground">
-              {formatLongScriptMeta(selected)}
-            </div>
-          </>
-        ) : (
-          <div className="text-muted-foreground">No hay scripts largos guardados.</div>
-        )}
-      </div>
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-9 gap-2"
-        onClick={onPreview}
-        disabled={disabled || loading || !selected}
-        title="Crear preview editable desde el guion seleccionado"
-      >
-        <Sparkles className="h-3.5 w-3.5" />
-        Resumir a Short
-      </Button>
-    </div>
-  );
-}
-
-function formatLongScriptMeta(script: LongScriptFile) {
-  const parts = [];
-  if (script.words) parts.push(`${script.words.toLocaleString("es")} palabras`);
-  if (script.estimated_duration) parts.push(script.estimated_duration);
-  parts.push(formatShortDate(script.mtime));
-  return parts.join(" · ");
-}
-
-function formatShortDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("es", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
 }
 
 function TrackHeader({

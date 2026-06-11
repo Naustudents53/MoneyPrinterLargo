@@ -157,29 +157,6 @@ Más detalles en [`docs/Configuration.md`](docs/Configuration.md).
 
 Importante: `config.json` es local y puede contener secretos. No subas API keys ni rutas privadas.
 
-### Convertir un guion largo en Short
-
-Si ya tienes un guion largo guardado como `.mp/tmp/script_*.txt`, puedes resumirlo a
-un Short de 1, 2 o 3 minutos:
-
-```powershell
-python scripts/long_script_to_short.py .mp/tmp/script_9314e639-aa3f-4b63-b5c6-bf97611180eb.txt --duration 60 --preview
-```
-
-Usa `--duration 120` o `--duration 180` para versiones de 2 o 3 minutos. Con
-`--preview`, además crea un `.preview-<id>.txt` compatible con el flujo existente
-de generación desde guion aprobado.
-
-Para resumir y renderizar el Short completo en un solo comando, pásale el canal:
-
-```powershell
-python scripts/long_script_to_short.py .mp/tmp/script_9314e639-aa3f-4b63-b5c6-bf97611180eb.txt --duration 60 --render --channel-id <uuid> --render-profile fast
-```
-
-En la webapp, abre **Generar contenido** y usa el módulo **Guion largo** para
-seleccionar un `script_*.txt`, resumirlo a Short, revisar el preview y continuar
-el render.
-
 ---
 
 ## Ejecutar la webapp

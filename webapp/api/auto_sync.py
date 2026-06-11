@@ -484,7 +484,27 @@ class AutoSyncScheduler:
             with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(latest, f, indent=4, ensure_ascii=False)
 
+        if refreshed:
+            self._reflect_after_quick_sync(latest)
+
         return {"refreshed": refreshed, "channels": channels_touched}
+
+    def _reflect_after_quick_sync(self, data: dict) -> None:
+        """Run the LearningCoach after a quick stats refresh. Never raises."""
+        src_dir = str(self.root_dir / "src")
+        if src_dir not in sys.path:
+            sys.path.insert(0, src_dir)
+        try:
+            from classes.LearningCoach import reflect_after_sync
+        except Exception:
+            return
+        for acc in data.get("accounts", []):
+            try:
+                if reflect_after_sync(acc):
+                    self._log("quick", f"  coach: reflected on "
+                              f"{acc.get('nickname', acc.get('id', '?'))}")
+            except Exception:
+                pass
 
     async def _run_full(self, _cfg: dict) -> dict:
         """Re-use the existing subprocess-based full sync. We don't replicate

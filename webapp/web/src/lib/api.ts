@@ -37,8 +37,6 @@ export type ShortDurationSeconds = (typeof SHORT_DURATION_OPTIONS)[number];
 // the backend rejects anything else with HTTP 400.
 export const HOOK_PROFILE_OPTIONS = ["educational", "storytelling"] as const;
 export type HookProfile = (typeof HOOK_PROFILE_OPTIONS)[number];
-export const SHORT_RENDER_PROFILE_OPTIONS = ["quality", "fast", "turbo"] as const;
-export type ShortRenderProfile = (typeof SHORT_RENDER_PROFILE_OPTIONS)[number];
 export const RETENTION_MODE_OPTIONS = ["standard", "maxima_retencion"] as const;
 export type RetentionMode = (typeof RETENTION_MODE_OPTIONS)[number];
 export const UPLOAD_PLATFORM_OPTIONS = ["youtube", "tiktok", "facebook"] as const;
@@ -198,7 +196,6 @@ export interface SystemInfo {
   llm_provider: string;
   tts_voice: string;
   image_aspect_ratio: string;
-  short_render_profile?: ShortRenderProfile;
   short_render_size?: string;
   long_render_size?: string;
   short_render_fps?: number;
@@ -336,7 +333,6 @@ export interface BatchJobItem {
   model?: string;
   sentence_length?: number;
   hook_style?: string;
-  render_profile?: ShortRenderProfile;
   retention_mode?: RetentionMode;
 }
 
@@ -353,16 +349,6 @@ export interface PreviewScript {
   id: string;
   subject: string;
   script: string;
-}
-
-export interface LongScriptFile {
-  id: string;
-  name: string;
-  topic: string;
-  words: number | null;
-  estimated_duration: string;
-  size_bytes: number;
-  mtime: string;
 }
 
 export interface PhotoUploadResponse {
@@ -552,7 +538,6 @@ export const api = {
   },
 
   // Preview-script artifacts (used by "Vista previa" flow)
-  listLongScripts: () => request<LongScriptFile[]>("/api/long-scripts"),
   readPreview: (id: string) => request<PreviewScript>(`/api/preview/${id}`),
   savePreview: (id: string, data: { subject: string; script: string }) =>
     request<{ ok: boolean }>(`/api/preview/${id}`, {
@@ -661,7 +646,6 @@ export const api = {
     upload_platforms?: UploadPlatform[];
     series_id?: string;
     duration_seconds?: ShortDurationSeconds;
-    render_profile?: ShortRenderProfile;
     llm_provider?: LLMProvider | "";
     llm_model?: string;
     llm_reasoning_effort?: OpenAIReasoningEffort | "";
@@ -687,9 +671,6 @@ export const api = {
     if (params.kind === "short" && params.duration_seconds) {
       qs.set("duration_seconds", String(params.duration_seconds));
     }
-    if (params.kind === "short" && params.render_profile) {
-      qs.set("render_profile", params.render_profile);
-    }
     if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
     if (params.llm_model) qs.set("llm_model", params.llm_model);
     if (params.llm_reasoning_effort) qs.set("llm_reasoning_effort", params.llm_reasoning_effort);
@@ -708,21 +689,6 @@ export const api = {
       qs.set("retention_mode", params.retention_mode);
     }
     return `${BASE}/api/channels/${id}/generate?${qs.toString()}`;
-  },
-  longScriptPreviewUrl(name: string, params: {
-    channel_id?: string;
-    duration_seconds?: ShortDurationSeconds;
-    llm_provider?: LLMProvider | "";
-    llm_model?: string;
-    llm_reasoning_effort?: OpenAIReasoningEffort | "";
-  } = {}): string {
-    const qs = new URLSearchParams();
-    if (params.channel_id) qs.set("channel_id", params.channel_id);
-    if (params.duration_seconds) qs.set("duration_seconds", String(params.duration_seconds));
-    if (params.llm_provider) qs.set("llm_provider", params.llm_provider);
-    if (params.llm_model) qs.set("llm_model", params.llm_model);
-    if (params.llm_reasoning_effort) qs.set("llm_reasoning_effort", params.llm_reasoning_effort);
-    return `${BASE}/api/long-scripts/${encodeURIComponent(name)}/preview-short?${qs.toString()}`;
   },
   previewScriptUrl(id: string, params: {
     custom_topic?: string;

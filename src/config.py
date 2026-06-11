@@ -163,17 +163,10 @@ def get_short_render_profile() -> str:
     """
     Gets the short-video render profile.
 
-    quality: current look (Ken Burns + karaoke)
-    fast: static images + karaoke
-    turbo: static images without burned-in karaoke
+    Only the "quality" profile is supported (Ken Burns + karaoke). The legacy
+    "fast" and "turbo" profiles were removed; this always returns "quality".
     """
-    profile = os.environ.get("MP_SHORT_RENDER_PROFILE", "").strip()
-    if not profile:
-        profile = str(_get_config_value("short_render_profile", "quality")).strip()
-    profile = profile.lower()
-    if profile not in {"quality", "fast", "turbo"}:
-        return "quality"
-    return profile
+    return "quality"
 
 def get_short_render_fps() -> int:
     """
@@ -243,21 +236,15 @@ def get_long_render_fps() -> int:
 
 def get_short_ken_burns_enabled() -> bool:
     """Returns whether Shorts should animate image zooms in MoviePy."""
-    return _get_bool_config(
-        "short_ken_burns",
-        default=get_short_render_profile() == "quality",
-    )
+    return _get_bool_config("short_ken_burns", default=True)
 
 def get_short_karaoke_subtitles_enabled() -> bool:
     """Returns whether Shorts should burn word-level karaoke subtitles."""
-    return _get_bool_config(
-        "short_karaoke_subtitles",
-        default=get_short_render_profile() != "turbo",
-    )
+    return _get_bool_config("short_karaoke_subtitles", default=True)
 
 def get_short_crossfade_seconds() -> float:
     """Gets crossfade duration between Short images."""
-    default = 0.4 if get_short_render_profile() == "quality" else 0.0
+    default = 0.4
     value = os.environ.get("MP_SHORT_CROSSFADE_SECONDS", "").strip()
     if not value:
         value = _get_config_value("short_crossfade_seconds", default)
@@ -896,3 +883,41 @@ def get_script_sentence_length() -> int:
             return config_json["script_sentence_length"]
         else:
             return 4
+
+
+def get_winner_remix_enabled() -> bool:
+    """Returns whether the Winner Remix flow is allowed to fire."""
+    return _get_bool_config("winner_remix_enabled", default=True)
+
+
+def get_winner_remix_ratio() -> int:
+    """Cadence for Winner Remix: roughly 1 remix every N videos (default 6)."""
+    return _get_int_config("winner_remix_ratio", default=6, minimum=2, maximum=100)
+
+
+def get_winner_remix_min_views() -> int:
+    """Minimum view count for a video to qualify as a remix source."""
+    return _get_int_config("winner_remix_min_views", default=1000, minimum=1, maximum=100000000)
+
+
+def get_long_retention_enabled() -> bool:
+    """Retention gate for long-form scripts (score + intro rewrite)."""
+    return _get_bool_config("long_retention_enabled", default=True)
+
+
+def get_learning_enabled() -> bool:
+    """Returns whether the LearningCoach reflects after a YouTube sync."""
+    return _get_bool_config("learning_enabled", default=True)
+
+
+def get_learning_max_lessons() -> int:
+    """Maximum natural-language lessons kept in a channel's learning memory."""
+    return _get_int_config("learning_max_lessons", default=30, minimum=5, maximum=200)
+
+
+def get_learning_model() -> str:
+    """Optional Claude CLI model/alias for reflection. Empty uses the default."""
+    value = os.environ.get("MP_LEARNING_MODEL", "").strip()
+    if not value:
+        value = str(_get_config_value("learning_model", "") or "").strip()
+    return value
