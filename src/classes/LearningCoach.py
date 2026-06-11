@@ -69,13 +69,19 @@ def data_signature(videos: list[dict[str, Any]]) -> str:
     Returns "" when there is nothing with views to learn from, so callers can
     cheaply treat "no data" as "nothing to reflect on".
     """
-    items: list[tuple[str, int]] = []
+    items: list[tuple[str, int, int]] = []
     for video in videos or []:
         views = _video_views(video)
         if views is None:
             continue
         url = str(video.get("url") or "")
-        items.append((url, views))
+        # Real audience retention (when synced) is learning signal too: a
+        # fresh curve with unchanged views must still trigger a reflection.
+        try:
+            avg_pct = int(round(float(video.get("avg_percentage_viewed")) * 10))
+        except (TypeError, ValueError):
+            avg_pct = -1
+        items.append((url, views, avg_pct))
     if not items:
         return ""
     items.sort()
@@ -155,7 +161,22 @@ def build_reflection_prompt(
     bottom = scored[-10:] if len(scored) > 10 else []
 
     def _line(video: dict[str, Any]) -> str:
-        return f"- {_video_views(video)} views :: {str(video.get('subject') or video.get('title') or '').strip()}"
+        base = f"- {_video_views(video)} views"
+        # Real retention, when RetentionSync has scraped it, is far stronger
+        # signal than views — surface it so the coach can reason about WHERE
+        # viewers leave, not just how many clicked.
+        try:
+            avg_pct = float(video.get("avg_percentage_viewed"))
+            base += f" | {avg_pct:.0f}% avg viewed"
+        except (TypeError, ValueError):
+            pass
+        drop = video.get("retention_biggest_drop")
+        if isinstance(drop, dict) and float(drop.get("drop") or 0) >= 5.0:
+            base += (
+                f" | biggest drop {drop.get('drop')}pts at "
+                f"{float(drop.get('position') or 0) * 100:.0f}% of the video"
+            )
+        return f"{base} :: {str(video.get('subject') or video.get('title') or '').strip()}"
 
     best_block = "\n".join(_line(v) for v in top) or "(no data yet)"
     worst_block = "\n".join(_line(v) for v in bottom) or "(not enough data)"

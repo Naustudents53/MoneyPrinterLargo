@@ -8948,6 +8948,32 @@ No markdown. No explanation. Just the JSON array."""
                     "Close the browser manually after YouTube Studio shows the upload is done.")
             return False
 
+    def sync_retention_curves(self, max_videos: int = 10) -> dict:
+        """Scrape real audience-retention data from YouTube Studio for this
+        account's most recent videos and persist it onto the video records.
+
+        Uses the same pre-authenticated Firefox profile as uploads. Fully
+        guarded: returns a summary dict and never raises.
+        """
+        try:
+            from . import RetentionSync
+
+            self._ensure_browser()
+            summary = RetentionSync.sync_account_retention(
+                self.browser,
+                self._account_uuid,
+                self.get_videos(),
+                max_videos=max_videos,
+            )
+            info(
+                f" => Retention sync: {summary['stored']} videos updated, "
+                f"{summary['failed']} failed"
+            )
+            return summary
+        except Exception as e:
+            warning(f"Retention sync failed: {str(e)[:160]}")
+            return {"fetched": 0, "stored": 0, "failed": 0}
+
     def _update_last_video_url(self, date_marker: str, new_url: str) -> None:
         """Update the URL field of the cache entry that matches `date_marker`."""
         cache = get_youtube_cache_path()
