@@ -25,7 +25,26 @@ import re
 from typing import Any, Callable
 
 _PLAYBOOK_KEYS = ("topic_guidance", "hook_guidance", "script_guidance", "avoid")
+_TERM_KEYS = ("avoid_terms", "boost_terms")
 _DEFAULT_MAX_LESSONS = 30
+_MAX_TERMS = 12
+
+
+def _clean_terms(value: Any) -> list[str]:
+    """Validate an LLM-provided term list: strings only, lowercased, deduped."""
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        term = str(item or "").strip().lower()
+        if not term or len(term) > 40 or term in seen:
+            continue
+        seen.add(term)
+        out.append(term)
+        if len(out) >= _MAX_TERMS:
+            break
+    return out
 
 
 def _video_views(video: dict[str, Any]) -> int | None:
@@ -168,9 +187,13 @@ Return ONLY a strict JSON object, no prose, no markdown fences, with this shape:
     "hook_guidance": "how the first line / hook should work",
     "script_guidance": "how the script body should be written",
     "avoid": "patterns that correlate with weak performance"
-  }}
+  }},
+  "avoid_terms": ["concrete lowercase words/short phrases that correlate with WEAK videos (max 8)"],
+  "boost_terms": ["concrete lowercase words/short phrases that correlate with WINNING videos (max 8)"]
 }}
-Every value must be a plain string. Write in the same language as the topics above."""
+"lessons" and playbook values are plain strings; "avoid_terms"/"boost_terms" are
+arrays of literal words taken from the titles above (no abstractions).
+Write in the same language as the topics above."""
 
 
 def run_reflection(
@@ -214,6 +237,12 @@ def run_reflection(
                 merged_pb[key] = value
         updated["playbook"] = merged_pb
 
+    for key in _TERM_KEYS:
+        terms = _clean_terms(parsed.get(key))
+        if terms:
+            merged_terms = _clean_terms(terms + list(updated.get(key) or []))
+            updated[key] = merged_terms
+
     updated["last_data_signature"] = data_signature(videos)
     updated["last_reflection_at"] = _now_iso()
     updated["videos_seen"] = sum(1 for v in (videos or []) if _video_views(v) is not None)
@@ -254,6 +283,27 @@ def injected_directive(learning: dict[str, Any] | None) -> str:
         "LEARNED PLAYBOOK (apply what has worked for this channel; "
         "do not mention this block in the output):\n" + body
     )
+
+
+def scoring_hints(learning: dict[str, Any] | None) -> dict[str, list[str]]:
+    """Structured term lists that downstream scorers (RetentionLab, WinnerRemix)
+    can apply directly, closing the loop between learned lessons and the
+    deterministic heuristics."""
+    learning = learning or {}
+    return {
+        "avoid_terms": _clean_terms(learning.get("avoid_terms")),
+        "boost_terms": _clean_terms(learning.get("boost_terms")),
+    }
+
+
+def hints_for_account(account_id: str) -> dict[str, list[str]]:
+    """Load an account's learning and return its scoring hints. Safe on error."""
+    try:
+        import cache  # type: ignore
+
+        return scoring_hints(cache.get_learning(account_id))
+    except Exception:
+        return {"avoid_terms": [], "boost_terms": []}
 
 
 def directive_for_account(account_id: str) -> str:

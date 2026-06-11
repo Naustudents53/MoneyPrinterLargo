@@ -168,6 +168,60 @@ def test_pick_winner_penalty_wins_over_boost_for_same_subtheme():
     assert picked["url"] == "https://youtube.com/shorts/titan"
 
 
+def test_channel_winner_threshold_uses_percentile_with_floor():
+    # 10 shorts: views 100..1000 -> p80 lands at 900; floor is 100.
+    videos = [_short(f"tema {i}", views=i * 100) for i in range(1, 11)]
+    assert wr.channel_winner_threshold(videos, default=1000) == 900
+
+
+def test_channel_winner_threshold_lets_small_channels_qualify():
+    # Median ~50 views: absolute 1000 would never qualify anything.
+    videos = [_short(f"tema {i}", views=40 + i) for i in range(1, 11)]
+    threshold = wr.channel_winner_threshold(videos, default=1000)
+    assert threshold == max(wr.ABSOLUTE_WINNER_FLOOR, 48)
+    assert threshold < 1000
+
+
+def test_channel_winner_threshold_falls_back_on_small_sample():
+    videos = [_short("solo uno", 5000)]
+    assert wr.channel_winner_threshold(videos, default=1000) == 1000
+
+
+def test_pick_winner_penalizes_learned_avoid_terms():
+    avoided = _short("Quasar 3C 273 brillante", 4000,
+                     url="https://youtube.com/shorts/quasar")
+    other = _short("Titan luna de metano", 1400,
+                   url="https://youtube.com/shorts/titan")
+    picked = wr.pick_winner(
+        [avoided, other], min_views=1000, rng=FakeRng(), avoid_terms=["quasar"]
+    )
+    # 4000 * 0.2 = 800 < 1400 -> the learned avoid term flips the choice.
+    assert picked["url"] == "https://youtube.com/shorts/titan"
+
+
+def test_runner_up_hook_returns_second_best_variant():
+    winner = _short("TON 618", 9000)
+    winner["hook_variants"] = [
+        {"hook": "publicado", "score": 9.1},
+        {"hook": "subcampeon nunca usado", "score": 8.7},
+        {"hook": "tercero", "score": 6.0},
+    ]
+    assert wr.runner_up_hook(winner) == "subcampeon nunca usado"
+    assert wr.runner_up_hook(_short("sin variantes", 9000)) == ""
+
+
+def test_build_remix_prompt_includes_runner_up_angle():
+    winner = _short("TON 618 el agujero negro mas masivo", 9000)
+    winner["hook_variants"] = [
+        {"hook": "a", "score": 9.0},
+        {"hook": "la luz que no deberia existir", "score": 8.5},
+    ]
+    prompt = wr.build_remix_prompt(winner, "documentales del universo", "Spanish")
+    assert "ANGLE INSPIRATION" in prompt
+    assert "la luz que no deberia existir" in prompt
+    assert prompt.index("ANGLE INSPIRATION") < prompt.index("OUTPUT FORMAT")
+
+
 def test_build_remix_prompt_places_directive_before_output_format():
     winner = _short("TON 618 el agujero negro mas masivo", 9000)
     directive = "LEARNED PLAYBOOK (apply what has worked):\nHook: empieza con cifra"

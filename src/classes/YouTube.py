@@ -455,6 +455,19 @@ class YouTube:
         self._learning_directive_cache = directive
         return directive
 
+    def _learning_hints(self) -> dict:
+        """Structured avoid/boost terms learned by the coach, cached per run."""
+        cached = getattr(self, "_learning_hints_cache", None)
+        if cached is not None:
+            return cached
+        hints = {"avoid_terms": [], "boost_terms": []}
+        try:
+            hints = LearningCoach.hints_for_account(self._account_uuid)
+        except Exception:
+            pass
+        self._learning_hints_cache = hints
+        return hints
+
     def generate_topic(self) -> str:
         """
         Generates a topic based on the YouTube Channel niche.
@@ -776,7 +789,17 @@ OUTPUT FORMAT (strict):
         except Exception:
             videos = []
 
-        winner = WinnerRemix.pick_winner(videos, min_views=get_winner_remix_min_views())
+        # Channel-relative threshold: "winner" means top-20% for THIS channel
+        # (with the configured value as fallback for small samples), so small
+        # channels can remix too and big channels stay selective.
+        threshold = WinnerRemix.channel_winner_threshold(
+            videos, default=get_winner_remix_min_views()
+        )
+        winner = WinnerRemix.pick_winner(
+            videos,
+            min_views=threshold,
+            avoid_terms=self._learning_hints().get("avoid_terms"),
+        )
         if not winner:
             return ""
 
@@ -846,6 +869,7 @@ VERDICT: <FITS or OFFNICHE> - <short reason in 5-15 words>"""
             return script
 
         resolved_sentence_length = sentence_length or self._sentence_length_override or get_script_sentence_length()
+        hints = self._learning_hints()
         if allow_rewrite:
             improved, report = RetentionLab.enforce_pre_render_score(
                 script=script,
@@ -855,6 +879,8 @@ VERDICT: <FITS or OFFNICHE> - <short reason in 5-15 words>"""
                 sentence_length=resolved_sentence_length,
                 target_words=self._target_word_count,
                 generate_response=self.generate_response,
+                avoid_terms=hints.get("avoid_terms"),
+                boost_terms=hints.get("boost_terms"),
             )
         else:
             report = RetentionLab.score_short_script(
@@ -863,6 +889,8 @@ VERDICT: <FITS or OFFNICHE> - <short reason in 5-15 words>"""
                 niche=self.niche,
                 language=self.language,
                 retention_mode=getattr(self, "_retention_mode", ""),
+                avoid_terms=hints.get("avoid_terms"),
+                boost_terms=hints.get("boost_terms"),
             )
             report.update({
                 "initial_score": report.get("score", 0),
@@ -898,6 +926,7 @@ VERDICT: <FITS or OFFNICHE> - <short reason in 5-15 words>"""
         candidates: int = 8,
         educational_anchor: bool = False,
     ) -> tuple[str, dict]:
+        hints = self._learning_hints()
         return RetentionLab.select_best_hook(
             topic=self.subject,
             niche=self.niche,
@@ -907,6 +936,8 @@ VERDICT: <FITS or OFFNICHE> - <short reason in 5-15 words>"""
             candidates=candidates,
             max_rounds=self._hook_lab_max_attempts(),
             educational_anchor=educational_anchor,
+            avoid_terms=hints.get("avoid_terms"),
+            boost_terms=hints.get("boost_terms"),
         )
 
     @staticmethod
@@ -8667,6 +8698,13 @@ No markdown. No explanation. Just the JSON array."""
                     or (getattr(self, "retention_preflight", {}) or {}).get("score")
                 ),
                 "hook_score": (getattr(self, "retention_hook_lab", {}) or {}).get("best_score"),
+                # Unused hook candidates, persisted so a future remix of this
+                # video can try the runner-up angle instead of re-inventing one.
+                "hook_variants": [
+                    {"hook": c.get("hook"), "score": c.get("score")}
+                    for c in ((getattr(self, "retention_hook_lab", {}) or {}).get("candidates") or [])[:4]
+                    if isinstance(c, dict) and c.get("hook")
+                ],
                 "first_image_score": (
                     ((getattr(self, "visual_preflight", {}) or {}).get("first_image") or {}).get("score")
                 ),

@@ -152,6 +152,28 @@ def test_run_reflection_does_not_mark_signature_when_ask_raises():
     assert out.get("last_data_signature") == "prev"
 
 
+def test_run_reflection_merges_structured_terms():
+    videos = [_video("black holes", 1500)]
+
+    def ask(_prompt):
+        return (
+            '{"lessons": ["x"], "playbook": {},'
+            ' "avoid_terms": ["Sombra", "sombra", "", 42],'
+            ' "boost_terms": ["agujero negro"]}'
+        )
+
+    out = lc.run_reflection({}, videos, {"avoid_terms": ["niebla"]}, ask)
+    assert out["avoid_terms"][0] == "sombra"  # newest first, deduped, lowercased
+    assert "niebla" in out["avoid_terms"]
+    assert out["boost_terms"] == ["agujero negro"]
+
+
+def test_scoring_hints_returns_clean_lists():
+    hints = lc.scoring_hints({"avoid_terms": ["Sombra", None], "boost_terms": "not-a-list"})
+    assert hints == {"avoid_terms": ["sombra"], "boost_terms": []}
+    assert lc.scoring_hints(None) == {"avoid_terms": [], "boost_terms": []}
+
+
 # --- injected_directive --------------------------------------------------
 
 

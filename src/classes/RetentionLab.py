@@ -187,17 +187,20 @@ class RetentionLab:
         candidates: int = 8,
         max_rounds: int = 1,
         educational_anchor: bool = False,
+        avoid_terms: list[str] | None = None,
+        boost_terms: list[str] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         candidates = max(4, min(int(candidates or 8), 10))
         max_rounds = max(1, min(int(max_rounds or 1), 30))
         history_videos = history_videos or []
+        hint_kwargs = {"avoid_terms": avoid_terms, "boost_terms": boost_terms}
         burned_block = cls.burned_topic_directive(history_videos, limit=5)
         winning_block = cls.winning_topic_directive(history_videos, limit=5)
         scoring_block = cls._hook_scoring_directive(topic, educational_anchor=educational_anchor)
         anchor_block = cls._educational_hook_anchor_directive(topic, language) if educational_anchor else ""
         scored_by_key: dict[str, dict[str, Any]] = {}
         rounds = 0
-        best = cls.score_hook("", topic, niche, language, require_subject_anchor=educational_anchor)
+        best = cls.score_hook("", topic, niche, language, require_subject_anchor=educational_anchor, **hint_kwargs)
 
         for round_index in range(max_rounds):
             retry_block = ""
@@ -241,6 +244,7 @@ Rules:
                     niche=niche,
                     language=language,
                     require_subject_anchor=educational_anchor,
+                    **hint_kwargs,
                 )
                 if not report["hook"]:
                     continue
@@ -266,6 +270,7 @@ Rules:
                     niche=niche,
                     language=language,
                     require_subject_anchor=educational_anchor,
+                    **hint_kwargs,
                 )
                 if not report["hook"]:
                     continue
@@ -476,6 +481,8 @@ EDUCATIONAL ANCHOR MODE:
         niche: str = "",
         language: str = "",
         require_subject_anchor: bool = False,
+        avoid_terms: list[str] | None = None,
+        boost_terms: list[str] | None = None,
     ) -> dict[str, Any]:
         clean = cls._clean_line(hook)
         normalized = cls.normalize(clean)
@@ -518,6 +525,20 @@ EDUCATIONAL ANCHOR MODE:
             issues.append("hook does not clearly name the topic")
         if clean.endswith("?") or any(term in normalized for term in ("pero", "nadie", "nunca", "por eso")):
             score += 1.0
+        # Learned-term adjustments: terms the LearningCoach found to correlate
+        # with weak/winning videos shift the score so the lessons actually
+        # change what gets selected, not just what the prompt says.
+        learned_avoid_hits = sum(
+            1 for term in (avoid_terms or []) if cls.normalize(term) and cls.normalize(term) in normalized
+        )
+        learned_boost_hits = sum(
+            1 for term in (boost_terms or []) if cls.normalize(term) and cls.normalize(term) in normalized
+        )
+        if learned_avoid_hits:
+            score -= min(2.4, learned_avoid_hits * 0.8)
+            issues.append("hook uses terms that historically underperform on this channel")
+        score += min(1.5, learned_boost_hits * 0.5)
+
         anchor_metrics = cls._subject_anchor_metrics(clean, topic)
         if require_subject_anchor:
             if anchor_metrics["anchored_early"]:
@@ -543,6 +564,8 @@ EDUCATIONAL ANCHOR MODE:
                 "anchored_early": anchor_metrics["anchored_early"],
                 "category_hit": anchor_metrics["category_hit"],
                 "vague_opening": anchor_metrics["vague_opening"],
+                "learned_avoid_hits": learned_avoid_hits,
+                "learned_boost_hits": learned_boost_hits,
             },
             "topic": topic,
             "niche": niche,
@@ -667,6 +690,8 @@ Rules:
         niche: str = "",
         language: str = "",
         retention_mode: str = "",
+        avoid_terms: list[str] | None = None,
+        boost_terms: list[str] | None = None,
     ) -> dict[str, Any]:
         sentences = cls._sentences(script)
         words = cls._words(script)
@@ -719,6 +744,18 @@ Rules:
             issues.append("Script drifts away from the selected topic.")
             score -= 0.8
 
+        # LearningCoach term adjustments: lessons change the score, not just the prompt.
+        learned_avoid_hits = sum(
+            1 for term in (avoid_terms or []) if cls.normalize(term) and cls.normalize(term) in normalized_text
+        )
+        learned_boost_hits = sum(
+            1 for term in (boost_terms or []) if cls.normalize(term) and cls.normalize(term) in normalized_text
+        )
+        if learned_avoid_hits:
+            score -= min(1.5, learned_avoid_hits * 0.5)
+            issues.append("Script leans on terms that historically underperform on this channel.")
+        score += min(1.0, learned_boost_hits * 0.35)
+
         score = round(max(0.0, min(10.0, score)), 1)
         label = "ready" if score >= cls.SCORE_THRESHOLD and not issues[:1] else "risky"
         if score < 6.5:
@@ -755,10 +792,15 @@ Rules:
         target_words: int | None = None,
         threshold: float | None = None,
         max_attempts: int = 2,
+        avoid_terms: list[str] | None = None,
+        boost_terms: list[str] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         threshold = float(threshold or cls.SCORE_THRESHOLD)
+        hint_kwargs = {"avoid_terms": avoid_terms, "boost_terms": boost_terms}
         best_script = strip_narration_structure_labels((script or "").strip())
-        initial_report = cls.score_short_script(best_script, topic, niche, language, "maxima_retencion")
+        initial_report = cls.score_short_script(
+            best_script, topic, niche, language, "maxima_retencion", **hint_kwargs
+        )
         best_report = dict(initial_report)
         attempts = 0
 
@@ -812,6 +854,7 @@ Current narration:
                     niche,
                     language,
                     "maxima_retencion",
+                    **hint_kwargs,
                 )
                 if candidate_report["score"] > best_report["score"] + 0.05:
                     best_script = candidate
@@ -1296,11 +1339,13 @@ Current narration:
 
     @classmethod
     def _term_stats(cls, videos: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+        burn_cutoff = cls._burn_cutoff_date()
         buckets: dict[str, dict[str, Any]] = defaultdict(lambda: {
             "views": [],
             "examples": [],
             "winner_count": 0,
             "weak_count": 0,
+            "recent_weak_count": 0,
             "latest_date": "",
             "latest_views": None,
         })
@@ -1308,6 +1353,10 @@ Current narration:
             views = video.get("views")
             if views is None:
                 continue
+            video_date = str(video.get("date") or "")
+            # Undated videos count as recent so legacy records keep behaving
+            # as before; only provably-old flops stop burning a term.
+            is_recent = not video_date or video_date >= burn_cutoff
             terms = cls._terms_for_video(video)
             for term in terms:
                 bucket = buckets[term]
@@ -1318,8 +1367,10 @@ Current narration:
                     bucket["winner_count"] += 1
                 if views < cls.WEAK_VIEWS:
                     bucket["weak_count"] += 1
-                if (video.get("date") or "") >= bucket["latest_date"]:
-                    bucket["latest_date"] = video.get("date") or ""
+                    if is_recent:
+                        bucket["recent_weak_count"] += 1
+                if video_date >= bucket["latest_date"]:
+                    bucket["latest_date"] = video_date
                     bucket["latest_views"] = views
 
         burned: list[dict[str, Any]] = []
@@ -1338,7 +1389,12 @@ Current narration:
                 "weak_count": bucket["weak_count"],
                 "examples": bucket["examples"],
             }
-            if bucket["weak_count"] >= 2 or (avg_views < 300 and len(views) >= 2):
+            # Time decay: burning requires RECENT flops. A term whose failures
+            # are all older than the cutoff is eligible again (YouTube patterns
+            # expire; a 6-month-old flop should not veto today's topics).
+            if bucket["recent_weak_count"] >= 2 or (
+                avg_views < 300 and len(views) >= 2 and bucket["recent_weak_count"] >= 1
+            ):
                 item["reason"] = "repeated low-view pattern"
                 burned.append(item)
             if bucket["winner_count"] >= 1 and avg_views >= cls.WINNER_VIEWS:
@@ -1347,6 +1403,16 @@ Current narration:
         burned.sort(key=lambda item: (item["weak_count"], -item["avg_views"]), reverse=True)
         winning.sort(key=lambda item: (item["avg_views"], item["winner_count"]), reverse=True)
         return {"burned": burned, "winning": winning}
+
+    BURNED_TERM_MAX_AGE_DAYS = 180
+
+    @classmethod
+    def _burn_cutoff_date(cls) -> str:
+        """Oldest date (\"%Y-%m-%d ...\" prefix) whose flops still burn a term."""
+        from datetime import timedelta
+
+        cutoff = datetime.now() - timedelta(days=cls.BURNED_TERM_MAX_AGE_DAYS)
+        return cutoff.strftime("%Y-%m-%d")
 
     @classmethod
     def _terms_for_video(cls, video: dict[str, Any]) -> set[str]:

@@ -30,6 +30,12 @@ from topic_dedupe import distinctive_anchors, find_duplicate
 WINNER_VIEWS = 1000
 WEAK_VIEWS = 100
 
+# Channel-relative threshold: a "winner" is a top-20% video for THIS channel,
+# never below the absolute floor. Needs a minimum sample to be meaningful.
+WINNER_PERCENTILE = 0.8
+RELATIVE_MIN_SAMPLE = 5
+ABSOLUTE_WINNER_FLOOR = 100
+
 # Weighting multipliers applied when a candidate winner shares a subtheme with a
 # past remix outcome. A flopped subtheme is pushed down hard; a proven one up.
 _WEAK_SUBTHEME_PENALTY = 0.2
@@ -123,24 +129,51 @@ def evaluate_history(videos: list[dict[str, Any]]) -> dict[str, set[str]]:
     return {"winning_subthemes": winning, "weak_subthemes": weak}
 
 
+def channel_winner_threshold(
+    videos: list[dict[str, Any]],
+    default: int = WINNER_VIEWS,
+    percentile: float = WINNER_PERCENTILE,
+    floor: int = ABSOLUTE_WINNER_FLOOR,
+) -> int:
+    """View threshold for "winner", relative to THIS channel's distribution.
+
+    A fixed absolute threshold (1000) means a channel whose median is 50 views
+    never qualifies anything, while a 50k-view channel qualifies everything.
+    With enough sample, "winner" becomes the channel's top-(1-percentile)
+    videos, never below `floor`. Small samples fall back to `default`.
+    """
+    views = sorted(
+        v for v in (video_views(video) for video in videos or [] if _is_short(video))
+        if v is not None
+    )
+    if len(views) < RELATIVE_MIN_SAMPLE:
+        return int(default)
+    index = min(len(views) - 1, max(0, int(len(views) * percentile)))
+    return max(int(floor), int(views[index]))
+
+
 def pick_winner(
     videos: list[dict[str, Any]],
     min_views: int = WINNER_VIEWS,
     top_n: int = 5,
     rng: random.Random | None = None,
+    avoid_terms: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """Pick a winning video to remix from, weighted and learning-aware.
 
     Filters: must be a Short with views >= min_views, and must not already have
     been used as a remix source. Weighting: base views, scaled up for proven
-    subthemes and down for subthemes whose past remix flopped. A weighted random
-    choice over the top N keeps variety instead of always the single best.
+    subthemes and down for subthemes whose past remix flopped. Candidates whose
+    subject contains a LearningCoach `avoid_terms` entry are penalized too. A
+    weighted random choice over the top N keeps variety instead of always the
+    single best.
     """
     rng = rng or random
     used = remixed_source_urls(videos)
     learning = evaluate_history(videos)
     winning_subthemes = learning["winning_subthemes"]
     weak_subthemes = learning["weak_subthemes"]
+    normalized_avoid = [_normalize(t) for t in (avoid_terms or []) if str(t or "").strip()]
 
     scored: list[tuple[dict[str, Any], float]] = []
     for video in videos or []:
@@ -160,6 +193,10 @@ def pick_winner(
             weight *= _WEAK_SUBTHEME_PENALTY
         elif any(_subtheme_matches(subject, sub) for sub in winning_subthemes):
             weight *= _WINNING_SUBTHEME_BOOST
+        if normalized_avoid:
+            subject_norm = _normalize(subject)
+            if any(term in subject_norm for term in normalized_avoid):
+                weight *= _WEAK_SUBTHEME_PENALTY
         scored.append((video, max(weight, 1.0)))
 
     if not scored:
@@ -196,6 +233,27 @@ def is_acceptable_remix(
     return True
 
 
+def runner_up_hook(winner: dict[str, Any]) -> str:
+    """The winner's best UNUSED hook variant, if the A/B lab stored any.
+
+    The hook lab generates several scored candidates but only one is ever
+    published. When remixing a winner, its runner-up angle is free signal:
+    a hook that scored well on the exact subtheme we are about to revisit.
+    """
+    variants = winner.get("hook_variants")
+    if not isinstance(variants, list):
+        return ""
+    scored = [
+        (float(v.get("score") or 0), str(v.get("hook") or "").strip())
+        for v in variants
+        if isinstance(v, dict) and str(v.get("hook") or "").strip()
+    ]
+    scored.sort(reverse=True)
+    # Index 0 is (normally) the published hook; the runner-up is the angle
+    # that scored well but never got its shot.
+    return scored[1][1] if len(scored) > 1 else ""
+
+
 def build_remix_prompt(
     winner: dict[str, Any],
     niche: str,
@@ -210,6 +268,12 @@ def build_remix_prompt(
     """
     source = str(winner.get("subject") or winner.get("title") or "").strip()
     directive_block = f"\n{directive.strip()}\n" if directive and directive.strip() else ""
+    alt_hook = runner_up_hook(winner)
+    if alt_hook:
+        directive_block += (
+            f"\nANGLE INSPIRATION (a hook angle that scored well on this subtheme "
+            f"but was never published — let it inspire the framing, do not copy it):\n{alt_hook}\n"
+        )
     return f"""Your channel's best-performing video was about this subject:
 
 BEST VIDEO SUBJECT: {source}
