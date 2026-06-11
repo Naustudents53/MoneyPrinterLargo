@@ -854,11 +854,17 @@ _CLAUDE_MODEL_CATALOG = [
     {"id": "sonnet", "label": "Claude Sonnet (latest)", "provider": "claude",
      "description": "Alias del Claude CLI para Sonnet actual; buen balance calidad/velocidad."},
     {"id": "opus", "label": "Claude Opus (latest)", "provider": "claude",
-     "description": "Alias del Claude CLI para mÃ¡xima calidad."},
+     "description": "Alias del Claude CLI para máxima calidad."},
     {"id": "haiku", "label": "Claude Haiku (latest)", "provider": "claude",
-     "description": "Alias del Claude CLI para respuestas rÃ¡pidas y baratas."},
+     "description": "Alias del Claude CLI para respuestas rápidas y baratas."},
+    {"id": "claude-opus-4-8", "label": "Claude Opus 4.8", "provider": "claude",
+     "description": "Mayor profundidad de razonamiento; ideal para guiones largos complejos."},
     {"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6", "provider": "claude",
-     "description": "ID completo soportado por Claude CLI si tu cuenta lo tiene habilitado."},
+     "description": "Mejor balance calidad/velocidad para generación principal."},
+    {"id": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5", "provider": "claude",
+     "description": "Rápido y económico para tareas ligeras o de alto volumen."},
+    {"id": "claude-fable-5", "label": "Claude Fable 5", "provider": "claude",
+     "description": "Modelo más reciente disponible vía Claude CLI."},
 ]
 
 
@@ -890,7 +896,34 @@ def list_llm_models():
         elif cfg.get("gemini_model"):
             default_model = cfg["gemini_model"]
 
-    out = list(_OPENAI_MODEL_CATALOG) + list(_CLAUDE_MODEL_CATALOG) + list(_GEMINI_MODEL_CATALOG)
+    out = (
+        [dict(m) for m in _OPENAI_MODEL_CATALOG]
+        + [dict(m) for m in _CLAUDE_MODEL_CATALOG]
+        + [dict(m) for m in _GEMINI_MODEL_CATALOG]
+    )
+
+    # Claude — live-probe each catalog model/alias against the locally
+    # authenticated Claude CLI on every load, so the selector reflects what
+    # this account can actually use (accounts vary in which aliases/IDs are
+    # enabled) instead of a static guess.
+    try:
+        import importlib
+        llm_mod = importlib.import_module("llm_provider")
+        claude_probe = llm_mod.probe_claude_cli_models(
+            [m["id"] for m in _CLAUDE_MODEL_CATALOG]
+        )
+    except Exception:
+        claude_probe = None
+
+    if claude_probe is not None:
+        for entry in out:
+            if entry["provider"] != "claude":
+                continue
+            available = claude_probe.get(entry["id"])
+            if available is True:
+                entry["description"] += " [✓ disponible en esta cuenta]"
+            elif available is False:
+                entry["description"] += " [no disponible en esta cuenta]"
 
     # Ollama models — combine: (a) what's actually installed/available on the
     # local Ollama server, (b) a curated catalog of cloud-hosted Ollama models

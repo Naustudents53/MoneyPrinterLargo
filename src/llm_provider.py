@@ -109,6 +109,11 @@ _disabled_gemini_models: set = set()
 _disabled_ollama_models: set = set()
 _disabled_openai_models: set = set()
 _disabled_claude_models: set = set()
+# Live availability cache for Claude CLI models (see probe_claude_cli_models).
+_claude_probe_cache: dict = {}
+_claude_probe_cache_at: float = 0.0
+CLAUDE_PROBE_TTL_SECONDS = 600
+CLAUDE_PROBE_TIMEOUT_SECONDS = 20
 # When the user explicitly chose a provider+model from the UI, the long-video
 # pipeline must respect that choice and skip its hardcoded force_provider call.
 _user_override: bool = False
@@ -691,6 +696,86 @@ def _generate_text_codex_cli(prompt: str, model: str = None) -> str:
             _os.remove(output_path)
         except OSError:
             pass
+
+
+def _probe_claude_cli_model(cli: str, model: str, timeout: int) -> bool:
+    """Quick liveness check: can this Claude CLI account use `model`?
+
+    Skips the heavy system prompt used by `_generate_text_claude_cli` — a
+    one-word probe is enough to know whether the model id/alias is accepted.
+    """
+    import subprocess
+
+    args = [
+        cli, "--print", "--output-format", "text",
+        "--no-session-persistence", "--permission-mode", "dontAsk",
+        "--tools", "",
+    ]
+    if model:
+        args += ["--model", model]
+    args.append("-")
+
+    try:
+        result = subprocess.run(
+            args,
+            input="ping",
+            cwd=str(ROOT_DIR),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def probe_claude_cli_models(candidates: list[str], force: bool = False) -> dict[str, bool] | None:
+    """Live-check which Claude CLI model ids/aliases this account can use.
+
+    Runs a minimal `claude --print --model <id>` call per candidate in
+    parallel and caches the result for `CLAUDE_PROBE_TTL_SECONDS` so the
+    model selector can refresh on every load without re-spawning the CLI for
+    each request. Returns None (instead of all-False) when the CLI itself
+    seems unreachable, so callers don't mark every model "unavailable" due to
+    an environment problem rather than account permissions.
+    """
+    import time as _time
+    from concurrent.futures import ThreadPoolExecutor
+
+    global _claude_probe_cache, _claude_probe_cache_at
+
+    now = _time.time()
+    if (
+        not force
+        and _claude_probe_cache
+        and (now - _claude_probe_cache_at) < CLAUDE_PROBE_TTL_SECONDS
+        and all(c in _claude_probe_cache for c in candidates)
+    ):
+        return {c: _claude_probe_cache[c] for c in candidates}
+
+    cli = get_claude_cli_command()
+    timeout = min(CLAUDE_PROBE_TIMEOUT_SECONDS, get_claude_cli_timeout_seconds())
+
+    results: dict[str, bool] = {}
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, len(candidates))) as pool:
+            futures = {
+                pool.submit(_probe_claude_cli_model, cli, candidate, timeout): candidate
+                for candidate in candidates
+            }
+            for future, candidate in futures.items():
+                results[candidate] = future.result()
+    except Exception:
+        return None
+
+    if not any(results.values()):
+        return None
+
+    _claude_probe_cache = results
+    _claude_probe_cache_at = now
+    return dict(results)
 
 
 def _build_claude_cli_prompt(prompt: str) -> str:
