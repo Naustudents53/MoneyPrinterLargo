@@ -900,6 +900,11 @@ def get_winner_remix_min_views() -> int:
     return _get_int_config("winner_remix_min_views", default=1000, minimum=1, maximum=100000000)
 
 
+def get_long_ctr_enabled() -> bool:
+    """CTR packaging for long videos: scored title candidates + chapters."""
+    return _get_bool_config("long_ctr_enabled", default=True)
+
+
 def get_long_retention_enabled() -> bool:
     """Retention gate for long-form scripts (score + intro rewrite)."""
     return _get_bool_config("long_retention_enabled", default=True)

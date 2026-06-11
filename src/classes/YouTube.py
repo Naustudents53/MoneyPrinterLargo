@@ -6085,7 +6085,26 @@ REGLAS:
                 # Template has no placeholders â†’ use it verbatim.
                 title = title_template
         else:
-            title = self.generate_response(
+            # Title lab: N scored candidates in one call (Shorts hooks already
+            # work this way; long titles were a single unscored call).
+            title = ""
+            if get_long_ctr_enabled():
+                try:
+                    from . import LongPackaging
+                    title, title_report = LongPackaging.select_best_title(
+                        self.subject, self.language, self.generate_response
+                    )
+                    self.long_title_report = title_report
+                    if title:
+                        info(
+                            f" => Title lab: {title_report['best_score']}/10 "
+                            f"({title_report['candidate_count']} candidates)"
+                        )
+                except Exception as e:
+                    warning(f"   Title lab skipped: {str(e)[:160]}")
+                    title = ""
+            if not title:
+                title = self.generate_response(
                 f"Genera un tÃ­tulo para un video largo de YouTube sobre: {self.subject}.\n"
                 f"REQUISITOS DEL TÃTULO:\n"
                 f"- MÃ¡ximo 70 caracteres.\n"
@@ -7316,6 +7335,33 @@ No markdown. No explanation. Just the JSON array."""
         with force_provider("ollama", long_models or primary):
             return self._generate_long_video_inner(tts_instance, custom_topic)
 
+    def _append_long_chapters(self, audio_duration_seconds: float) -> None:
+        """Append YouTube chapters (0:00 ...) to the long video's description.
+
+        The marked script ([INTRO]/[SECTION n: title]) plus the real audio
+        duration give chapter timestamps by word-count fraction. Runs after
+        TTS (duration known) and before the sidecar/upload persist the
+        metadata. Fully guarded: failure leaves the description untouched.
+        """
+        try:
+            from . import LongPackaging
+
+            if not get_long_ctr_enabled():
+                return
+            description = str((self.metadata or {}).get("description") or "")
+            if not description:
+                return
+            chapters = LongPackaging.build_chapters(
+                self.script, audio_duration_seconds, self.language
+            )
+            block = LongPackaging.chapters_block(chapters, self.language)
+            if not block:
+                return
+            self.metadata["description"] = description.rstrip() + block
+            info(f" => Added {len(chapters)} chapters to the description")
+        except Exception as e:
+            warning(f"   Chapters skipped: {str(e)[:160]}")
+
     def _generate_long_video_inner(self, tts_instance: TTS, custom_topic: str = "") -> str:
         """
         Full pipeline for generating a long-form YouTube video (15-16 minutes max).
@@ -7436,6 +7482,7 @@ No markdown. No explanation. Just the JSON array."""
         if os.path.exists(path) and os.path.getsize(path) > 1000:
             audio_dur = AudioFileClip(path).duration
             info(f" => Audio duration: {audio_dur:.0f} seconds ({audio_dur/60:.1f} min)")
+            self._append_long_chapters(audio_dur)
         else:
             raise RuntimeError(f"TTS failed to generate audio file at {path}")
 
