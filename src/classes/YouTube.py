@@ -4730,6 +4730,40 @@ RULES:
 
         raise last_error
 
+    def _ken_burns_zoom_clip(self, source_clip, out_size, duration, zoom_in, max_zoom=1.08):
+        """Subpixel-smooth Ken Burns zoom for a still image (MoviePy paths).
+
+        Animating `clip.resize(lambda t: ...)` produces integer frame sizes
+        that jump by ~1px every few frames and read as trembling. Here each
+        frame is instead sampled from the (full-resolution) source via PIL's
+        float `box` crop, which interpolates at subpixel coordinates, and the
+        output canvas size never changes.
+        """
+        import numpy as np
+
+        out_w, out_h = out_size
+        frame = source_clip.get_frame(0)
+        src_h, src_w = frame.shape[:2]
+        pil = _PIL_Image.fromarray(frame)
+        resample = getattr(
+            getattr(_PIL_Image, "Resampling", _PIL_Image), "LANCZOS"
+        )
+        safe_dur = max(float(duration), 1e-6)
+        span = max_zoom - 1.0
+
+        def make_frame(t):
+            progress = min(1.0, max(0.0, t / safe_dur))
+            zoom = 1.0 + span * (progress if zoom_in else (1.0 - progress))
+            win_w = src_w / zoom
+            win_h = src_h / zoom
+            x0 = (src_w - win_w) / 2.0
+            y0 = (src_h - win_h) / 2.0
+            return np.asarray(
+                pil.resize((out_w, out_h), resample, box=(x0, y0, x0 + win_w, y0 + win_h))
+            )
+
+        return VideoClip(make_frame, duration=duration)
+
     def _short_ffmpeg_filter_complex(
         self,
         *,
@@ -4745,10 +4779,15 @@ RULES:
     ) -> str:
         filters = []
         out_w, out_h = output_size
-        pan_scale_w = _scale_from_base(1124, 1080, out_w)
-        pan_scale_h = _scale_from_base(1998, 1920, out_h)
-        horizontal_pan = _scale_from_base(180, 1080, out_w)
-        vertical_pan = _scale_from_base(120, 1920, out_h)
+        # Ken Burns via zoompan on a 3x-upscaled frame. zoompan crops at integer
+        # coordinates, so working at 3x output resolution turns each step into
+        # ~1/3 of an output pixel after downscale — smooth motion instead of the
+        # visible per-frame snapping ("temblor") that animating crop x/y at
+        # output resolution produces.
+        kb_scale_factor = 3
+        kb_w = out_w * kb_scale_factor
+        kb_h = out_h * kb_scale_factor
+        kb_zoom = 0.08
         for idx, this_dur in enumerate(durations):
             frames = max(1, int(round(this_dur * fps)))
             frame_denom = max(1, frames - 1)
@@ -4763,42 +4802,21 @@ RULES:
                 f"crop={out_w}:{out_h},setsar=1,format=rgb24,"
             )
             if ken_burns_enabled:
-                pan_base = (
-                    f"[{idx}:v]"
-                    f"scale={pan_scale_w}:{pan_scale_h}:"
-                    "force_original_aspect_ratio=increase:"
-                    "flags=lanczos+accurate_rnd,"
-                    "setsar=1,format=rgb24,"
-                )
-                progress = f"n/{frame_denom}"
-                if idx % 4 == 0:
-                    x_expr = (
-                        f"((iw-ow)/2)-(min(iw-ow\\,{horizontal_pan})/2)+"
-                        f"min(iw-ow\\,{horizontal_pan})*({progress})"
-                    )
-                    y_expr = "(ih-oh)/2"
-                elif idx % 4 == 1:
-                    x_expr = (
-                        f"((iw-ow)/2)+(min(iw-ow\\,{horizontal_pan})/2)-"
-                        f"min(iw-ow\\,{horizontal_pan})*({progress})"
-                    )
-                    y_expr = "(ih-oh)/2"
-                elif idx % 4 == 2:
-                    x_expr = "(iw-ow)/2"
-                    y_expr = (
-                        f"((ih-oh)/2)-(min(ih-oh\\,{vertical_pan})/2)+"
-                        f"min(ih-oh\\,{vertical_pan})*({progress})"
-                    )
+                progress = f"on/{frame_denom}"
+                if idx % 2 == 0:
+                    # Zoom in: 1.00 -> 1.08
+                    z_expr = f"1+{kb_zoom}*({progress})"
                 else:
-                    x_expr = "(iw-ow)/2"
-                    y_expr = (
-                        f"((ih-oh)/2)+(min(ih-oh\\,{vertical_pan})/2)-"
-                        f"min(ih-oh\\,{vertical_pan})*({progress})"
-                    )
+                    # Zoom out: 1.08 -> 1.00
+                    z_expr = f"1+{kb_zoom}-{kb_zoom}*({progress})"
                 filters.append(
-                    f"{pan_base}"
-                    f"{repeated}"
-                    f"crop={out_w}:{out_h}:x='{x_expr}':y='{y_expr}',"
+                    f"[{idx}:v]"
+                    f"scale={kb_w}:{kb_h}:force_original_aspect_ratio=increase:"
+                    "flags=lanczos+accurate_rnd,"
+                    f"crop={kb_w}:{kb_h},setsar=1,"
+                    f"zoompan=z='{z_expr}':d={frames}:"
+                    "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                    f"s={out_w}x{out_h}:fps={fps},"
                     f"trim=duration={this_dur:.6f},"
                     "setpts=PTS-STARTPTS,format=yuv420p"
                     f"[v{idx}]"
@@ -4974,55 +4992,31 @@ RULES:
     ) -> str:
         filters = []
         out_w, out_h = output_size
-        pan_scale_w = _scale_from_base(1998, 1920, out_w)
-        pan_scale_h = _scale_from_base(1124, 1080, out_h)
-        horizontal_pan = _scale_from_base(220, 1920, out_w)
-        vertical_pan = _scale_from_base(120, 1080, out_h)
+        # Same zoompan-on-3x-upscale approach as the Shorts renderer: animating
+        # crop x/y at output resolution snaps to whole pixels every frame and
+        # reads as trembling; zoompan over a 3x frame keeps steps subpixel.
+        kb_scale_factor = 3
+        kb_w = out_w * kb_scale_factor
+        kb_h = out_h * kb_scale_factor
+        kb_zoom = 0.08
 
         for idx, this_dur in enumerate(durations):
             frames = max(1, int(round(this_dur * fps)))
             frame_denom = max(1, frames - 1)
-            repeated = (
-                f"loop=loop={max(0, frames - 1)}:size=1:start=0,"
-                f"setpts=N/({fps}*TB),"
-            )
-            pan_base = (
-                f"[{idx}:v]"
-                f"scale={pan_scale_w}:{pan_scale_h}:"
-                "force_original_aspect_ratio=increase:"
-                "flags=lanczos+accurate_rnd,"
-                "setsar=1,format=rgb24,"
-            )
-            progress = f"n/{frame_denom}"
-            if idx % 4 == 0:
-                x_expr = (
-                    f"((iw-ow)/2)-(min(iw-ow\\,{horizontal_pan})/2)+"
-                    f"min(iw-ow\\,{horizontal_pan})*({progress})"
-                )
-                y_expr = "(ih-oh)/2"
-            elif idx % 4 == 1:
-                x_expr = (
-                    f"((iw-ow)/2)+(min(iw-ow\\,{horizontal_pan})/2)-"
-                    f"min(iw-ow\\,{horizontal_pan})*({progress})"
-                )
-                y_expr = "(ih-oh)/2"
-            elif idx % 4 == 2:
-                x_expr = "(iw-ow)/2"
-                y_expr = (
-                    f"((ih-oh)/2)-(min(ih-oh\\,{vertical_pan})/2)+"
-                    f"min(ih-oh\\,{vertical_pan})*({progress})"
-                )
+            progress = f"on/{frame_denom}"
+            if idx % 2 == 0:
+                z_expr = f"1+{kb_zoom}*({progress})"
             else:
-                x_expr = "(iw-ow)/2"
-                y_expr = (
-                    f"((ih-oh)/2)+(min(ih-oh\\,{vertical_pan})/2)-"
-                    f"min(ih-oh\\,{vertical_pan})*({progress})"
-                )
+                z_expr = f"1+{kb_zoom}-{kb_zoom}*({progress})"
 
             filters.append(
-                f"{pan_base}"
-                f"{repeated}"
-                f"crop={out_w}:{out_h}:x='{x_expr}':y='{y_expr}',"
+                f"[{idx}:v]"
+                f"scale={kb_w}:{kb_h}:force_original_aspect_ratio=increase:"
+                "flags=lanczos+accurate_rnd,"
+                f"crop={kb_w}:{kb_h},setsar=1,"
+                f"zoompan=z='{z_expr}':d={frames}:"
+                "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                f"s={out_w}x{out_h}:fps={fps},"
                 f"trim=duration={this_dur:.6f},"
                 "setpts=PTS-STARTPTS,format=yuv420p"
                 f"[v{idx}]"
@@ -5303,21 +5297,14 @@ RULES:
                     x_center=clip.w / 2,
                     y_center=clip.h / 2,
                 )
-            clip = clip.resize(short_size)
-
             if ken_burns_enabled:
-                # Ken Burns: subtle zoom (alternating in/out per image for variety).
-                # Pre-scale to 1.06x so zoom never reveals empty edges, then animate scale
-                # between 1.00 (fit) and ~1.06 (fill+zoom). We wrap in a fixed-size
-                # CompositeVideoClip so the output stays a deterministic canvas size.
-                base = clip.resize(1.06).set_position("center")
-                if idx % 2 == 0:
-                    kb = base.resize(lambda t, d=this_dur: (1 / 1.06) + (1 - 1 / 1.06) * (t / d))
-                else:
-                    kb = base.resize(lambda t, d=this_dur: 1 - (1 - 1 / 1.06) * (t / d))
-                kb = kb.set_position("center")
-
-                clip = CompositeVideoClip([kb], size=short_size).set_duration(this_dur)
+                # Ken Burns: subpixel zoom sampled from the aspect-cropped image
+                # at its native resolution (alternating in/out per image).
+                clip = self._ken_burns_zoom_clip(
+                    clip, short_size, this_dur, zoom_in=(idx % 2 == 0)
+                )
+            else:
+                clip = clip.resize(short_size)
 
             # Subtle crossfade in (except first clip) for smooth transitions
             if crossfade > 0 and idx > 0 and this_dur > crossfade:
@@ -7247,9 +7234,12 @@ No markdown. No explanation. Just the JSON array."""
                         height=out_h,
                     )
 
-                # Ken Burns: gentle slow zoom (1.0x â†’ 1.08x over clip duration)
-                # Use default arg to capture clip_dur in the closure
-                img_clip = img_clip.resize(lambda t, d=clip_dur: 1 + 0.08 * (t / d))
+                # Ken Burns: subpixel zoom (alternating in/out per image) — the
+                # old animated-resize approach trembled because frame sizes
+                # changed by whole pixels.
+                img_clip = self._ken_burns_zoom_clip(
+                    img_clip, (out_w, out_h), clip_dur, zoom_in=(clip_idx % 2 == 1)
+                )
 
                 # Crossfade between images
                 if clip_dur > 2.0:

@@ -177,8 +177,35 @@ def test_ffmpeg_filters_use_configured_4k_canvas():
         total_duration=1.0,
         extra_tail=0,
     )
-    assert "scale=3840:2160" in long_filter
-    assert "crop=3840:2160" in long_filter
+    # Ken Burns renders via zoompan: the output canvas is set by `s=WxH`
+    # and the source is pre-scaled to 3x for subpixel-smooth motion.
+    assert "s=3840x2160" in long_filter
+    assert "scale=11520:6480" in long_filter
+    assert "zoompan=" in long_filter
+
+
+def test_short_ken_burns_uses_zoompan_not_animated_crop():
+    """Animated crop x/y snaps to whole pixels per frame (visible trembling);
+    Ken Burns must go through zoompan on a 3x-upscaled frame instead."""
+    youtube = YouTube.__new__(YouTube)
+    short_filter = youtube._short_ffmpeg_filter_complex(
+        image_count=2,
+        durations=[2.0, 2.0],
+        fps=30,
+        output_size=(1080, 1920),
+        crossfade=0.5,
+        ken_burns_enabled=True,
+        karaoke_ass_path="",
+        music_volume=0.1,
+        audio_duration=4.0,
+    )
+    assert "zoompan=" in short_filter
+    assert "s=1080x1920" in short_filter
+    assert "scale=3240:5760" in short_filter  # 3x pre-upscale
+    assert "crop=1080:1920:x='" not in short_filter  # the old trembling pan
+    # Alternating direction: clip 0 zooms in (1+0.08*...), clip 1 zooms out.
+    assert "z='1+0.08*(on/" in short_filter
+    assert "z='1+0.08-0.08*(on/" in short_filter
 
 
 def test_landscape_karaoke_ass_writer_uses_16_9_canvas(tmp_path):
