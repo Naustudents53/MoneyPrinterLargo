@@ -66,10 +66,12 @@ mp_config.ROOT_DIR = str(ROOT_DIR)
 from cache import (  # noqa: E402
     add_account,
     add_product,
+    atomic_write_json,
     get_accounts,
     get_products,
     get_youtube_cache_path,
     get_twitter_cache_path,
+    json_write_lock,
     remove_account,
 )
 
@@ -259,9 +261,12 @@ def _read_youtube_raw() -> dict:
 
 
 def _write_youtube_raw(data: dict) -> None:
+    # Lock + atomic replace: cron jobs and the auto-sync scheduler write this
+    # same file; a plain truncate-write here could corrupt the channel DB or
+    # silently drop their concurrent updates.
     path = get_youtube_cache_path()
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    with json_write_lock(path):
+        atomic_write_json(path, data)
 
 
 def _read_twitter_raw() -> dict:
@@ -274,8 +279,8 @@ def _read_twitter_raw() -> dict:
 
 def _write_twitter_raw(data: dict) -> None:
     path = get_twitter_cache_path()
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    with json_write_lock(path):
+        atomic_write_json(path, data)
 
 
 def _channel_out(acc: dict) -> dict:

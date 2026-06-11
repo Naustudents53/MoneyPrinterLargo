@@ -45,6 +45,16 @@ def json_write_lock(json_path: str, timeout: float = 15.0):
         except Exception:
             pass
 
+def atomic_write_json(path: str, data, indent: int = 4) -> None:
+    """Write JSON via tmp + os.replace so a crash mid-write can never leave a
+    truncated/corrupt file behind. Callers that need cross-process exclusion
+    must hold `json_write_lock(path)` around read-modify-write themselves."""
+    tmp_path = path + '.tmp'
+    with open(tmp_path, 'w', encoding='utf-8') as file:
+        json.dump(data, file, indent=indent, ensure_ascii=False)
+    os.replace(tmp_path, path)
+
+
 def get_cache_path(root_dir: str | None = None) -> str:
     """
     Gets the path to the cache file.
@@ -184,8 +194,7 @@ def add_account(provider: str, account: dict) -> None:
     with json_write_lock(cache_path):
         accounts = get_accounts(provider)
         accounts.append(account)
-        with open(cache_path, 'w') as file:
-            json.dump({"accounts": accounts}, file, indent=4)
+        atomic_write_json(cache_path, {"accounts": accounts})
 
 def remove_account(provider: str, account_id: str) -> None:
     """
@@ -203,8 +212,7 @@ def remove_account(provider: str, account_id: str) -> None:
     with json_write_lock(cache_path):
         accounts = get_accounts(provider)
         accounts = [a for a in accounts if a['id'] != account_id]
-        with open(cache_path, 'w') as file:
-            json.dump({"accounts": accounts}, file, indent=4)
+        atomic_write_json(cache_path, {"accounts": accounts})
 
 def get_products() -> List[dict]:
     """
@@ -213,19 +221,21 @@ def get_products() -> List[dict]:
     Returns:
         products (List[dict]): The products
     """
-    if not os.path.exists(get_afm_cache_path()):
-        # Create the cache file
-        with open(get_afm_cache_path(), 'w') as file:
-            json.dump({
-                "products": []
-            }, file, indent=4)
+    cache_path = get_afm_cache_path()
+    if not os.path.exists(cache_path):
+        atomic_write_json(cache_path, {"products": []})
+        return []
 
-    with open(get_afm_cache_path(), 'r', encoding='utf-8') as file:
-        parsed = json.load(file)
+    try:
+        with open(cache_path, 'r', encoding='utf-8') as file:
+            parsed = json.load(file)
+    except (ValueError, OSError):
+        return []
+    if not isinstance(parsed, dict):
+        return []
+    products = parsed.get("products")
+    return products if isinstance(products, list) else []
 
-        # Get the products
-        return parsed["products"]
-    
 def add_product(product: dict) -> None:
     """
     Adds a product to the cache.
@@ -236,17 +246,11 @@ def add_product(product: dict) -> None:
     Returns:
         None
     """
-    # Get the current products
-    products = get_products()
-
-    # Add the new product
-    products.append(product)
-
-    # Write the new products to the cache
-    with open(get_afm_cache_path(), 'w') as file:
-        json.dump({
-            "products": products
-        }, file, indent=4)
+    cache_path = get_afm_cache_path()
+    with json_write_lock(cache_path):
+        products = get_products()
+        products.append(product)
+        atomic_write_json(cache_path, {"products": products})
     
 def get_results_cache_path() -> str:
     """

@@ -3685,8 +3685,7 @@ RULES:
             for account in previous_json["accounts"]:
                 if account["id"] == self._account_uuid:
                     account["videos"].append(video)
-            with open(cache, "w", encoding="utf-8") as f:
-                f.write(json.dumps(previous_json))
+            atomic_write_json(cache, previous_json)
 
     def generate_subtitles(self, audio_path: str) -> str:
         """
@@ -8939,8 +8938,7 @@ No markdown. No explanation. Just the JSON array."""
                             "error": "",
                         }
                         break
-            with open(cache, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4, ensure_ascii=False)
+            atomic_write_json(cache, data)
 
     def get_videos(self) -> List[dict]:
         """
@@ -8950,9 +8948,10 @@ No markdown. No explanation. Just the JSON array."""
             videos (List[dict]): The uploaded videos.
         """
         if not os.path.exists(get_youtube_cache_path()):
-            # Create the cache file
-            with open(get_youtube_cache_path(), "w", encoding="utf-8") as file:
-                json.dump({"videos": []}, file, indent=4)
+            # Create the cache file with the same shape every other reader
+            # expects ({"accounts": [...]}); the old {"videos": []} shape made
+            # the very next read crash with KeyError("accounts").
+            atomic_write_json(get_youtube_cache_path(), {"accounts": []})
             return []
 
         videos = []
@@ -8960,9 +8959,9 @@ No markdown. No explanation. Just the JSON array."""
         with open(get_youtube_cache_path(), "r", encoding="utf-8") as file:
             previous_json = json.loads(file.read())
             # Find our account
-            accounts = previous_json["accounts"]
+            accounts = previous_json.get("accounts") or []
             for account in accounts:
-                if account["id"] == self._account_uuid:
-                    videos = account["videos"]
+                if account.get("id") == self._account_uuid:
+                    videos = account.get("videos") or []
 
         return videos

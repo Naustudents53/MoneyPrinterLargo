@@ -374,7 +374,7 @@ class AutoSyncScheduler:
     async def _run_light(self, _cfg: dict) -> dict:
         """Refresh subscriber count only — one yt-dlp call per channel."""
         sync_mod = self._import_sync_helpers()
-        from cache import json_write_lock, get_youtube_cache_path  # type: ignore
+        from cache import json_write_lock, get_youtube_cache_path, atomic_write_json  # type: ignore
 
         cache_path = get_youtube_cache_path()
         # Read OUTSIDE the write lock — a stale snapshot is fine since we
@@ -416,8 +416,7 @@ class AutoSyncScheduler:
                 acc["subscriber_count"] = count
                 acc["stats_synced_at"] = _format_ts(datetime.now())
                 updated += 1
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump(latest, f, indent=4, ensure_ascii=False)
+            atomic_write_json(cache_path, latest)
         return {"updated": updated, "failed": failed}
 
     async def _run_recent(self, cfg: dict) -> dict:
@@ -431,7 +430,7 @@ class AutoSyncScheduler:
         except Exception:
             pass
 
-        from cache import json_write_lock, get_youtube_cache_path  # type: ignore
+        from cache import json_write_lock, get_youtube_cache_path, atomic_write_json  # type: ignore
 
         n_videos = max(1, min(50, int(cfg.get("recent_video_count", 10))))
         cache_path = get_youtube_cache_path()
@@ -481,8 +480,7 @@ class AutoSyncScheduler:
                     v["comment_count"] = s["comment_count"]
                     v["stats_synced_at"] = now_ts
                     refreshed += 1
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump(latest, f, indent=4, ensure_ascii=False)
+            atomic_write_json(cache_path, latest)
 
         if refreshed:
             self._reflect_after_quick_sync(latest)
