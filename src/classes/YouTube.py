@@ -59,6 +59,14 @@ _PHOTO_STOPWORDS = {
 _UNICODE_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 _UNICODE_TOKEN_RE = re.compile(r"[\w'-]+", re.UNICODE)
 
+# Karaoke subtitle styling. Bigger type + soft drop shadow + a slight "pop"
+# on the active word: maximum legibility (older viewers included) without a
+# background box.
+SUBTITLE_FONT_SIZE_PORTRAIT = 94   # base @1080w (was 80)
+SUBTITLE_FONT_SIZE_LANDSCAPE = 72  # base @1920w (was 58)
+SUBTITLE_SHADOW_DEPTH = 3          # ASS Shadow, scaled to render size
+SUBTITLE_ACTIVE_WORD_SCALE = 112   # \fscx/\fscy % for the highlighted word
+
 LONG_VIDEO_TARGET_MIN_WORDS = 2000
 LONG_VIDEO_TARGET_MAX_WORDS = 2200
 LONG_VIDEO_ESTIMATED_WPM = 140
@@ -3982,7 +3990,7 @@ RULES:
         font_path = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
         out_w, out_h = output_size
         canvas_w = out_w
-        default_font_size = caption_cfg.font_size if caption_cfg else 80
+        default_font_size = caption_cfg.font_size if caption_cfg else SUBTITLE_FONT_SIZE_PORTRAIT
         font_size = _scale_from_base(get_subtitle_font_size(default_font_size), 1080, out_w)
         font = ImageFont.truetype(font_path, font_size)
         max_line_width = _scale_from_base(920, 1080, out_w)
@@ -4143,7 +4151,7 @@ RULES:
         out_w, out_h = output_size
         canvas_w = out_w
         font_path = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
-        font_size = _scale_from_base(get_subtitle_font_size(58), 1920, out_w)
+        font_size = _scale_from_base(get_subtitle_font_size(SUBTITLE_FONT_SIZE_LANDSCAPE), 1920, out_w)
         font = ImageFont.truetype(font_path, font_size)
         max_line_width = _scale_from_base(1500, 1920, out_w)
         word_spacing = _scale_from_base(24, 1920, out_w)
@@ -4372,7 +4380,7 @@ RULES:
         max_mode = is_max_retention(getattr(self, "_retention_mode", ""))
         caption_cfg = MaxRetentionEngine.caption_config() if max_mode else None
         font_path = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
-        default_font_size = caption_cfg.font_size if caption_cfg else 80
+        default_font_size = caption_cfg.font_size if caption_cfg else SUBTITLE_FONT_SIZE_PORTRAIT
         font_size = _scale_from_base(get_subtitle_font_size(default_font_size), 1080, canvas_w)
         font = ImageFont.truetype(font_path, font_size)
         max_line_width = _scale_from_base(920, 1080, canvas_w)
@@ -4384,6 +4392,7 @@ RULES:
         default_position_y = caption_cfg.position_y if caption_cfg else 1300
         position_y = _scale_from_base(get_subtitle_position_y(default_position_y), 1920, canvas_h)
         outline_width = _scale_from_base(6, 1080, canvas_w)
+        shadow_depth = _scale_from_base(SUBTITLE_SHADOW_DEPTH, 1080, canvas_w)
         pause_gap_seconds = get_subtitle_pause_gap_seconds()
 
         hot_word_set = set()
@@ -4439,9 +4448,16 @@ RULES:
         yellow = "&H0000D7FF&"
         hot_red = "&H00465FFF&"
         outline = "&H00000000&"
+        shadow_color = "&H96000000&"  # soft semi-transparent drop shadow, not a box
 
-        def _colored_word(text: str, color: str) -> str:
-            return f"{{\\c{color}}}{self._escape_ass_text(text)}"
+        def _colored_word(text: str, color: str, active: bool = False) -> str:
+            # The active word "pops" slightly larger — explicit reset on every
+            # word so the scale never leaks to the rest of the line.
+            scale = SUBTITLE_ACTIVE_WORD_SCALE if active else 100
+            return (
+                f"{{\\c{color}\\fscx{scale}\\fscy{scale}}}"
+                f"{self._escape_ass_text(text)}"
+            )
 
         lines = [
             "[Script Info]",
@@ -4456,7 +4472,7 @@ RULES:
             "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
             "Alignment, MarginL, MarginR, MarginV, Encoding",
             f"Style: Karaoke,Poppins Black,{font_size},{white},{white},{outline},"
-            f"&H00000000&,-1,0,0,0,100,100,0,0,1,{outline_width},0,8,0,0,0,1",
+            f"{shadow_color},-1,0,0,0,100,100,0,0,1,{outline_width},{shadow_depth},8,0,0,0,1",
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -4483,13 +4499,14 @@ RULES:
             for wrapped_line in wrapped:
                 rendered_words = []
                 for text in wrapped_line:
-                    if local_counter == local_idx:
+                    is_active = local_counter == local_idx
+                    if is_active:
                         color = yellow
                     elif _caption_key(text) in hot_word_set:
                         color = hot_red
                     else:
                         color = white
-                    rendered_words.append(_colored_word(text, color))
+                    rendered_words.append(_colored_word(text, color, active=is_active))
                     local_counter += 1
                 rendered_lines.append(" ".join(rendered_words))
 
@@ -4519,13 +4536,16 @@ RULES:
 
         canvas_w, canvas_h = output_size
         font_path = os.path.join(get_fonts_dir(), "Poppins-Black.ttf").replace("\\", "/")
-        font_size = _scale_from_base(get_subtitle_font_size(58), 1920, canvas_w)
+        font_size = _scale_from_base(
+            get_subtitle_font_size(SUBTITLE_FONT_SIZE_LANDSCAPE), 1920, canvas_w
+        )
         font = ImageFont.truetype(font_path, font_size)
         max_line_width = _scale_from_base(1500, 1920, canvas_w)
         word_spacing = _scale_from_base(24, 1920, canvas_w)
         max_words_per_group = get_subtitle_max_words_per_group(7)
         max_lines = 2
         outline_width = _scale_from_base(5, 1920, canvas_w)
+        shadow_depth = _scale_from_base(SUBTITLE_SHADOW_DEPTH, 1920, canvas_w)
         position_y = _scale_from_base(get_subtitle_position_y(820), 1080, canvas_h)
         pause_gap_seconds = get_subtitle_pause_gap_seconds()
 
@@ -4566,9 +4586,14 @@ RULES:
         white = "&H00FFFFFF&"
         yellow = "&H0000D7FF&"
         outline = "&H00000000&"
+        shadow_color = "&H96000000&"  # soft semi-transparent drop shadow, not a box
 
-        def _colored_word(text: str, color: str) -> str:
-            return f"{{\\c{color}}}{self._escape_ass_text(text)}"
+        def _colored_word(text: str, color: str, active: bool = False) -> str:
+            scale = SUBTITLE_ACTIVE_WORD_SCALE if active else 100
+            return (
+                f"{{\\c{color}\\fscx{scale}\\fscy{scale}}}"
+                f"{self._escape_ass_text(text)}"
+            )
 
         lines = [
             "[Script Info]",
@@ -4583,7 +4608,7 @@ RULES:
             "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
             "Alignment, MarginL, MarginR, MarginV, Encoding",
             f"Style: Karaoke,Poppins Black,{font_size},{white},{white},{outline},"
-            f"&H00000000&,-1,0,0,0,100,100,0,0,1,{outline_width},0,8,0,0,0,1",
+            f"{shadow_color},-1,0,0,0,100,100,0,0,1,{outline_width},{shadow_depth},8,0,0,0,1",
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -4613,8 +4638,9 @@ RULES:
             for wrapped_line in wrapped:
                 rendered_words = []
                 for text in wrapped_line:
-                    color = yellow if local_counter == local_idx else white
-                    rendered_words.append(_colored_word(text, color))
+                    is_active = local_counter == local_idx
+                    color = yellow if is_active else white
+                    rendered_words.append(_colored_word(text, color, active=is_active))
                     local_counter += 1
                 rendered_lines.append(" ".join(rendered_words))
 

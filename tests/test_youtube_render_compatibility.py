@@ -60,8 +60,11 @@ def test_karaoke_ass_writer_preserves_word_highlight(tmp_path):
     text = ass_path.read_text(encoding="utf-8")
     assert "PlayResX: 1080" in text
     assert r"{\an8\pos(540,1300)}" in text
-    assert r"{\c&H0000D7FF&}HOLA" in text
-    assert r"{\c&H0000D7FF&}MUNDO" in text
+    # The active word is yellow AND pops to 112% scale.
+    assert r"{\c&H0000D7FF&\fscx112\fscy112}HOLA" in text
+    assert r"{\c&H0000D7FF&\fscx112\fscy112}MUNDO" in text
+    # Inactive words explicitly reset the scale so the pop never leaks.
+    assert r"{\c&H00FFFFFF&\fscx100\fscy100}" in text
 
 
 def test_karaoke_grouping_breaks_on_sentence_pause(tmp_path):
@@ -224,7 +227,7 @@ def test_landscape_karaoke_ass_writer_uses_16_9_canvas(tmp_path):
     assert "PlayResX: 1920" in text
     assert "PlayResY: 1080" in text
     assert r"{\an8\pos(960,820)}" in text
-    assert r"{\c&H0000D7FF&}HOLA" in text
+    assert r"{\c&H0000D7FF&\fscx112\fscy112}HOLA" in text
 
 
 def test_karaoke_ass_writers_accept_4k_canvases(tmp_path):
