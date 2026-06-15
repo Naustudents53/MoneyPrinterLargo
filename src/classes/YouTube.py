@@ -4701,6 +4701,44 @@ RULES:
         ]
 
     @staticmethod
+    def _default_preset_for_codec(codec: str) -> str:
+        """Balanced encoder preset when the user hasn't configured one.
+
+        The old defaults (libx264 'ultrafast', NVENC 'p1') are the WORST
+        compression settings — they hand YouTube a bloated, soft master that
+        looks even worse after YouTube re-encodes it. These balanced presets
+        cost more render time but visibly improve the final result. NVENC is
+        hardware-accelerated so 'p5' is still fast; CPU x264 'medium' is the
+        canonical quality/size sweet spot. Overridable via render_preset /
+        MP_RENDER_PRESET for anyone who needs faster renders.
+        """
+        mapping = {
+            "libx264": "medium",
+            "h264_nvenc": "p5",
+            "hevc_nvenc": "p5",
+            "h264_qsv": "medium",
+            "h264_amf": "balanced",
+        }
+        return mapping.get(codec, "")
+
+    @staticmethod
+    def _loudnorm_suffix() -> str:
+        """Loudness-normalization tail for the audio filter chain.
+
+        Returns ",loudnorm=I=<target>:TP=-1.5:LRA=11" so the final mix matches
+        YouTube's ~-14 LUFS target (no longer sounds quiet next to other
+        videos), or "" when disabled via config. Single-pass loudnorm is
+        plenty for narration + bed music and adds no extra encode pass.
+        """
+        try:
+            target = get_loudness_target_lufs()
+        except Exception:
+            target = -14.0
+        if not target:
+            return ""
+        return f",loudnorm=I={target:.1f}:TP=-1.5:LRA=11"
+
+    @staticmethod
     def _ffmpeg_failure_tail(result: subprocess.CompletedProcess, max_lines: int = 16) -> str:
         """Return the useful tail of an FFmpeg failure without flooding the UI."""
         output = "\n".join(part for part in (result.stderr, result.stdout) if part)
@@ -4716,9 +4754,7 @@ RULES:
         last_error = None
 
         for idx, codec in enumerate(candidates):
-            preset = configured_preset
-            if not preset and codec == "libx264":
-                preset = "ultrafast"
+            preset = configured_preset or self._default_preset_for_codec(codec)
 
             kwargs = {
                 "threads": threads,
@@ -4905,7 +4941,8 @@ RULES:
             f"[{music_idx}:a]aresample=44100,atrim=0:{audio_duration:.6f},"
             f"asetpts=PTS-STARTPTS,volume={music_volume:.4f}[music]",
             "[voice][music]amix=inputs=2:duration=first:dropout_transition=0,"
-            f"atrim=0:{audio_duration:.6f},asetpts=PTS-STARTPTS[aout]",
+            f"atrim=0:{audio_duration:.6f},asetpts=PTS-STARTPTS"
+            f"{self._loudnorm_suffix()}[aout]",
         ])
         return ";".join(filters)
 
@@ -4949,11 +4986,7 @@ RULES:
         last_error = None
 
         for idx, codec in enumerate(candidates):
-            preset = configured_preset
-            if not preset and codec == "libx264":
-                preset = "ultrafast"
-            elif not preset and codec == "h264_nvenc":
-                preset = "p1"
+            preset = configured_preset or self._default_preset_for_codec(codec)
 
             cmd = ["ffmpeg", "-y", "-hide_banner", "-nostdin"]
             for image_path in image_paths:
@@ -5111,7 +5144,8 @@ RULES:
             f"afade=t=out:st={music_fadeout_start:.6f}:d={music_fadeout:.6f}"
             "[music]",
             "[voice][music]amix=inputs=2:duration=first:dropout_transition=0,"
-            f"atrim=0:{total_duration:.6f},asetpts=PTS-STARTPTS[aout]",
+            f"atrim=0:{total_duration:.6f},asetpts=PTS-STARTPTS"
+            f"{self._loudnorm_suffix()}[aout]",
         ])
         return ";".join(filters)
 
@@ -5161,11 +5195,7 @@ RULES:
         last_error = None
 
         for idx, codec in enumerate(candidates):
-            preset = configured_preset
-            if not preset and codec == "libx264":
-                preset = "ultrafast"
-            elif not preset and codec == "h264_nvenc":
-                preset = "p1"
+            preset = configured_preset or self._default_preset_for_codec(codec)
 
             cmd = ["ffmpeg", "-y", "-hide_banner", "-nostdin"]
             for image_path in image_paths:

@@ -314,6 +314,26 @@ def get_render_bitrate() -> str:
     if not bitrate:
         bitrate = str(_get_config_value("render_bitrate", "") or "").strip()
     return bitrate
+
+def get_loudness_target_lufs() -> float:
+    """Target integrated loudness (LUFS) for the final audio mix.
+
+    YouTube normalizes uploads to about -14 LUFS; matching it means our audio
+    no longer sounds quiet next to other videos. Returns 0.0 to disable the
+    loudnorm pass entirely (some users may prefer their own mastering).
+    """
+    raw = os.environ.get("MP_LOUDNESS_LUFS", "").strip()
+    if not raw:
+        raw = _get_config_value("loudness_target_lufs", -14.0)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return -14.0
+    # 0 (or any non-negative) disables; valid broadcast targets are negative.
+    if value >= 0.0:
+        return 0.0
+    # Clamp to a sane range so a typo can't produce a broken filter.
+    return max(-24.0, min(-9.0, value))
     
 def get_zip_url() -> str:
     """

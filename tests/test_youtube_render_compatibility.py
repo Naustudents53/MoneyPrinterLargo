@@ -21,6 +21,46 @@ def test_mp4_render_params_force_player_compatible_pixel_format():
     assert params[params.index("-movflags") + 1] == "+faststart"
 
 
+def test_mp4_render_params_tag_bt709_colorspace():
+    params = YouTube._mp4_compat_ffmpeg_params()
+    assert params[params.index("-colorspace") + 1] == "bt709"
+    assert params[params.index("-color_primaries") + 1] == "bt709"
+    assert params[params.index("-color_trc") + 1] == "bt709"
+
+
+def test_default_preset_is_balanced_per_codec_not_fastest():
+    # The fastest presets (ultrafast/p1) are gone — each codec gets a
+    # balanced default so we don't hand YouTube a soft, bloated master.
+    assert YouTube._default_preset_for_codec("libx264") == "medium"
+    assert YouTube._default_preset_for_codec("h264_nvenc") == "p5"
+    assert YouTube._default_preset_for_codec("hevc_nvenc") == "p5"
+    assert YouTube._default_preset_for_codec("unknown") == ""
+
+
+def test_loudnorm_suffix_targets_minus_14_lufs_by_default():
+    suffix = YouTube._loudnorm_suffix()
+    assert suffix.startswith(",loudnorm=")
+    assert "I=-14" in suffix
+
+
+def test_loudnorm_suffix_can_be_disabled(monkeypatch):
+    import classes.YouTube as youtube_module
+
+    monkeypatch.setattr(youtube_module, "get_loudness_target_lufs", lambda: 0.0, raising=False)
+    assert YouTube._loudnorm_suffix() == ""
+
+
+def test_loudness_config_clamps_and_disables(monkeypatch):
+    import config
+
+    monkeypatch.setenv("MP_LOUDNESS_LUFS", "0")
+    assert config.get_loudness_target_lufs() == 0.0  # non-negative disables
+    monkeypatch.setenv("MP_LOUDNESS_LUFS", "-40")
+    assert config.get_loudness_target_lufs() == -24.0  # clamped floor
+    monkeypatch.setenv("MP_LOUDNESS_LUFS", "garbage")
+    assert config.get_loudness_target_lufs() == -14.0  # safe fallback
+
+
 def test_image_normalization_crops_to_target_aspect_without_distortion():
     source = Image.new("RGB", (800, 600), "red")
     out = BytesIO()
