@@ -186,6 +186,13 @@ app.add_middleware(
 
 app.include_router(ops.router)
 
+# Higgsfield Long Video Studio router
+try:
+    from . import higgsfield as hf_router_mod  # noqa: E402
+except ImportError:
+    import higgsfield as hf_router_mod  # type: ignore  # noqa: E402
+app.include_router(hf_router_mod.router)
+
 
 # ---------------------------------------------------------------------------
 # Pydantic schemas

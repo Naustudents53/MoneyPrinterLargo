@@ -12,6 +12,7 @@ import {
   Image as ImageIcon,
   ImagePlus,
   Activity,
+  Clapperboard,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,12 @@ const NAV: NavGroup[] = [
       { to: "/channels", label: "Canales YouTube", icon: Youtube },
       { to: "/twitter", label: "Cuentas Twitter / X", icon: Twitter },
       { to: "/series", label: "Series", icon: BookOpen },
+    ],
+  },
+  {
+    section: "Produccion",
+    items: [
+      { to: "/higgsfield", label: "Higgsfield Studio", icon: Clapperboard },
     ],
   },
   {

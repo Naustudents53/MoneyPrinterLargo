@@ -14,6 +14,9 @@ import { Affiliate } from "./pages/Affiliate";
 import { Outreach } from "./pages/Outreach";
 import { Operations } from "./pages/Operations";
 import { NotFound } from "./pages/NotFound";
+import { HiggsfieldStudio } from "./pages/HiggsfieldStudio";
+import { HiggsfieldNew } from "./pages/HiggsfieldNew";
+import { HiggsfieldProject } from "./pages/HiggsfieldProject";
 
 export default function App() {
   return (
@@ -32,6 +35,9 @@ export default function App() {
         <Route path="affiliate" element={<Affiliate />} />
         <Route path="outreach" element={<Outreach />} />
         <Route path="operations" element={<Operations />} />
+        <Route path="higgsfield" element={<HiggsfieldStudio />} />
+        <Route path="higgsfield/new" element={<HiggsfieldNew />} />
+        <Route path="higgsfield/:id" element={<HiggsfieldProject />} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
